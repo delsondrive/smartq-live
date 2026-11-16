@@ -31,6 +31,7 @@ struct EngineEvent {
     enum class Type : std::uint8_t { Started, Ended, Stopped } type = Type::Started;
     std::uint64_t serial = 0;
     std::int64_t streamTime = 0;       // Started: the song's first sample. Ended, Stopped: the first sample after it.
+    bool inGap = false;                // Stopped during a gap: `serial` is the song that had already ended before it
 };
 
 // The most device channels process renders into; any beyond these are cleared and left silent.
@@ -105,7 +106,7 @@ private:
     void finishSong(EngineEvent::Type, std::int64_t streamTime) noexcept;
     void endGap(std::int64_t streamTime) noexcept;
     std::int64_t gapFrames() const noexcept;
-    void report(EngineEvent::Type, std::uint64_t serial, std::int64_t streamTime) noexcept;
+    void report(EngineEvent::Type, std::uint64_t serial, std::int64_t streamTime, bool inGap = false) noexcept;
     void retire(std::shared_ptr<const void>&) noexcept;
     void retire(SongSlot&) noexcept;
     void flushHeld() noexcept;

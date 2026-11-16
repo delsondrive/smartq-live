@@ -117,16 +117,17 @@ TEST_CASE("a gap reports what ended, what started and a stop inside it; a gap ru
         {13700, [](Engine& en) { CHECK(en.status().inGap); CHECK(en.status().state == PlayState::Playing); }},
         {13900, [](Engine& en) { CHECK_FALSE(en.status().inGap); CHECK(en.status().state == PlayState::Stopped); }}});
     using T = EngineEvent::Type;
-    struct Seen { T type; std::uint64_t serial; std::int64_t streamTime; };
+    struct Seen { T type; std::uint64_t serial; std::int64_t streamTime; bool inGap = false; };
     std::vector<Seen> seen;
     EngineEvent ev;
-    while (e.popEvent(ev)) seen.push_back({ev.type, ev.serial, ev.streamTime});
+    while (e.popEvent(ev)) seen.push_back({ev.type, ev.serial, ev.streamTime, ev.inGap});
     const std::vector<Seen> expected{{T::Started, a, 0}, {T::Ended, a, 1000}, {T::Started, b, 5800}, {T::Ended, b, 6800},
-                                     {T::Stopped, b, 7000}, {T::Started, c, 8000}, {T::Ended, c, 9000}};
+                                     {T::Stopped, b, 7000, true}, {T::Started, c, 8000}, {T::Ended, c, 9000}};
     REQUIRE(seen.size() == expected.size());
     for (std::size_t i = 0; i < seen.size(); ++i) {
         CHECK(seen[i].type == expected[i].type);  CHECK(seen[i].serial == expected[i].serial);
         CHECK(seen[i].streamTime == expected[i].streamTime);
+        CHECK(seen[i].inGap == expected[i].inGap);              // only the stop inside the gap says so
     }
 }
 TEST_CASE("following on allocates and frees nothing on the audio thread", "[follow]") {

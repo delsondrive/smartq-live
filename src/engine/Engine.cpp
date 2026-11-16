@@ -157,7 +157,7 @@ void Engine::handle(Command& command) noexcept {
     case Type::Stop:
         if (state_ != PlayState::Playing) break;
         if (in_gap_) {   // nothing sounds, so there is nothing to fade: stopped at once, for the song that ended; the cue stays
-            report(EngineEvent::Type::Stopped, gap_after_, stream_time_);
+            report(EngineEvent::Type::Stopped, gap_after_, stream_time_, true);
             in_gap_ = false;
             gap_left_ = 0;
             gap_after_ = 0;
@@ -312,8 +312,8 @@ std::int64_t Engine::gapFrames() const noexcept {
     return std::llround(std::min(frames, kLongest));
 }
 
-void Engine::report(EngineEvent::Type type, std::uint64_t serial, std::int64_t streamTime) noexcept {
-    EngineEvent event{type, serial, streamTime};
+void Engine::report(EngineEvent::Type type, std::uint64_t serial, std::int64_t streamTime, bool inGap) noexcept {
+    EngineEvent event{type, serial, streamTime, inGap};
     events_.push(std::move(event));   // a full queue drops the event
 }
 
