@@ -100,6 +100,7 @@ ShowState makeShowState(const app::Session& session) {
     const auto& model = session.model();
     const auto* list = model.setlist(session.setlistId());
     const int count = list != nullptr ? static_cast<int>(list->entries.size()) : 0;
+    if (list != nullptr) st.setlistName = list->name;
     const auto songAt = [&](int index) -> const model::SongDoc* {
         if (list == nullptr || index < 0 || index >= count) return nullptr;
         return model.song(list->entries[static_cast<std::size_t>(index)].songId);
@@ -186,6 +187,8 @@ ShowState makeShowState(const app::Session& session) {
         st.upTitle = titleAt(nextAt);
         if (nextSong != nullptr) {
             st.upBpm = formatBpm(firstBpm(*nextSong));
+            const auto metre = nextSong->tempo.empty() ? model::TempoPointDoc{} : nextSong->tempo.front();
+            st.upBpmLabel = "BPM" + kDot + juce::String(metre.numerator) + "/" + juce::String(metre.denominator);
             st.upKey = nextSong->key.isNotEmpty() ? nextSong->key : utf8("\xe2\x80\x93");
             st.upLength = formatTime(nextSong->lengthSeconds);
         }

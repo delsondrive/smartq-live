@@ -9,6 +9,7 @@
 #include "ui/SetlistsPage.h"
 #include "ui/SetupPage.h"
 #include "ui/SongEditorPage.h"
+#include "ui/StageView.h"
 
 namespace sqlive::ui {
 
@@ -55,7 +56,7 @@ private:
 }  // namespace
 
 // Each of Tasks 11-17 adds its page or view here, with AppShell::setPageComponent or setShowComponents.
-void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, app::ShowController*) {
+void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, app::ShowController* controller) {
     auto setlists = std::make_unique<SetlistsPage>(session);
     auto editor = std::make_unique<SongEditorPage>(session);
     auto mixer = std::make_unique<MixerPage>(session);
@@ -92,8 +93,8 @@ void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, a
     shell.setPageComponent(Page::SongEditor, std::move(editor));
     shell.setPageComponent(Page::Mixer, std::move(mixer));
     shell.setPageComponent(Page::Setup, std::make_unique<SetupPage>(session, host));
-    // Show mode: the main view, and the stage view (Task 17; an empty component until then).
-    shell.setShowComponents(std::make_unique<MainView>(session), std::make_unique<juce::Component>());
+    // Show mode: the main view, and the stage view with the ring that fills while Space is held to stop.
+    shell.setShowComponents(std::make_unique<MainView>(session), std::make_unique<StageView>(session, controller));
 }
 
 }  // namespace sqlive::ui

@@ -18,7 +18,6 @@ constexpr int kSideWidth = 250, kSideGap = 10, kBoxPadX = 12, kBoxPadY = 10;
 constexpr int kCapsHeight = 15, kCapsGap = 6, kTitleHeight = 25, kHintHeight = 17, kHintLine = 23;
 constexpr int kCaptionLeft = 12, kCaptionTop = 7, kCaptionHeight = 16, kChoiceRight = 10, kChoiceTop = 5, kChoiceHeight = 20;
 constexpr int kChoiceMaxWidth = 220, kCaptionChoiceGap = 8;
-constexpr float kKeyGap = 3.0f, kWordGap = 4.0f;
 
 const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");
 
@@ -34,40 +33,6 @@ void keepOffKeyboard(juce::Component& component) {
     component.setWantsKeyboardFocus(false);
     component.setMouseClickGrabsKeyboardFocus(false);
     for (auto* child : component.getChildren()) keepOffKeyboard(*child);
-}
-
-// A hint's words, a key name drawn as a key: "← → next song", "hold Space stop".
-bool isKey(const juce::String& word) {
-    for (const char* key : {"\xe2\x86\x90", "\xe2\x86\x92", "\xe2\x86\x91", "\xe2\x86\x93", "Space", "Tab", "Esc"})
-        if (word == juce::String::fromUTF8(key)) return true;
-    return false;
-}
-
-float hintWidth(const juce::String& hint) {
-    const auto words = juce::StringArray::fromTokens(hint, " ", "");
-    float width = 0.0f;
-    for (int i = 0; i < words.size(); ++i) {
-        if (i > 0) width += isKey(words[i]) && isKey(words[i - 1]) ? kKeyGap : kWordGap;
-        width += isKey(words[i]) ? keyWidth(words[i]) : widthOf(hintFont(), words[i]);
-    }
-    return width;
-}
-
-void drawHint(juce::Graphics& g, const juce::String& hint, float x, float centreY) {
-    const auto words = juce::StringArray::fromTokens(hint, " ", "");
-    g.setFont(hintFont());
-    for (int i = 0; i < words.size(); ++i) {
-        if (i > 0) x += isKey(words[i]) && isKey(words[i - 1]) ? kKeyGap : kWordGap;
-        if (isKey(words[i])) {
-            x += drawKey(g, words[i], x, centreY);
-        } else {
-            const float w = widthOf(hintFont(), words[i]);
-            g.setFont(hintFont());
-            g.setColour(theme::dim);
-            g.drawText(words[i], juce::Rectangle<float>(x, centreY - 0.5f * kHintHeight, w + 1.0f, kHintHeight), juce::Justification::centredLeft, false);
-            x += w;
-        }
-    }
 }
 
 }  // namespace
@@ -217,7 +182,7 @@ void MainView::layoutSide() {
     const float lineWidth = static_cast<float>(std::max(0, side_.getWidth() - 2 * kBoxPadX));
     float used = 0.0f;
     for (int i = 0; i < shownSide_.hints.size(); ++i) {
-        const float w = hintWidth(shownSide_.hints[i]);
+        const float w = hintWidth(shownSide_.hints[i], hintFont());
         const float withDot = w + widthOf(hintFont(), kDot);
         if (hintLines_.empty() || used + withDot > lineWidth) {
             hintLines_.push_back({i});
@@ -285,8 +250,8 @@ void MainView::paint(juce::Graphics& g) {
                     x += w;
                 }
                 const auto& hint = shownSide_.hints[line[i]];
-                drawHint(g, hint, x, centreY);
-                x += hintWidth(hint);
+                drawHint(g, hint, hintFont(), x, centreY);
+                x += hintWidth(hint, hintFont());
             }
             centreY += kHintLine;
         }

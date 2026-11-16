@@ -188,6 +188,11 @@ private:
 float drawKey(juce::Graphics&, const juce::String& key, float x, float centreY);
 float keyWidth(const juce::String& key);
 
+// A key hint as the mockups write it ("hold Space stop", "← → next song"): its words in dim in that font, each key name
+// among them (an arrow, Space, Tab, Esc) drawn as a key, keys side by side 3 px apart and other words 4 px.
+float hintWidth(const juce::String& hint, const juce::Font&);
+void drawHint(juce::Graphics&, const juce::String& hint, const juce::Font&, float x, float centreY);
+
 // The mockup's .beats: one light a beat of the bar, the current one mint with a glow, the others on a field with a
 // hairline border. 12 px in the top bar, 34 px on the stage view; the gap and the glow scale with them.
 class BeatLights : public juce::Component {

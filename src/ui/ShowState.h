@@ -34,7 +34,7 @@ struct ShowState {
     // The next song.
     juce::String nextLabel, nextTitle, nextInfo;                   // "NEXT SONG · ✓ READY", "4 · Long Way Down", "132 BPM · Key A\nafter a 4 s gap"
     // The stage view, between songs.
-    juce::String upLabel, upTitle, upBpm, upKey, upLength;         // "UP NEXT · 4 OF 7"
+    juce::String upLabel, upTitle, upBpm, upBpmLabel, upKey, upLength;   // "UP NEXT · 4 OF 7", …, "BPM · 4/4" (its first metre)
     juce::String action, actionDetail, pill;                       // "Press Space to start", "2 bars of count-in, then bar 1.", "✓ READY"
     Readiness readiness = Readiness::None;
     double loadProgress = 0.0;
@@ -47,6 +47,7 @@ struct ShowState {
     std::vector<After> after;                                      // between songs only; Played is NowPlaying::lastPlayedIndex
                                                                    // (none before the first song ends or is stopped)
     juce::StringArray hints;                                       // the key hints along the bottom
+    juce::String setlistName;                                      // the stage view, once the last song has ended
     bool operator==(const ShowState&) const = default;
 };
 

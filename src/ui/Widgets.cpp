@@ -620,4 +620,45 @@ float drawKey(juce::Graphics& g, const juce::String& key, float x, float centreY
     return w;
 }
 
+// ---- Key hints -------------------------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr float kHintKeyGap = 3.0f, kHintWordGap = 4.0f;
+
+bool isKey(const juce::String& word) {
+    for (const char* key : {"\xe2\x86\x90", "\xe2\x86\x92", "\xe2\x86\x91", "\xe2\x86\x93", "Space", "Tab", "Esc"})
+        if (word == juce::String::fromUTF8(key)) return true;
+    return false;
+}
+
+}  // namespace
+
+float hintWidth(const juce::String& hint, const juce::Font& font) {
+    const auto words = juce::StringArray::fromTokens(hint, " ", "");
+    float width = 0.0f;
+    for (int i = 0; i < words.size(); ++i) {
+        if (i > 0) width += isKey(words[i]) && isKey(words[i - 1]) ? kHintKeyGap : kHintWordGap;
+        width += isKey(words[i]) ? keyWidth(words[i]) : widthOf(font, words[i]);
+    }
+    return width;
+}
+
+void drawHint(juce::Graphics& g, const juce::String& hint, const juce::Font& font, float x, float centreY) {
+    const auto words = juce::StringArray::fromTokens(hint, " ", "");
+    const float height = std::ceil(font.getHeight()) + 4.0f;
+    for (int i = 0; i < words.size(); ++i) {
+        if (i > 0) x += isKey(words[i]) && isKey(words[i - 1]) ? kHintKeyGap : kHintWordGap;
+        if (isKey(words[i])) {
+            x += drawKey(g, words[i], x, centreY);
+        } else {
+            const float w = widthOf(font, words[i]);
+            g.setFont(font);
+            g.setColour(theme::dim);
+            g.drawText(words[i], juce::Rectangle<float>(x, centreY - 0.5f * height, w + 1.0f, height), juce::Justification::centredLeft, false);
+            x += w;
+        }
+    }
+}
+
 }  // namespace sqlive::ui
