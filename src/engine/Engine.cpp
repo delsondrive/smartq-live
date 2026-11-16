@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 namespace sqlive::engine {
@@ -29,6 +30,9 @@ void Engine::prepare(double sampleRate, int maxBlockFrames, int numOutputChannel
     // it never goes backwards, so times from before and after a device restart stay comparable.
     playing_ = {};
     state_ = PlayState::Stopped;
+    in_gap_ = false;
+    gap_left_ = 0;
+    gap_after_ = 0;
     song_time_ = 0;
     fade_pos_ = 0;
     publishStatus();
@@ -82,15 +86,25 @@ void Engine::collectGarbage() {
     while (garbage_.pop(object)) object.reset();
 }
 
+// A sequence lock: retried until the fields were read between two equal, even counts, so they all come from one publish.
+// The writer holds it for a handful of stores, so a retry is rare and short; it never waits on the reader.
 EngineStatus Engine::status() const noexcept {
-    EngineStatus s;
-    s.state = status_state_.load(std::memory_order_acquire);
-    s.inGap = status_in_gap_.load(std::memory_order_relaxed);
-    s.playingSerial = status_playing_.load(std::memory_order_relaxed);
-    s.cuedSerial = status_cued_.load(std::memory_order_relaxed);
-    s.songTime = status_song_time_.load(std::memory_order_relaxed);
-    s.streamTime = status_stream_time_.load(std::memory_order_relaxed);
-    return s;
+    for (int spins = 0;;) {
+        const std::uint64_t before = status_seq_.load(std::memory_order_acquire);
+        if ((before & 1u) == 0) {
+            EngineStatus s;
+            s.state = status_state_.load(std::memory_order_relaxed);
+            s.inGap = status_in_gap_.load(std::memory_order_relaxed);
+            s.playingSerial = status_playing_.load(std::memory_order_relaxed);
+            s.cuedSerial = status_cued_.load(std::memory_order_relaxed);
+            s.songTime = status_song_time_.load(std::memory_order_relaxed);
+            s.streamTime = status_stream_time_.load(std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_acquire);   // the loads above happen before the count is read again
+            if (status_seq_.load(std::memory_order_relaxed) == before) return s;
+        }
+        if (spins < 64) ++spins;
+        else std::this_thread::yield();                             // the writer may have been preempted mid-publish
+    }
 }
 
 double Engine::sampleRate() const noexcept { return sample_rate_.load(std::memory_order_relaxed); }
@@ -142,6 +156,14 @@ void Engine::handle(Command& command) noexcept {
         break;
     case Type::Stop:
         if (state_ != PlayState::Playing) break;
+        if (in_gap_) {   // nothing sounds, so there is nothing to fade: stopped at once, for the song that ended; the cue stays
+            report(EngineEvent::Type::Stopped, gap_after_, stream_time_);
+            in_gap_ = false;
+            gap_left_ = 0;
+            gap_after_ = 0;
+            state_ = PlayState::Stopped;
+            break;
+        }
         state_ = PlayState::Stopping;
         fade_pos_ = 0;
         if (fade_length_ <= 0) finishSong(EngineEvent::Type::Stopped, stream_time_);
@@ -176,26 +198,43 @@ void Engine::handle(Command& command) noexcept {
 
 void Engine::startPlaying(SamplePos songTime) noexcept {
     if (state_ != PlayState::Stopped || cued_.song == nullptr) return;
+    playCued(songTime, stream_time_, true);
+}
+
+// The cue becomes the playing song, from songTime; streamTime is that of its first sample. The cue must be set and nothing
+// may be playing.
+void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix) noexcept {
     playing_.hold = std::move(cued_.hold);
     playing_.song = cued_.song;
     playing_.serial = cued_.serial;
     cued_ = {};   // its hold was moved out, so this frees nothing
     // setSong resets the song's own levels; any live level for this song comes after it. Dropping the mix first makes
-    // setMix snap, so the song hears the current mix from its first sample rather than gliding in from an older one.
+    // setMix snap, so a song started out of silence hears the current mix from its first sample rather than gliding in
+    // from an older one. A song that follows straight on keeps the glide going, as the song before it would have.
     renderer_.setSong(playing_.song);
-    renderer_.setMix(nullptr);
-    renderer_.setMix(mix_);
+    if (snapMix) {
+        renderer_.setMix(nullptr);
+        renderer_.setMix(mix_);
+    }
     state_ = PlayState::Playing;
     song_time_ = songTime;
     fade_pos_ = 0;
-    report(EngineEvent::Type::Started, playing_.serial, stream_time_);
+    report(EngineEvent::Type::Started, playing_.serial, streamTime);
 }
 
-// Renders out[offset, offset + frames), at most max_block_ frames, which already hold silence. The song can end, or the stop
-// fade finish, partway through: everything is worked out from song time and fade position, never from where a block begins.
+// Renders out[offset, offset + frames), at most max_block_ frames, which already hold silence. The song can end, the stop
+// fade finish, or a gap run out partway through, and what follows renders from the very next sample: everything is worked
+// out from song time, fade position and gap length, never from where a block begins.
 void Engine::renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept {
     int pos = 0;
     while (pos < frames && state_ != PlayState::Stopped) {
+        if (in_gap_) {   // silence, already in out
+            const std::int64_t n = std::min<std::int64_t>(frames - pos, gap_left_);
+            pos += static_cast<int>(n);
+            gap_left_ -= n;
+            if (gap_left_ <= 0) endGap(stream_time_ + pos);
+            continue;
+        }
         const PreparedSong& song = *playing_.song;
         std::int64_t n = std::min<std::int64_t>(frames - pos, std::max<std::int64_t>(0, song.end - song_time_));
         const float* envelope = nullptr;
@@ -222,14 +261,55 @@ void Engine::renderChunk(float* const* out, int numChannels, int offset, int fra
     stream_time_ += frames;
 }
 
-// The playing song is over: it ended by itself, or its stop fade finished. Task 7 decides here what follows on.
+// The playing song is over at streamTime: it ended by itself, or its stop fade finished. A song that ended by itself is
+// followed by the cue, as the latest follow-on says; with nothing cued, after a stop, or with follow-on Stop, the engine
+// stops and keeps the cue.
 void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcept {
-    report(type, playing_.serial, streamTime);
+    const std::uint64_t ended = playing_.serial;
+    report(type, ended, streamTime);
     renderer_.setSong(nullptr);   // before the song can be freed
     retire(playing_);
     state_ = PlayState::Stopped;
     song_time_ = 0;
     fade_pos_ = 0;
+    if (type != EngineEvent::Type::Ended || cued_.song == nullptr) return;
+
+    switch (follow_.kind) {
+    case FollowKind::Stop:
+        break;
+    case FollowKind::Seamless:   // straight into bar 1: the count-in is skipped
+        playCued(cued_.song->bodyStart, streamTime, false);
+        break;
+    case FollowKind::Gap:        // silence, then the whole song, count-in included
+        gap_left_ = gapFrames();
+        if (gap_left_ <= 0) {
+            playCued(cued_.song->start, streamTime, false);
+            break;
+        }
+        state_ = PlayState::Playing;
+        in_gap_ = true;
+        gap_after_ = ended;
+        break;
+    }
+}
+
+// The gap is over at streamTime: the cue plays from its start, or, if it was cleared meanwhile, the engine stops. The song
+// before the gap has already reported Ended, so stopping here reports nothing.
+void Engine::endGap(std::int64_t streamTime) noexcept {
+    in_gap_ = false;
+    gap_left_ = 0;
+    gap_after_ = 0;
+    if (cued_.song != nullptr)
+        playCued(cued_.song->start, streamTime, true);
+    else
+        state_ = PlayState::Stopped;
+}
+
+std::int64_t Engine::gapFrames() const noexcept {
+    constexpr double kLongest = 1.0e12;   // far longer than any show, and safe for llround
+    const double frames = follow_.gapSeconds * sample_rate_.load(std::memory_order_relaxed);
+    if (!(frames > 0.0)) return 0;        // also NaN
+    return std::llround(std::min(frames, kLongest));
 }
 
 void Engine::report(EngineEvent::Type type, std::uint64_t serial, std::int64_t streamTime) noexcept {
@@ -262,13 +342,18 @@ void Engine::flushHeld() noexcept {
     held_count_ = kept;
 }
 
+// The one writer: the audio thread, or prepare while process is not running. Never waits.
 void Engine::publishStatus() noexcept {
-    status_in_gap_.store(false, std::memory_order_relaxed);
+    const std::uint64_t seq = status_seq_.load(std::memory_order_relaxed);
+    status_seq_.store(seq + 1, std::memory_order_relaxed);       // odd: writing
+    std::atomic_thread_fence(std::memory_order_release);         // a reader that sees any store below sees the odd count
+    status_state_.store(state_, std::memory_order_relaxed);
+    status_in_gap_.store(in_gap_, std::memory_order_relaxed);
     status_playing_.store(playing_.serial, std::memory_order_relaxed);
     status_cued_.store(cued_.serial, std::memory_order_relaxed);
     status_song_time_.store(state_ != PlayState::Stopped ? song_time_ : 0, std::memory_order_relaxed);
     status_stream_time_.store(stream_time_, std::memory_order_relaxed);
-    status_state_.store(state_, std::memory_order_release);
+    status_seq_.store(seq + 2, std::memory_order_release);       // even: done
 }
 
 } // namespace sqlive::engine

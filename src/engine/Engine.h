@@ -58,7 +58,7 @@ public:
     bool popEvent(EngineEvent&);
     void collectGarbage();                // frees what the audio thread has finished with
 
-    EngineStatus status() const noexcept; // any thread
+    EngineStatus status() const noexcept; // any thread; all fields from one publish (a block's end)
     double sampleRate() const noexcept;
 
 private:
@@ -82,14 +82,23 @@ private:
 
     // Objects that could not go onto a full garbage queue wait here, in place, for the next block. A block retires at most
     // one object per command and kRetiresPerRender while rendering, so commands wait while this is nearly full.
+    // Rendering retires only songs that end, and only the playing song and the cue can: commands, which alone fill the
+    // cue, are taken at the start of a block. So a block's render retires at most kSongSlots objects, even when the
+    // playing song ends and its follow-on (seamless, or after a gap) ends in the same block.
     static constexpr int kHeldCapacity = 16;
     static constexpr int kRetiresPerRender = 4;
+    static constexpr int kSongSlots = 2;   // playing_ and cued_
+    static_assert(kRetiresPerRender >= kSongSlots, "a block's render can retire the playing song and the cue");
+    static_assert(1 + kRetiresPerRender <= kHeldCapacity, "room for one command and a render");
 
     void push(Command&&);
     void handle(Command&) noexcept;
     void startPlaying(SamplePos songTime) noexcept;
+    void playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix) noexcept;
     void renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept;
     void finishSong(EngineEvent::Type, std::int64_t streamTime) noexcept;
+    void endGap(std::int64_t streamTime) noexcept;
+    std::int64_t gapFrames() const noexcept;
     void report(EngineEvent::Type, std::uint64_t serial, std::int64_t streamTime) noexcept;
     void retire(std::shared_ptr<const void>&) noexcept;
     void retire(SongSlot&) noexcept;
@@ -101,6 +110,9 @@ private:
     SpscQueue<std::shared_ptr<const void>> garbage_;
     SpscQueue<EngineEvent> events_;
     std::atomic<double> sample_rate_{0.0};
+    // The status fields are written together once per process (and by prepare). status_seq_ is odd while they are being
+    // written and even once done, so a reader that sees the same even value before and after reading them has one snapshot.
+    std::atomic<std::uint64_t> status_seq_{0};
     std::atomic<PlayState> status_state_{PlayState::Stopped};
     std::atomic<bool> status_in_gap_{false};
     std::atomic<std::uint64_t> status_playing_{0};
@@ -119,8 +131,11 @@ private:
     SongSlot playing_, cued_;
     std::shared_ptr<const void> mix_hold_;
     const MixSetup* mix_ = nullptr;
-    FollowOn follow_;                        // what follows when the playing song ends; Task 7 acts on it
-    PlayState state_ = PlayState::Stopped;
+    FollowOn follow_;                        // what follows when the playing song ends, read at that moment
+    PlayState state_ = PlayState::Stopped;   // Playing during a gap too
+    bool in_gap_ = false;                    // silence between a song that ended and its follow-on; playing_ is empty
+    std::int64_t gap_left_ = 0;              // samples of the gap still to come
+    std::uint64_t gap_after_ = 0;            // the serial of the song that ended before the gap, for a stop inside it
     SamplePos song_time_ = 0;
     std::int64_t stream_time_ = 0;
     std::int64_t fade_length_ = 0;
