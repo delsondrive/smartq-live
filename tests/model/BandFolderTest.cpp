@@ -90,3 +90,21 @@ TEST_CASE("a half-synced folder loads what it can and says what it couldn't", "[
     CHECK_FALSE(missing.bandFound);
     CHECK_FALSE(root.getChildFile("band.json").exists());           // loading never writes
 }
+TEST_CASE("a part's file is found only inside its song's folder", "[folder]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    SongDoc s; s.id = newId(); s.title = "One";
+    auto dir = folder.assignSongFolder(s.id, s.title);
+    t.dir().getChildFile("secret.wav").replaceWithText("x");
+    auto part = [](const char* file) { PartDoc p; p.id = "p"; p.file = file; return p; };
+    CHECK(folder.audioFile(s, part("audio/Keys.wav")) == dir.getChildFile("audio/Keys.wav"));
+    CHECK(folder.audioFile(s, part(R"(audio\Keys.wav)")) == dir.getChildFile("audio/Keys.wav"));
+    CHECK(folder.audioFile(s, part("./Keys.wav")) == dir.getChildFile("Keys.wav"));
+    for (auto* bad : {"../../../secret.wav", "audio/../../One/x.wav", R"(..\x.wav)", "..",
+                      R"(C:\Windows\win.ini)", "C:secret.wav", "/etc/passwd", R"(\secret.wav)",
+                      R"(\\server\share\x.wav)", "//server/share/x.wav", "", "audio/Keys.wav:stream"}) {
+        INFO(bad);
+        CHECK(folder.audioFile(s, part(bad)) == juce::File());
+    }
+    CHECK(folder.audioFile(s, part(t.dir().getChildFile("secret.wav").getFullPathName().toRawUTF8())) == juce::File());
+}

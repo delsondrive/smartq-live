@@ -4,6 +4,7 @@
 #include <functional>
 #include <set>
 
+#include "model/FileNames.h"
 #include "model/Units.h"
 
 namespace sqlive::model {
@@ -271,6 +272,10 @@ void read(Reader& r, ClickDoc& out) {
 }
 void read(Reader& r, PartDoc& out, std::set<juce::String>& seen) {
     out.id = r.id(seen); out.name = r.text("name"); out.file = r.text("file"); out.roleId = r.text("roleId");
+    if (out.file.isNotEmpty() && ! isPathInsideFolder(out.file)) {
+        r.note(r.where("file") + " points outside the song's folder, so it is ignored.");
+        out.file = {};
+    }
     out.gainDb = r.db("gainDb", 0.0f); out.mute = r.flag("mute", false); out.channels = r.whole("channels", 2, 1, 2);
     out.extra = r.rest();
 }

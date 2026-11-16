@@ -125,8 +125,12 @@ juce::File BandFolder::assignSongFolder(const juce::String& songId, const juce::
 }
 
 juce::File BandFolder::audioFile(const SongDoc& song, const PartDoc& part) const {
+    // The file comes from a synced folder that anyone in the band can edit, so it may name only something inside the song's
+    // folder; anything else is treated as a missing file.
     auto dir = songFolder(song.id);
-    return dir == juce::File() ? juce::File() : dir.getChildFile(part.file);
+    if (dir == juce::File() || ! isPathInsideFolder(part.file)) return {};
+    auto file = dir.getChildFile(part.file);
+    return file.isAChildOf(dir) ? file : juce::File();
 }
 
 juce::File BandFolder::fileFor(const DocKey& key) const {

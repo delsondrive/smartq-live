@@ -80,3 +80,13 @@ TEST_CASE("a missing output label is noted", "[json]") {
     CHECK(rig.outputs[0].label == OutputLabel::Unused);
     CHECK(notes.notes.joinIntoString(" ").contains("outputs[0].label is missing"));
 }
+TEST_CASE("a part's file that points outside the song's folder is ignored and noted", "[json]") {
+    SongDoc song; ParseNotes notes;
+    REQUIRE(fromJson(R"({"version":1,"parts":[{"id":"a","file":"../other/x.wav"},{"id":"b","file":"audio/Keys.wav"},
+                         {"id":"c","file":"C:\\Windows\\x.wav"}]})", song, notes));
+    REQUIRE(song.parts.size() == 3);
+    CHECK(song.parts[0].file.isEmpty());  CHECK(song.parts[1].file == "audio/Keys.wav");  CHECK(song.parts[2].file.isEmpty());
+    CHECK(notes.notes.contains("parts[0].file points outside the song's folder, so it is ignored."));
+    CHECK(notes.notes.contains("parts[2].file points outside the song's folder, so it is ignored."));
+    CHECK(notes.notes.size() == 2);
+}

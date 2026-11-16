@@ -34,6 +34,13 @@ juce::String safeFileName(const juce::String& title) {
     return out;
 }
 
+bool isPathInsideFolder(const juce::String& path) {
+    if (path.isEmpty() || path.startsWithChar('/') || path.startsWithChar('\\') || path.containsChar(':')) return false;
+    juce::StringArray steps;
+    steps.addTokens(path, "/\\", "");
+    return ! steps.contains("..");
+}
+
 juce::File uniqueChild(const juce::File& folder, const juce::String& name, const juce::String& extension) {
     auto candidate = folder.getChildFile(name + extension);
     for (int n = 2; candidate.exists(); ++n) candidate = folder.getChildFile(name + " " + juce::String(n) + extension);

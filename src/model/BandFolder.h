@@ -20,7 +20,7 @@ public:
     juce::File fileFor(const DocKey&) const;                     // where it is, or would be, saved (a song with no folder yet: songs/<id>/song.json)
     juce::File songFolder(const juce::String& songId) const;     // {} if the song has no folder yet
     juce::File assignSongFolder(const juce::String& songId, const juce::String& title);   // makes songs/<name>/ and remembers it
-    juce::File audioFile(const SongDoc&, const PartDoc&) const;  // the song's folder + part.file
+    juce::File audioFile(const SongDoc&, const PartDoc&) const;  // the song's folder + part.file; {} unless inside that folder
 
 private:
     juce::File place(const DocKey&) const;                       // folder (song) or file (setlist, rig); {} when unknown
