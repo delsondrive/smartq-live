@@ -23,8 +23,8 @@ class PreShowDialog;
 
 // The page host: the top bar, then the content (an Edit page chosen by tab, or in Show mode the main or stage view, which
 // Tab switches), then banners over the content's top edge (the red InterruptedBanner, and under it the amber
-// KeyboardBanner), then a dialog over everything, on a veil. It refreshes on Session::changes() and 30 times a second for
-// the clock. Pages and views are plugged in by plugInPages (Pages.h); a page not plugged in yet shows nothing.
+// KeyboardBanner; while a show song is cut off, the ComesBackBox near the bottom), then a dialog over everything, on a
+// veil. It refreshes on Session::changes() and 30 times a second for the clock. Pages and views are plugged in by plugInPages (Pages.h); a page not plugged in yet shows nothing.
 //
 // In Show mode nothing here writes the band folder: the top bar shows no Undo, and an undo asked for anyway is ignored.
 // Tonight's level changes are asked about only in Edit mode, and always there while Session::hasTonightChanges(): they
@@ -51,6 +51,7 @@ public:
 
     bool showingPreShowDialog() const;
     bool showingInterruptedBanner() const;
+    bool showingComesBackBox() const;                             // the "WHEN IT COMES BACK" box: a show song was cut off
     bool showingTonightQuestion() const;
     void answerTonightQuestion(bool keep);                        // "Keep them" or "Drop them"; ignored when it isn't asked
 
@@ -85,6 +86,7 @@ private:
     std::unique_ptr<juce::Component> mainView_, stageView_;
     TopBar topBar_;
     InterruptedBanner interrupted_;
+    ComesBackBox comesBack_;
     KeyboardBanner banner_;
     std::unique_ptr<Veil> preShow_, tonight_;
     std::vector<std::unique_ptr<Veil>> closed_;                   // hidden, waiting to be deleted

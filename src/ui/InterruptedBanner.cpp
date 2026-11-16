@@ -4,6 +4,7 @@
 
 #include "app/AudioHost.h"
 #include "ui/Theme.h"
+#include "ui/Widgets.h"
 
 namespace sqlive::ui {
 
@@ -44,14 +45,15 @@ void InterruptedBanner::refresh() {
     const auto now = session_.now();
     const bool lost = host_ != nullptr && host_->isLost();
     juce::String heading, sentence;
-    if (lost) {
+    if (session_.mode() != app::Mode::Show) {
+        // Edit mode: nothing; the top bar's pill says the audio is lost, and the pages stay uncovered.
+    } else if (lost) {
         heading = warningSign() + "Audio interface disconnected";
         sentence = now.interrupted ? "Paused at bar " + juce::String(now.bar) + ". Waiting for it to come back."
                                    : juce::String("No song was playing. Waiting for it to come back.");
     } else if (now.interrupted) {
         heading = "The audio interface is back.";
-        sentence = session_.mode() == app::Mode::Show ? "Press Space to start the song again from the top."
-                                                      : "Play the song again when you're ready.";
+        sentence = "Press Space to start the song again from the top.";
     }
     const bool wanted = heading.isNotEmpty();
     if (wanted == wanted_ && heading == heading_ && sentence == sentence_) return;
@@ -79,6 +81,60 @@ void InterruptedBanner::paint(juce::Graphics& g) {
     area.removeFromLeft(kGap);
     g.setFont(theme::font(theme::sizeBase, true));
     g.drawFittedText(sentence_, area, juce::Justification::centredLeft, 2, 1.0f);
+}
+
+// ---- When it comes back ------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The mockup's .box (panel, hairline, 10 px corners, 10 px by 12 px of padding), its h4 (11 px bold, 0.8 px apart, dim,
+// 6 px under it) and the hint (13 px in mid, its keys as kbd: 3 px between keys, 4 px between other words).
+constexpr int kBoxPadX = 12, kBoxPadY = 10, kCaptionHeight = 15, kCaptionGap = 6, kHintLine = 20;
+constexpr float kKeyGap = 3.0f, kWordGap = 4.0f;
+
+bool isKeyName(const juce::String& word) {
+    return word == "Space" || word == juce::String::fromUTF8("\xe2\x86\x90") || word == juce::String::fromUTF8("\xe2\x86\x92");
+}
+
+}  // namespace
+
+ComesBackBox::ComesBackBox() {
+    setWantsKeyboardFocus(false);
+    setInterceptsMouseClicks(false, false);
+}
+
+juce::String ComesBackBox::title() const { return "WHEN IT COMES BACK"; }
+
+juce::String ComesBackBox::hint() const {
+    return juce::String::fromUTF8("Space restarts the song from the top \xc2\xb7 \xe2\x86\x90 \xe2\x86\x92 choose another song. "
+                                  "Nothing starts by itself.");
+}
+
+void ComesBackBox::paint(juce::Graphics& g) {
+    theme::paintPanel(g, getLocalBounds().toFloat());
+    auto area = getLocalBounds().reduced(kBoxPadX, kBoxPadY);
+
+    g.setColour(theme::dim);
+    g.setFont(theme::tracked(theme::font(theme::sizeCaption, true), 0.8f));
+    g.drawText(title(), area.removeFromTop(kCaptionHeight), juce::Justification::centredLeft, false);
+    area.removeFromTop(kCaptionGap);
+
+    const auto line = area.removeFromTop(kHintLine).toFloat();
+    const auto font = theme::font(theme::sizeBody);
+    const auto words = juce::StringArray::fromTokens(hint(), " ", "");
+    float x = line.getX();
+    for (int i = 0; i < words.size(); ++i) {
+        if (i > 0) x += isKeyName(words[i]) && isKeyName(words[i - 1]) ? kKeyGap : kWordGap;
+        if (isKeyName(words[i])) {
+            x += drawKey(g, words[i], x, line.getCentreY());
+            continue;
+        }
+        const float w = juce::GlyphArrangement::getStringWidth(font, words[i]);
+        g.setColour(theme::mid);
+        g.setFont(font);
+        g.drawText(words[i], juce::Rectangle<float>(x, line.getY(), w + 1.0f, line.getHeight()), juce::Justification::centredLeft, false);
+        x += w;
+    }
 }
 
 }  // namespace sqlive::ui

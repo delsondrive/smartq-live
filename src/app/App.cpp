@@ -84,6 +84,12 @@ void App::closeBand() {
     session_.reset();
 }
 
+bool App::mayQuitNow() {
+    if (session_ == nullptr || ui::mayCloseNow(*session_)) return true;
+    if (window_ != nullptr) window_->refuseClose();
+    return false;
+}
+
 void App::quit() {
     if (session_ != nullptr) session_->flushNow();
     if (onQuit) onQuit();

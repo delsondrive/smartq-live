@@ -23,6 +23,11 @@ public:
         if (!app_->wantsWindow()) quit();
     }
 
+    // Windows shutting down, logging off or restarting for an update: never while a song plays in Show mode.
+    void systemRequestedQuit() override {
+        if (app_ == nullptr || app_->mayQuitNow()) quit();
+    }
+
     void shutdown() override {
         app_.reset();
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);

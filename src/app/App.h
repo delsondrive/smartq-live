@@ -27,6 +27,9 @@ public:
 
     bool wantsWindow() const;                                     // false: nothing is on screen and nothing will be; quit
     std::function<void()> onQuit;                                 // the app should quit (the window was closed)
+    // The system asks the app to quit (Windows shutting down, logging off, restarting for an update): false while a song
+    // plays in Show mode (ui::mayCloseNow), and the window says so as its close button does; true otherwise.
+    bool mayQuitNow();
 
     void openBand(const juce::File& root);                        // closes the band that is open, if any
 

@@ -11,6 +11,7 @@
 #include "tests/support/Pixels.h"
 #include "ui/AppShell.h"
 #include "ui/InterruptedBanner.h"
+#include "ui/MainWindow.h"
 #include "ui/PreShowDialog.h"
 #include "ui/Theme.h"
 
@@ -149,4 +150,64 @@ TEST_CASE("the tonight question waits while a show runs again", "[showflow]") {
     CHECK(s.hasTonightChanges());
     s.leaveShow();  d.settle();
     CHECK(shell.showingTonightQuestion());                        // asked again on the way out
+}
+
+// ---- Fix round 1 -------------------------------------------------------------------------------------------------------
+
+TEST_CASE("the red banner is for Show mode only", "[showflow]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(*d.session);
+    sqlive::test::ScopedLook look;
+    ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
+    host.deviceLost();  d.settle();
+    CHECK_FALSE(shell.showingInterruptedBanner());                // Edit mode: the top bar's "Audio lost" pill says it
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  d.settle();
+    s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    host.deviceLost();  d.settle();
+    REQUIRE(shell.showingInterruptedBanner());
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  d.settle();
+    REQUIRE(s.now().interrupted);
+    REQUIRE(s.leaveShow());  d.settle();
+    CHECK_FALSE(shell.showingInterruptedBanner());                // the "back" sentence stays off the Edit pages
+}
+TEST_CASE("a song cut off in Show mode says what happens when the device comes back", "[showflow]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(*d.session);
+    sqlive::test::ScopedLook look;
+    ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
+    s.enterShow();  d.settle();
+    host.deviceLost();  d.settle();
+    CHECK_FALSE(shell.showingComesBackBox());                     // between songs: nothing was cut off
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  d.settle();
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    host.deviceLost();  d.settle();
+    CHECK(shell.showingComesBackBox());
+    // The mockup's box: 28 px from either side and 24 px from the bottom, its caption in dim (nothing else is drawn there).
+    const juce::Rectangle<int> boxArea{28, 760 - 24 - ui::ComesBackBox::height, 1280 - 56, ui::ComesBackBox::height};
+    CHECK(hasColour(snapshot(shell, 1280, 760).getClippedImage(boxArea), theme::dim));
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  d.settle();
+    CHECK(shell.showingComesBackBox());                           // nothing starts by itself
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);  d.settle();
+    CHECK_FALSE(shell.showingComesBackBox());
+    CHECK_FALSE(hasColour(snapshot(shell, 1280, 760).getClippedImage(boxArea), theme::dim));
+    ui::ComesBackBox box;
+    CHECK(box.title() == "WHEN IT COMES BACK");
+    CHECK(box.hint() == juce::String::fromUTF8("Space restarts the song from the top \xc2\xb7 \xe2\x86\x90 \xe2\x86\x92 choose another song. "
+                                               "Nothing starts by itself."));
+}
+TEST_CASE("the window closes, and the app quits, only when no show song is playing", "[showflow]") {
+    DemoSession d; auto& s = *d.session;
+    CHECK(ui::mayCloseNow(s));
+    s.enterShow();
+    CHECK(ui::mayCloseNow(s));                                    // a show between songs may close: it reopens in Show mode
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    REQUIRE(s.now().playing);
+    CHECK_FALSE(ui::mayCloseNow(s));
+    s.perform(Action::Stop);  s.advanceWithoutDevice(48000 * 2);  d.settle();
+    REQUIRE_FALSE(s.now().playing);
+    CHECK(ui::mayCloseNow(s));
+}
+TEST_CASE("the keyboard is elsewhere only in Show mode, and not while the app's own dialog has it", "[showflow]") {
+    CHECK(ui::keyboardElsewhere(true, false, 0));
+    CHECK_FALSE(ui::keyboardElsewhere(true, true, 0));            // the window has it
+    CHECK_FALSE(ui::keyboardElsewhere(false, false, 0));          // Edit mode never says so
+    CHECK_FALSE(ui::keyboardElsewhere(true, false, 1));           // one of the app's own modal dialogs has it
 }

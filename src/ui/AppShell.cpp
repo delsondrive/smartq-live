@@ -130,6 +130,7 @@ AppShell::AppShell(app::Session& session, app::AudioHost* host)
     addAndMakeVisible(topBar_);
 
     addChildComponent(interrupted_);
+    addChildComponent(comesBack_);
     banner_.onClick = [this] { takeKeyboard(); };
     addChildComponent(banner_);
 
@@ -220,6 +221,7 @@ void AppShell::setKeyboardElsewhere(bool elsewhere) {
 
 bool AppShell::showingPreShowDialog() const { return preShow_ != nullptr; }
 bool AppShell::showingInterruptedBanner() const { return interrupted_.isVisible(); }
+bool AppShell::showingComesBackBox() const { return comesBack_.isVisible(); }
 bool AppShell::showingTonightQuestion() const { return tonight_ != nullptr; }
 
 void AppShell::answerTonightQuestion(bool keep) {
@@ -239,6 +241,7 @@ void AppShell::resized() {
     for (auto* view : {mainView_.get(), stageView_.get()})
         if (view != nullptr) view->setBounds(area);
     // The red banner first, the amber one under it when both are up.
+    comesBack_.setBounds(area.withTrimmedBottom(24).reduced(28, 0).removeFromBottom(ComesBackBox::height));
     interrupted_.setBounds(area.withHeight(InterruptedBanner::height));
     if (interrupted_.isVisible()) area.removeFromTop(InterruptedBanner::height);
     banner_.setBounds(area.withHeight(KeyboardBanner::height));
@@ -268,6 +271,9 @@ void AppShell::refreshTopBar() { topBar_.setState(makeTopBarState(session_, host
 
 void AppShell::refreshBanners() {
     interrupted_.refresh();
+    // The box goes with the banner while the song it was playing waits to start again from the top.
+    const bool box = interrupted_.wanted() && session_.now().interrupted;
+    if (box != comesBack_.isVisible()) comesBack_.setVisible(box);
     if (interrupted_.wanted() == interrupted_.isVisible()) return;
     interrupted_.setVisible(interrupted_.wanted());
     resized();
@@ -315,6 +321,7 @@ void AppShell::close(std::unique_ptr<Veil>& veil) {
 
 void AppShell::raiseOverlays() {
     interrupted_.toFront(false);
+    comesBack_.toFront(false);
     banner_.toFront(false);
     for (auto* veil : {preShow_.get(), tonight_.get()})
         if (veil != nullptr) veil->toFront(false);

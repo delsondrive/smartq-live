@@ -46,29 +46,35 @@ void MainWindow::setKioskAllowed(bool allowed) {
     juce::Desktop::getInstance().setKioskModeComponent(kiosk_ ? this : nullptr, false);
 }
 
+bool mayCloseNow(const app::Session& session) { return !(session.mode() == Mode::Show && session.now().playing); }
+
+bool keyboardElsewhere(bool inShow, bool active, int modalCount) {
+    // One of the app's own modal dialogs has the keyboard on purpose; the amber banner would only show behind it.
+    return inShow && !active && modalCount == 0;
+}
+
 void MainWindow::closeButtonPressed() {
-    if (session_.mode() == Mode::Show && session_.now().playing) {
-        message_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
-                                                          .withIconType(juce::MessageBoxIconType::NoIcon)
-                                                          .withAssociatedComponent(&shell_)
-                                                          .withTitle("Stop the song before closing Smart Q Live.")
-                                                          .withButton("OK"),
-                                                      nullptr);
+    if (!mayCloseNow(session_)) {
+        refuseClose();
         return;
     }
     if (onClose) onClose();
 }
 
+void MainWindow::refuseClose() {
+    message_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
+                                                      .withIconType(juce::MessageBoxIconType::NoIcon)
+                                                      .withAssociatedComponent(&shell_)
+                                                      .withTitle("Stop the song before closing Smart Q Live.")
+                                                      .withButton("OK"),
+                                                  nullptr);
+}
+
 void MainWindow::activeWindowStatusChanged() {
     juce::DocumentWindow::activeWindowStatusChanged();
     if (!isActiveWindow()) controller_.keyboardLost();           // a key held as the keyboard leaves never acts
-    shell_.setKeyboardElsewhere(keyboardElsewhere());
-}
-
-bool MainWindow::keyboardElsewhere() const {
-    // One of the app's own modal dialogs has the keyboard on purpose; the amber banner would only show behind it.
-    const bool ownDialog = juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0;
-    return inShow_ && !isActiveWindow() && !ownDialog;
+    shell_.setKeyboardElsewhere(
+        keyboardElsewhere(inShow_, isActiveWindow(), juce::ModalComponentManager::getInstance()->getNumModalComponents()));
 }
 
 void MainWindow::changeListenerCallback(juce::ChangeBroadcaster*) { followMode(); }
@@ -81,7 +87,8 @@ void MainWindow::followMode() {
         addKeyListener(&controller_);
         juce::Desktop::setScreenSaverEnabled(false);
         shell_.grabKeyboardFocus();
-        shell_.setKeyboardElsewhere(keyboardElsewhere());
+        shell_.setKeyboardElsewhere(
+            keyboardElsewhere(true, isActiveWindow(), juce::ModalComponentManager::getInstance()->getNumModalComponents()));
     } else {
         removeKeyListener(&controller_);
         controller_.keyboardLost();
