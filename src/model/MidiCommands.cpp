@@ -4,6 +4,8 @@
 #include <set>
 #include <tuple>
 
+#include <juce_gui_basics/juce_gui_basics.h>
+
 #include "engine/Midi.h"
 #include "model/ActionNames.h"
 #include "model/CommandParams.h"
@@ -248,6 +250,7 @@ void registerMidiCommands(CommandLayer& layer) {
         }
         ControlBinding binding; ParseNotes notes;
         if (! fromVar(p.raw("binding"), binding, notes)) refuse("That isn't a binding.");
+        if (binding.keyCode == juce::KeyPress::escapeKey) refuse("Esc is kept for stopping the song: press it twice.");
         juce::StringArray keyTaken, pedalTaken;
         std::vector<std::pair<String, ControlBinding>> changes;
         for (auto& other : actionInfos()) {

@@ -46,6 +46,8 @@ TEST_CASE("MIDI devices, changes and controls are edited through commands", "[mi
     auto pedal = run("controls.set", params({{"action", "stop"}, {"binding", binding(0, 1, 10, 64)}}));
     CHECK(pedal.message == juce::String::fromUTF8("That pedal was used for “Next song: earlier”. Now it is used for “Stop”."));
     CHECK_FALSE(run("controls.set", params({{"action", "dance"}, {"binding", juce::var()}})).ok);
+    CHECK(run("controls.set", params({{"action", "stop"}, {"binding", binding(juce::KeyPress::escapeKey)}})).message
+          == "Esc is kept for stopping the song: press it twice.");
 }
 
 TEST_CASE("the actions are the mockup's rows", "[midicmd]") {

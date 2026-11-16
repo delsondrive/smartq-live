@@ -45,4 +45,17 @@ private:
     std::vector<model::ControlBinding> bindings_;      // by Action
 };
 
+// A letter's key code in upper case, so a key pressed with or without Shift or Caps Lock is the same key; others as they are.
+int sameKeyCode(int keyCode);
+
+// The band's ControlMap, built again only when the band's controls change.
+class BandControls {
+public:
+    const ControlMap& of(const model::BandDoc&);
+
+private:
+    std::map<juce::String, model::ControlBinding> seen_;
+    ControlMap map_{std::map<juce::String, model::ControlBinding>{}};   // the defaults, as for a band with none
+};
+
 }  // namespace sqlive::app

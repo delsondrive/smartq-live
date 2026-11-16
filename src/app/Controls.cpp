@@ -22,8 +22,6 @@ const model::ActionInfo& infoOf(Action a) {
     return model::actionInfos()[index];
 }
 
-// A letter's key code in one case, so 'q' and 'Q' are the same key.
-int sameCase(int keyCode) { return keyCode >= 'a' && keyCode <= 'z' ? keyCode - 'a' + 'A' : keyCode; }
 int keyboardOnly(int modifiers) { return modifiers & juce::ModifierKeys::allKeyboardModifiers; }
 
 // The message's kind and number as a binding has them; 0 when it can't be a control.
@@ -65,7 +63,7 @@ juce::String keyName(int keyCode) {
         if (n.code == keyCode) return juce::String::fromUTF8(n.utf8);
     if (keyCode >= K::F1Key && keyCode <= K::F16Key) return "F" + juce::String(1 + keyCode - K::F1Key);
     if (keyCode >= K::F17Key && keyCode <= K::F24Key) return "F" + juce::String(17 + keyCode - K::F17Key);
-    if (keyCode > 32 && keyCode < 127) return juce::String::charToString((juce::juce_wchar) sameCase(keyCode));
+    if (keyCode > 32 && keyCode < 127) return juce::String::charToString((juce::juce_wchar) sameKeyCode(keyCode));
     return K(keyCode).getTextDescription();             // anything else, as JUCE names it
 }
 
@@ -100,7 +98,7 @@ std::optional<Action> ControlMap::actionForKey(int keyCode, int modifiers) const
     if (keyCode == 0) return std::nullopt;
     for (auto a : actions()) {
         const auto& b = bindings_[static_cast<std::size_t>(a)];
-        if (b.keyCode != 0 && sameCase(b.keyCode) == sameCase(keyCode) && keyboardOnly(b.keyModifiers) == keyboardOnly(modifiers))
+        if (b.keyCode != 0 && sameKeyCode(b.keyCode) == sameKeyCode(keyCode) && keyboardOnly(b.keyModifiers) == keyboardOnly(modifiers))
             return a;
     }
     return std::nullopt;
@@ -156,6 +154,16 @@ juce::String ControlMap::describeMidi(const model::ControlBinding& b) {
 juce::String ControlMap::describe(const model::ControlBinding& b) {
     const auto key = describeKey(b);
     return key.isNotEmpty() ? key : describeMidi(b);
+}
+
+int sameKeyCode(int keyCode) { return keyCode >= 'a' && keyCode <= 'z' ? keyCode - 'a' + 'A' : keyCode; }
+
+const ControlMap& BandControls::of(const model::BandDoc& band) {
+    if (band.controls != seen_) {
+        seen_ = band.controls;
+        map_ = ControlMap(seen_);
+    }
+    return map_;
 }
 
 }  // namespace sqlive::app

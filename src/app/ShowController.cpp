@@ -8,9 +8,6 @@ namespace sqlive::app {
 namespace {
 double clockSeconds() { return juce::Time::getMillisecondCounterHiRes() / 1000.0; }
 
-// A letter's key code in one case, so a key pressed with and without Caps Lock is the same key.
-int sameCase(int keyCode) { return keyCode >= 'a' && keyCode <= 'z' ? keyCode - 'a' + 'A' : keyCode; }
-
 int codeOf(ShowKey key) {
     switch (key) {
         case ShowKey::Space: return juce::KeyPress::spaceKey;
@@ -24,6 +21,13 @@ int codeOf(ShowKey key) {
 }
 }  // namespace
 
+bool ShowController::DoublePress::press(double now) {
+    if (armed && now - at <= doubleEscSeconds) { armed = false;  return true; }
+    armed = true;
+    at = now;
+    return false;
+}
+
 ShowController::ShowController(Session& s) : session_(s) {
     onAction = [this](Action a) { session_.perform(a); };
 }
@@ -34,65 +38,73 @@ void ShowController::act(Action a) {
     if (onAction) onAction(a);
 }
 
-const ControlMap& ShowController::controls() {
-    const auto& now = session_.model().band().controls;
-    if (now != controls_seen_) {
-        controls_seen_ = now;
-        controls_ = ControlMap(now);
-    }
-    return controls_;
-}
-
-void ShowController::press(Action a, double now) {
+void ShowController::press(Source source, Action a, double now) {
     last_time_ = now;
-    if (!held_.insert(a).second) return;           // already held: one press, one action
-    if (a == Action::Start) {
-        if (!session_.now().playing) act(Action::Start);       // this press is used: holding on never stops the song
-        else stop_hold_since_ = now;
-        return;
+    if (!held_.insert({source, a}).second) return;     // already held from here: one press, one action
+    const bool playing = session_.now().playing;
+    switch (a) {
+        case Action::Start:
+            if (!playing) act(Action::Start);      // this press is used: holding on never stops the song
+            else stop_holds_[{source, a}] = now;
+            break;
+        case Action::Stop:
+            if (playing) stop_holds_[{source, a}] = now;
+            break;
+        default: act(a); break;
     }
-    act(a);                                        // Stop stops at once; the others act once
 }
 
-void ShowController::release(Action a, double now) {
+void ShowController::release(Source source, Action a, double now) {
     last_time_ = now;
-    held_.erase(a);
-    if (a == Action::Start) stop_hold_since_.reset();
+    held_.erase({source, a});
+    stop_holds_.erase({source, a});
 }
 
-void ShowController::buttonDown(Action a, double now) {
-    press(a, now);
+// A pedal whose release can't be trusted: nothing is held, so a tap never stops a song by being "held".
+void ShowController::tap(Action a, double now) {
+    last_time_ = now;
+    switch (a) {
+        case Action::Start:
+            if (!session_.now().playing) act(Action::Start);
+            break;
+        case Action::Stop:
+            if (tapped_stop_.press(now)) act(Action::Stop);
+            break;
+        default: act(a); break;
+    }
+}
+
+void ShowController::buttonDown(Action a, double now, PedalKind kind) {
+    if (kind == PedalKind::Tap) tap(a, now);
+    else press(Source::Pedals, a, now);
     updateTimer();
 }
 
 void ShowController::buttonUp(Action a, double now) {
-    release(a, now);
+    release(Source::Pedals, a, now);
     updateTimer();
 }
 
 void ShowController::keyDown(int keyCode, int modifiers, double now) {
     last_time_ = now;
-    const int code = sameCase(keyCode);
-    const auto action = controls().actionForKey(code, modifiers);
-    const bool esc = !action && code == juce::KeyPress::escapeKey;   // Esc, unless the band gave it to an action
-    if (!action && !esc) return;                   // never tracked: no key-up is polled for it
-    if (!keys_.emplace(code, action).second) return;   // a repeat of a key already held
-
-    if (esc) {
-        if (have_esc_ && now - esc_at_ <= doubleEscSeconds) { have_esc_ = false;  act(Action::Stop); }
-        else { have_esc_ = true;  esc_at_ = now; }
+    const int code = sameKeyCode(keyCode);
+    if (code == juce::KeyPress::escapeKey) {
+        if (keys_.emplace(code, std::nullopt).second && esc_.press(now)) act(Action::Stop);   // a repeat is not a press
         return;
     }
-    press(*action, now);
+    const auto action = controls_.of(session_.model().band()).actionForKey(code, modifiers);
+    if (!action) return;                           // never tracked: no key-up is polled for it
+    if (!keys_.emplace(code, action).second) return;   // a repeat of a key already held
+    press(Source::Keys, *action, now);
 }
 
 void ShowController::keyUp(int keyCode, double now) {
     last_time_ = now;
-    const auto found = keys_.find(sameCase(keyCode));
+    const auto found = keys_.find(sameKeyCode(keyCode));
     if (found == keys_.end()) return;
     const auto action = found->second;
     keys_.erase(found);
-    if (action) release(*action, now);
+    if (action) release(Source::Keys, *action, now);
 }
 
 void ShowController::keyDown(ShowKey key, double now) { keyDown(codeOf(key), 0, now); }
@@ -100,24 +112,27 @@ void ShowController::keyUp(ShowKey key, double now) { keyUp(codeOf(key), now); }
 
 void ShowController::tick(double now) {
     last_time_ = now;
-    if (stop_hold_since_ && now - *stop_hold_since_ >= holdSeconds) {
-        stop_hold_since_.reset();                  // used: once only
-        act(Action::Stop);
-    }
+    for (auto& [holder, since] : stop_holds_)
+        if (now - since >= holdSeconds) {
+            stop_holds_.clear();                   // used: once only, however many were held
+            act(Action::Stop);
+            return;
+        }
 }
 
 void ShowController::keyboardLost() {
     for (auto& [code, action] : keys_)
         if (action) {
-            held_.erase(*action);
-            if (*action == Action::Start) stop_hold_since_.reset();
+            held_.erase({Source::Keys, *action});
+            stop_holds_.erase({Source::Keys, *action});
         }
     keys_.clear();                                 // a held pedal stays held: it doesn't need the keyboard
 }
 
 double ShowController::holdProgress() const {
-    if (!stop_hold_since_) return 0.0;
-    return std::clamp((last_time_ - *stop_hold_since_) / holdSeconds, 0.0, 1.0);
+    double progress = 0.0;
+    for (auto& [holder, since] : stop_holds_) progress = std::max(progress, std::clamp((last_time_ - since) / holdSeconds, 0.0, 1.0));
+    return progress;
 }
 
 bool ShowController::keyPressed(const juce::KeyPress& k, juce::Component*) {
