@@ -107,7 +107,9 @@ public:
     bool changedTonight(const LevelTarget&) const;               // for a Part target, its mute counts too
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                              // how many levels were changed tonight (Tonight::count)
-    void keepTonightChanges();                                   // makes them permanent, as one undoable step; Edit mode only
+    // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,
+    // and the answer says how many, in plain words ("2 levels couldn't be kept: …"); "" when all of it was kept.
+    juce::String keepTonightChanges();
     void dropTonightChanges();
     model::SongDoc songAsHeard(const juce::String& songId) const;    // the document with tonight's changes applied
     model::RigDoc rigAsHeard() const;                            // the chosen rig, with tonight's changes applied
@@ -191,6 +193,7 @@ private:
     void refresh();                                              // after anything changed: works everything out again
     bool ensureChoices();                                        // a rig and a setlist that exist; true when either changed
     void rememberChoices();                                      // writes them to Settings and saves it
+    bool saveSettings();                                         // settings_.save(), noting a failure for saveState; true when saved
     void resolveNext();                                          // a removed next entry: the one now in its place
     std::shared_ptr<const Prepared> preparedFor(const juce::String& songId);
     void refreshPrepared();
@@ -219,6 +222,14 @@ private:
     // the disk has them, and the cache to load those songs again.
     model::CommandResult loadFromDisk(const std::vector<OutsideChange>&, const std::map<model::DocKey, juce::String>& texts);
     void reloadUndoneOrRedone(const std::map<model::DocKey, OutsideChange>& step, bool undone);   // see takeOutsideChanges
+    void keepInTrash(const juce::File&);                         // a copy of another computer's file, before this app writes over it
+    bool adoptPlace(const model::DocKey&, const juce::File&);   // the folder (a song) or file it came in is the document's; true when it is
+    void forgetPlace(const model::DocKey&);
+    // A changed file whose text names another id (removed and imported again under the same title on another computer):
+    // never applied under the old id. The old document goes and the new one comes in, in the same place, as a Removed and an
+    // Added in texts and loads. False when the new one can't come in (one with its id is loaded, or the place can't be taken).
+    bool replaceDocument(const OutsideChange&, const juce::File&, const juce::String& text,
+                         std::map<model::DocKey, juce::String>& texts, std::vector<OutsideChange>& loads);
     void followReloadSteps();                                    // onChanged: keeps reloads_done_ and reloads_undone_ in step
     void keepAsConflictCopy(const model::DocKey&);               // at close: a held-back edit, next to its original
     void noteMissingAudio(const juce::String& songId);          // the cache says an audio file is missing
@@ -284,6 +295,7 @@ private:
     bool settings_pending_ = false;                              // the settings changed and the file isn't written yet
     bool save_failed_ = false;
     juce::String save_error_;
+    juce::String settings_error_;                                // why the settings file couldn't be written; "" once it is
     SaveState last_save_state_ = SaveState::Saved;
 
     std::unique_ptr<FolderWatch> folder_watch_;                  // made once the band is loaded

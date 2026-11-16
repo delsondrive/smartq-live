@@ -104,3 +104,19 @@ TEST_CASE("Tonight survives its own JSON and ignores what no longer exists", "[l
     CHECK(again.apply(other).parts[0].gainDb == -1.0f);
     CHECK(Tonight::fromJson("not json").isEmpty());
 }
+TEST_CASE("keeping tonight's changes keeps what can be kept, and says how many couldn't be", "[levels]") {
+    DemoSession d; auto& s = *d.session;
+    const auto gone = *s.model().song(d.setlist().entries[1].songId);
+    LevelTarget click{LevelTarget::Kind::BandClick, {}, {}, {}, {}};
+    s.enterShow();
+    s.setLevel(part(gone.id, gone.parts[0].id), -20.0f, "g");  s.setMute(gone.id, gone.parts[0].id, true);   // one level
+    s.setLevel(part(gone.id, gone.parts[1].id), -21.0f, "g");                                                 // and another
+    s.setLevel(click, -3.0f, "g");
+    REQUIRE(s.leaveShow());
+    s.commands().run("song.remove", juce::JSON::parse(R"({"songId": ")" + gone.id + R"("})"));
+    CHECK(s.keepTonightChanges() == "2 levels couldn't be kept: the song or output is gone.");
+    CHECK_FALSE(s.hasTonightChanges());
+    CHECK(s.model().band().clickDb == -3.0f);                                     // the rest was kept
+    s.enterShow();  s.setLevel(click, -4.0f, "g");  REQUIRE(s.leaveShow());
+    CHECK(s.keepTonightChanges().isEmpty());                                      // everything kept: nothing to say
+}

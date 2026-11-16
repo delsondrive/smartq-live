@@ -5,6 +5,7 @@
 #include "app/ShowController.h"
 #include "model/SongAudio.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/FileHold.h"
 #include "tests/support/Params.h"
 
 using namespace sqlive::app;
@@ -268,4 +269,18 @@ TEST_CASE("a new device clears whatever the engine had cued", "[session]") {
     REQUIRE(s.engine().status().cuedSerial != 0);
     s.setDevice(48000.0, 2);  s.advanceWithoutDevice(512);
     CHECK(s.engine().status().cuedSerial == 0);
+}
+TEST_CASE("a settings file that can't be written shows as a failed save", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    auto file = d.dir.dir().getChildFile("settings.json");
+    REQUIRE(file.existsAsFile());
+    {
+        sqlive::test::ExclusiveFileHold hold(file);
+        if (!hold.held()) SKIP("this system lets a file that is open be replaced");
+        s.perform(Action::ToggleView);  s.enterShow();                           // the show memory changes, and is flushed
+        CHECK(s.saveState() == SaveState::Failed);
+        CHECK(s.saveError().isNotEmpty());
+    }
+    s.flushNow();
+    CHECK(s.saveState() == SaveState::Saved);  CHECK(s.saveError().isEmpty());
 }

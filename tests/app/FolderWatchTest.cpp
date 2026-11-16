@@ -497,3 +497,29 @@ TEST_CASE("redoing the load of a song that came in, written another way, brings 
     CHECK(s.outsideChanges().empty());
     CHECK(s.saveState() == SaveState::Saved);
 }
+
+TEST_CASE("a song removed and imported again under the same title on another computer comes in as a new song", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    const auto oldId = d.setlist().entries[0].songId;
+    const auto dir = s.folder().songFolder(oldId);
+    auto again = *s.model().song(oldId);
+    again.id = model::newId();                                                     // the same title, a new id
+    writeElsewhere(dir.getChildFile("song.json"), model::toJson(again));
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    CHECK(s.takeOutsideChanges().wasOk());
+    CHECK(s.model().song(oldId) == nullptr);                                       // never applied under the old id
+    REQUIRE(s.model().song(again.id) != nullptr);
+    CHECK(s.model().song(again.id)->title == again.title);
+    CHECK(s.folder().songFolder(again.id) == dir);
+    s.flushNow();  s.advanceWithoutDevice(0);
+    CHECK(s.outsideChanges().empty());
+    CHECK(dir.getChildFile("song.json").loadFileAsString().contains(again.id));    // theirs, left where it is
+    CHECK_FALSE(root.getChildFile("trash").exists());
+    s.commands().undo();  s.flushNow();                                            // the old song back; theirs kept in the trash
+    CHECK(s.model().song(oldId) != nullptr);  CHECK(s.model().song(again.id) == nullptr);
+    bool kept = false;
+    for (const auto& f : root.getChildFile("trash").findChildFiles(juce::File::findFiles, true))
+        kept = kept || f.loadFileAsString().contains(again.id);
+    CHECK(kept);
+}

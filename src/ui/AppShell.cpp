@@ -231,8 +231,18 @@ bool AppShell::showingOutsideChangesBanner() const { return outside_.isVisible()
 void AppShell::answerTonightQuestion(bool keep) {
     if (tonight_ == nullptr || session_.mode() != Mode::Edit) return;
     close(tonight_);
-    if (keep) session_.keepTonightChanges();
-    else session_.dropTonightChanges();
+    if (!keep) {
+        session_.dropTonightChanges();
+        return;
+    }
+    // What couldn't be kept (its song or output went meanwhile) is said, never dropped silently.
+    if (const auto lost = session_.keepTonightChanges(); lost.isNotEmpty())
+        dialog_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
+                                                         .withIconType(juce::MessageBoxIconType::NoIcon)
+                                                         .withAssociatedComponent(this)
+                                                         .withTitle(lost)
+                                                         .withButton("OK"),
+                                                     nullptr);
 }
 
 void AppShell::paint(juce::Graphics& g) { theme::paintAppBackground(g, getLocalBounds()); }
