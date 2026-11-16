@@ -59,7 +59,7 @@ juce::String controllerName(int controller) {
 juce::String beatsText(double beats) {
     const double whole = std::round(beats);
     const auto number = std::abs(beats - whole) < 1e-9 ? juce::String((long long) whole)
-                                                        : juce::String(beats, 3).trimCharactersAtEnd("0");
+                                                        : juce::String(beats, 3).trimCharactersAtEnd("0").trimCharactersAtEnd(".");
     return number + (number == "1" ? " beat" : " beats");
 }
 

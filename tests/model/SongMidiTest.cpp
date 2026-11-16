@@ -71,3 +71,10 @@ TEST_CASE("a marker is named by what it does", "[songmidi]") {
     CHECK(describe(known, &device) == juce::String::fromUTF8("Program 12 · Crunch"));
     CHECK(describe(cc, &device) == "CC 80 = 127");
 }
+TEST_CASE("a note's length reads as a number, never with a point left hanging", "[songmidi]") {
+    MidiMessageDoc note; note.type = MidiMessageDoc::Type::Note; note.note = 36; note.velocity = 90;
+    note.beats = 2.0004;  CHECK(describe(note, nullptr) == "Note C1, velocity 90, 2 beats");
+    note.beats = 1.0004;  CHECK(describe(note, nullptr) == "Note C1, velocity 90, 1 beat");
+    note.beats = 1.5;     CHECK(describe(note, nullptr) == "Note C1, velocity 90, 1.5 beats");
+    note.beats = 1.0;     CHECK(describe(note, nullptr) == "Note C1, velocity 90, 1 beat");
+}

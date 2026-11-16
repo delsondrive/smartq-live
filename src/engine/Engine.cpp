@@ -90,7 +90,7 @@ bool Engine::popEvent(EngineEvent& event) { return events_.pop(event); }
 
 bool Engine::popMidi(OutMidi& out) { return midi_.pop(out); }
 
-void Engine::resendMidiState(int) {}
+void Engine::resendMidiState(int device) { push({.type = Command::Type::ResendMidi, .index = device}); }
 
 void Engine::collectGarbage() {
     std::shared_ptr<const void> object;
@@ -159,11 +159,11 @@ void Engine::handle(Command& command) noexcept {
         retire(cued_);
         break;
     case Type::Start:
-        if (cueFits()) startPlaying(cued_.song->start);
+        if (cueFits()) startPlaying(cued_.song->start, true);
         break;
     case Type::StartAt:
         if (cueFits())
-            startPlaying(std::clamp(command.index, cued_.song->start, std::max(cued_.song->start, cued_.song->end)));
+            startPlaying(std::clamp(command.index, cued_.song->start, std::max(cued_.song->start, cued_.song->end)), false);
         break;
     case Type::Stop:
         if (state_ != PlayState::Playing) break;
@@ -204,12 +204,16 @@ void Engine::handle(Command& command) noexcept {
     case Type::SetSolo:
         if (command.serial != 0 && command.serial == playing_.serial) renderer_.setSolo(static_cast<int>(command.index));
         break;
+    case Type::ResendMidi:   // the MIDI out knows whether a song plays: a gap or a stop has ended it
+        if (command.index >= 0 && command.index < kMaxMidiDevices)
+            midi_.resend(static_cast<int>(command.index), song_time_, stream_time_);
+        break;
     }
 }
 
-void Engine::startPlaying(SamplePos songTime) noexcept {
+void Engine::startPlaying(SamplePos songTime, bool fromStart) noexcept {
     if (state_ != PlayState::Stopped || !cueFits()) return;
-    playCued(songTime, stream_time_, true);
+    playCued(songTime, stream_time_, true, fromStart);
 }
 
 // A song's sample positions mean what they say only at the rate it was made for.
@@ -219,9 +223,9 @@ bool Engine::fitsRate(const PreparedSong& song) const noexcept {
 
 bool Engine::cueFits() const noexcept { return cued_.song != nullptr && fitsRate(*cued_.song); }
 
-// The cue becomes the playing song, from songTime; streamTime is that of its first sample. The cue must be set and nothing
-// may be playing.
-void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix) noexcept {
+// The cue becomes the playing song, from songTime; streamTime is that of its first sample. fromStart: it begins at its
+// start, or at bar 1 following on, so the MIDI chase covers bar 1 beat 1. The cue must be set and nothing may be playing.
+void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix, bool fromStart) noexcept {
     playing_.hold = std::move(cued_.hold);
     playing_.song = cued_.song;
     playing_.serial = cued_.serial;
@@ -230,7 +234,7 @@ void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix)
     // setMix snap, so a song started out of silence hears the current mix from its first sample rather than gliding in
     // from an older one. A song that follows straight on keeps the glide going, as the song before it would have.
     renderer_.setSong(playing_.song);
-    midi_.begin(*playing_.song, playing_.serial, songTime);
+    midi_.begin(*playing_.song, playing_.serial, songTime, streamTime, fromStart);
     if (snapMix) {
         renderer_.setMix(nullptr);
         renderer_.setMix(mix_);
@@ -299,12 +303,12 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     case FollowKind::Stop:
         break;
     case FollowKind::Seamless:   // straight into bar 1: the count-in is skipped
-        playCued(cued_.song->bodyStart, streamTime, false);
+        playCued(cued_.song->bodyStart, streamTime, false, true);
         break;
     case FollowKind::Gap:        // silence, then the whole song, count-in included
         gap_left_ = gapFrames();
         if (gap_left_ <= 0) {
-            playCued(cued_.song->start, streamTime, false);
+            playCued(cued_.song->start, streamTime, false, true);
             break;
         }
         state_ = PlayState::Playing;
@@ -321,7 +325,7 @@ void Engine::endGap(std::int64_t streamTime) noexcept {
     gap_left_ = 0;
     gap_after_ = 0;
     if (cueFits())
-        playCued(cued_.song->start, streamTime, true);
+        playCued(cued_.song->start, streamTime, true, true);
     else
         state_ = PlayState::Stopped;
 }

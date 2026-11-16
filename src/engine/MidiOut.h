@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "engine/Midi.h"
+#include "engine/MidiChase.h"
 #include "engine/PreparedSong.h"
 #include "engine/SpscQueue.h"
 #include "engine/Types.h"
@@ -15,6 +16,11 @@ namespace sqlive::engine {
 // dispatcher to send later. It keeps its place in the song's events and the notes left sounding, so a song that stops,
 // ends or is replaced ends them. Everything but pop runs on the producer: the audio thread, or Engine::prepare while
 // process cannot run. Nothing here allocates after construction, locks or waits; a full queue drops what doesn't fit.
+//
+// The chase: when a song begins, each device is first sent the state it should be in at the chase point (program with
+// its bank, controllers), with the stream time of the song's first sample. A program or control change at or before the
+// chase point is then skipped, as the chase has covered it. Notes are never chased and never skipped: every note from the
+// first sample played onwards is sent at its own time.
 class MidiOut {
 public:
     static constexpr std::size_t kQueueCapacity = 4096;
@@ -22,11 +28,17 @@ public:
 
     MidiOut();
 
-    // Producer. The song begins playing from songTime; it must stay alive until end().
-    void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime) noexcept;
+    // Producer. The song begins playing from songTime, its first sample at streamTime; it must stay alive until end().
+    // fromStart: it begins at its start (or, following on seamlessly, at bar 1), so the chase point is bar 1 beat 1 (or
+    // songTime, if later); otherwise the chase point is songTime.
+    void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime, bool fromStart) noexcept;
     // Producer. The song plays [songFrom, songFrom + frames), its first sample at streamFrom: every event in it is queued.
     void play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept;
-    // Producer. The song is over at streamTime: a note-off for every note still sounding, and the song is let go of.
+    // Producer. Sends one device the state it should be in now, songTime being the next sample the song plays, at
+    // streamTime. Nothing when no song is playing, or for a device number the engine can't have.
+    void resend(int device, SamplePos songTime, std::int64_t streamTime) noexcept;
+    // Producer. The song is over at streamTime: a note-off for every note still sounding, and the song is let go of. A
+    // note-off the full queue drops leaves its note kept, to be ended at the next end().
     void end(std::int64_t streamTime) noexcept;
 
     // The one consumer thread.
@@ -34,19 +46,23 @@ public:
 
 private:
     struct Note {
+        std::uint64_t serial = 0;        // the song it came from: its device numbers are that song's
         std::uint16_t device = 0;
         std::uint8_t channel = 0, note = 0;
     };
 
     void send(const MidiEvent&, std::int64_t streamTime) noexcept;
     void track(const MidiEvent&) noexcept;
-    void push(std::uint16_t device, std::uint8_t size, std::uint8_t a, std::uint8_t b, std::uint8_t c,
-              std::int64_t streamTime) noexcept;
+    void chase(int onlyDevice, SamplePos upTo, std::int64_t streamTime) noexcept;
+    bool push(std::uint64_t serial, std::uint16_t device, std::uint8_t size, std::uint8_t a, std::uint8_t b, std::uint8_t c,
+              std::int64_t streamTime) noexcept;   // false: the queue was full, and it was dropped
 
     SpscQueue<OutMidi> queue_;
+    MidiChase chase_;
     const PreparedSong* song_ = nullptr;
     std::uint64_t serial_ = 0;
     std::size_t next_ = 0;               // the first of the song's events not yet sent
+    SamplePos chase_point_ = 0;          // program and control changes at or before it were covered by the chase
     std::array<Note, kMaxSoundingNotes> notes_{};
     int note_count_ = 0;
 };

@@ -73,9 +73,13 @@ public:
     bool popEvent(EngineEvent&);
     // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
     // it is due at. Notes still sounding when a song stops (at the end of its fade), ends, or prepare stops it are ended
-    // then. When the queue is full, what doesn't fit is dropped.
+    // then. When the queue is full, what doesn't fit is dropped. A song that starts first sends each device the state it
+    // should be in (program with its bank, controllers), as of bar 1 beat 1 when it starts from its start or follows on,
+    // as of startAt's position otherwise, at the stream time of its first sample; the changes that covered are not sent
+    // again.
     bool popMidi(OutMidi&);
-    // Control thread: sends again the state a device should be in (Task 4). Until then it does nothing.
+    // Control thread: sends one device (an engine device number of the playing song) the state it should be in now, at the
+    // start of the next block. Nothing when no song is playing (a gap included).
     void resendMidiState(int device);
     // Frees what the audio thread has finished with. Call it regularly (the app's timer does): when the garbage queue is
     // full, the audio thread keeps what it lets go of in a small store of its own, and once that is nearly full it holds
@@ -88,11 +92,12 @@ public:
 private:
     struct Command {
         enum class Type : std::uint8_t {
-            None, Cue, ClearCue, Start, StartAt, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute, SetClickGain, SetSolo
+            None, Cue, ClearCue, Start, StartAt, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute, SetClickGain, SetSolo,
+            ResendMidi
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
-        std::int64_t index = 0;               // a part, a song time or a follow-on kind
+        std::int64_t index = 0;               // a part, a song time, a follow-on kind or a MIDI device
         double value = 0.0;                   // a gain, a mute (non-zero), or a gap in seconds
         std::shared_ptr<const void> object;   // a song or a mix
     };
@@ -117,10 +122,10 @@ private:
 
     bool push(Command&&);                 // false: the queue was full, and the command was dropped
     void handle(Command&) noexcept;
-    void startPlaying(SamplePos songTime) noexcept;
+    void startPlaying(SamplePos songTime, bool fromStart) noexcept;
     bool fitsRate(const PreparedSong&) const noexcept;
     bool cueFits() const noexcept;        // something is cued, made at the engine's rate; a cue that doesn't never plays
-    void playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix) noexcept;
+    void playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix, bool fromStart) noexcept;
     void renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept;
     void finishSong(EngineEvent::Type, std::int64_t streamTime) noexcept;
     void endGap(std::int64_t streamTime) noexcept;
