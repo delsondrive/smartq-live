@@ -47,14 +47,28 @@ void MainWindow::setKioskAllowed(bool allowed) {
 }
 
 void MainWindow::closeButtonPressed() {
+    if (session_.mode() == Mode::Show && session_.now().playing) {
+        message_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
+                                                          .withIconType(juce::MessageBoxIconType::NoIcon)
+                                                          .withAssociatedComponent(&shell_)
+                                                          .withTitle("Stop the song before closing Smart Q Live.")
+                                                          .withButton("OK"),
+                                                      nullptr);
+        return;
+    }
     if (onClose) onClose();
 }
 
 void MainWindow::activeWindowStatusChanged() {
     juce::DocumentWindow::activeWindowStatusChanged();
-    const bool active = isActiveWindow();
-    if (!active) controller_.keyboardLost();                      // a key held as the keyboard leaves never acts
-    shell_.setKeyboardElsewhere(inShow_ && !active);
+    if (!isActiveWindow()) controller_.keyboardLost();           // a key held as the keyboard leaves never acts
+    shell_.setKeyboardElsewhere(keyboardElsewhere());
+}
+
+bool MainWindow::keyboardElsewhere() const {
+    // One of the app's own modal dialogs has the keyboard on purpose; the amber banner would only show behind it.
+    const bool ownDialog = juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0;
+    return inShow_ && !isActiveWindow() && !ownDialog;
 }
 
 void MainWindow::changeListenerCallback(juce::ChangeBroadcaster*) { followMode(); }
@@ -67,7 +81,7 @@ void MainWindow::followMode() {
         addKeyListener(&controller_);
         juce::Desktop::setScreenSaverEnabled(false);
         shell_.grabKeyboardFocus();
-        shell_.setKeyboardElsewhere(!isActiveWindow());
+        shell_.setKeyboardElsewhere(keyboardElsewhere());
     } else {
         removeKeyListener(&controller_);
         controller_.keyboardLost();

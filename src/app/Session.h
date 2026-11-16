@@ -96,6 +96,7 @@ public:
     void setMute(const juce::String& songId, const juce::String& partId, bool);
     bool changedTonight(const LevelTarget&) const;               // for a Part target, its mute counts too
     bool hasTonightChanges() const;
+    int tonightChangeCount() const;                              // how many levels were changed tonight (Tonight::count)
     void keepTonightChanges();                                   // makes them permanent, as one undoable step; Edit mode only
     void dropTonightChanges();
     model::SongDoc songAsHeard(const juce::String& songId) const;    // the document with tonight's changes applied

@@ -32,6 +32,7 @@ public:
     bool has(const LevelTarget&) const;
     bool hasMute(const juce::String& songId, const juce::String& partId) const;
     bool isEmpty() const;
+    int count() const;                                            // the levels changed; a part whose gain and mute both changed counts once
     void clear();
 
     model::SongDoc apply(model::SongDoc) const;                   // its parts' gains and mutes, and its click offset

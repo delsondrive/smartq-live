@@ -19,7 +19,11 @@ namespace sqlive::ui {
 //
 // In Show mode the ShowController listens to the keys, the window takes kiosk mode (when allowed) and the screen saver is
 // off; leaving Show mode undoes all three. Whenever the window stops being active the controller forgets every held key,
-// so a key held while the keyboard goes elsewhere can never stop a song; in Show mode the shell then says so.
+// so a key held while the keyboard goes elsewhere can never stop a song; in Show mode the shell then says so, unless one
+// of the app's own modal dialogs has it (the amber banner would only show behind it).
+//
+// Closing the window (its close button, Alt+F4) while a song plays in Show mode is refused with a plain message: a show is
+// never cut off by a stray click.
 class MainWindow : public juce::DocumentWindow, private juce::ChangeListener {
 public:
     MainWindow(app::Session&, app::AudioHost*);
@@ -29,7 +33,7 @@ public:
     AppShell& shell() { return shell_; }
     app::ShowController& showController() { return controller_; }
 
-    std::function<void()> onClose;                                // the close button
+    std::function<void()> onClose;                                // the close button, unless a song plays in Show mode
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
 
     void closeButtonPressed() override;
@@ -38,12 +42,14 @@ public:
 private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void followMode();                                            // takes or gives up Show mode's hold on keys and screen
+    bool keyboardElsewhere() const;                               // in Show mode, the keyboard is with another app
 
     app::Session& session_;
     app::ShowController controller_;
     AppShell shell_;
     juce::TooltipWindow tooltips_;
     bool inShow_ = false, kioskAllowed_ = true, kiosk_ = false;
+    juce::ScopedMessageBox message_;
 };
 
 }  // namespace sqlive::ui

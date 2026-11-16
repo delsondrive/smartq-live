@@ -72,6 +72,12 @@ bool Tonight::hasMute(const juce::String& songId, const juce::String& partId) co
     return mutes_.count(partTarget(songId, partId)) > 0;
 }
 bool Tonight::isEmpty() const { return levels_.empty() && mutes_.empty(); }
+int Tonight::count() const {
+    int n = static_cast<int>(levels_.size());
+    for (const auto& entry : mutes_)
+        if (!levels_.contains(entry.first)) ++n;
+    return n;
+}
 void Tonight::clear() {
     levels_.clear();
     mutes_.clear();

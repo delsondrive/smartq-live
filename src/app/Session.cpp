@@ -347,6 +347,7 @@ bool Session::changedTonight(const LevelTarget& target) const {
 }
 
 bool Session::hasTonightChanges() const { return !tonight_.isEmpty(); }
+int Session::tonightChangeCount() const { return tonight_.count(); }
 
 void Session::keepTonightChanges() {
     if (mode_ == Mode::Show || tonight_.isEmpty()) return;      // Show mode never writes the band folder
