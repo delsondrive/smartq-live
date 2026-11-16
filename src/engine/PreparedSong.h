@@ -51,7 +51,7 @@ struct PreparedSong {
     // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
     std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order
     std::vector<std::uint16_t> clockDevices, startStopDevices;
-    std::vector<SamplePos> clockTicks; // 24 per quarter over [start, end); only when clockDevices isn't empty (from Task 5)
+    std::vector<SamplePos> clockTicks; // 24 per quarter over [start, end); only when clockDevices isn't empty
     std::vector<std::string> midiDeviceIds;   // the band's device id for each engine device number, as when prepared
 };
 

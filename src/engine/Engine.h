@@ -48,7 +48,7 @@ public:
 
     // Must only be called while process cannot run: for a device, from audioDeviceAboutToStart, before its first callback.
     // It stops whatever was playing, at once and without an event (a note-off goes out for each MIDI note it left
-    // sounding), keeps the mix, keeps the cue unless it was made at another sample rate (that one is dropped, through the
+    // sounding, and 0xFC to each device it started), keeps the mix, keeps the cue unless it was made at another sample rate (that one is dropped, through the
     // garbage queue), and keeps stream time running. Every command not yet taken is dropped, a start included, and what it
     // carries goes through the garbage queue: the control thread sends again what it still wants (the mix, the follow-on,
     // the cue) once the device has started.
@@ -76,7 +76,10 @@ public:
     // then. When the queue is full, what doesn't fit is dropped. A song that starts first sends each device the state it
     // should be in (program with its bank, controllers), as of bar 1 beat 1 when it starts from its start (start(), a
     // startAt at or before the song's start) or follows on, as of startAt's position otherwise, at the stream time of its
-    // first sample; the changes that covered are not sent again.
+    // first sample; the changes that covered are not sent again. Then each of its start-stop devices is sent 0xFA, and
+    // each clock device 0xF8 at every one of its clockTicks it plays. When it stops or ends, its start-stop devices are
+    // sent 0xFC, unless another song follows straight on (seamlessly, or after a gap of no length): the transport runs
+    // on, and the clock with it. A gap sends no clock.
     bool popMidi(OutMidi&);
     // Control thread: sends one device (an engine device number of the song with this serial) the state it should be in
     // now, at the start of the next block. Nothing unless that song is the one playing (so nothing in a gap or stopped).

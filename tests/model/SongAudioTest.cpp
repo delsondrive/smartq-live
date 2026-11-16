@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/MidiClock.h"
 #include "model/Defaults.h"
 #include "model/SongAudio.h"
 #include "tests/support/Signals.h"
@@ -64,4 +65,18 @@ TEST_CASE("audio is paired with its part by id, never by position", "[songaudio]
     CHECK(prepared.parts[0].partId == "keys");  CHECK(prepared.parts[0].audio == keys);  CHECK(prepared.parts[0].role == 3);
     CHECK(prepared.parts[1].partId == "bass");  CHECK(prepared.parts[1].audio == bass);  CHECK(prepared.parts[1].role == 6);
     CHECK(prepared.end == 200);
+}
+
+TEST_CASE("a band with a clock device gets clock ticks in its prepared songs", "[songaudio]") {
+    BandDoc band; band.roles = defaultRoles();
+    band.midiDevices = {{"d0", "Delay", {}, true, false, 0.0, {}}};
+    SongDoc song; song.id = "s"; song.countInBars = 1;
+    song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, 0.0f, false, 1}};
+    auto audio = sqlive::test::constantAudio(96000, 0.5f, NAN);
+    auto prepared = buildPreparedSong(song, band, RigDoc{}, {{"p1", audio}}, 48000.0);
+    CHECK(prepared.clockDevices == std::vector<std::uint16_t>{0});
+    REQUIRE_FALSE(prepared.clockTicks.empty());
+    CHECK(prepared.clockTicks == engine::buildClockTicks(prepared.tempo, 48000.0, prepared.start, prepared.end));
+    band.midiDevices[0].clock = false;
+    CHECK(buildPreparedSong(song, band, RigDoc{}, {{"p1", audio}}, 48000.0).clockTicks.empty());
 }

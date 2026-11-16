@@ -7,6 +7,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "engine/MidiClock.h"
 #include "model/Resampler.h"
 #include "model/Routing.h"
 #include "model/SongMidi.h"
@@ -85,6 +86,8 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     prepared.clockDevices = std::move(midi.clockDevices);
     prepared.startStopDevices = std::move(midi.startStopDevices);
     prepared.midiDeviceIds = std::move(midi.deviceIds);
+    if (!prepared.clockDevices.empty())
+        prepared.clockTicks = engine::buildClockTicks(prepared.tempo, sampleRate, prepared.start, prepared.end);
     return prepared;
 }
 

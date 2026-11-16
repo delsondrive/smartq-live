@@ -29,7 +29,9 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     // is freed here. The mix is kept: a start snaps it into the renderer again. So is the cue, unless it was made for
     // another rate; that one goes back through the garbage queue like anything else the engine lets go of. Stream time
     // carries on: it never goes backwards, so times from before and after a device restart stay comparable.
-    midi_.end(stream_time_);   // the notes it left sounding end now; with process not running, prepare is the producer
+    // The notes it left sounding end now, and the devices that follow start and stop are stopped. With process not
+    // running, prepare is the MIDI queue's producer.
+    midi_.end(stream_time_);
     playing_ = {};
     if (cued_.song != nullptr && !fitsRate(*cued_.song)) retire(cued_);
     // Commands sent before the device stopped were meant for a device that no longer runs: a start among them would go off
@@ -296,7 +298,10 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     const std::uint64_t ended = playing_.serial;
     report(type, ended, streamTime);
     renderer_.setSong(nullptr);   // before the song can be freed
-    midi_.end(streamTime);
+    // A song that follows straight on (seamlessly, or after a gap of no length) keeps the MIDI transport running.
+    const bool straightOn = type == EngineEvent::Type::Ended && cueFits() &&
+                            (follow_.kind == FollowKind::Seamless || (follow_.kind == FollowKind::Gap && gapFrames() <= 0));
+    midi_.end(streamTime, straightOn);
     retire(playing_);
     state_ = PlayState::Stopped;
     song_time_ = 0;
