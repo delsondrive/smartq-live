@@ -32,6 +32,20 @@ TEST_CASE("a song's missing audio is listed", "[cloud]") {
     REQUIRE(missing.size() == 1);
     CHECK(missing[0] == dir.getChildFile("audio/BVs.wav"));
 }
+TEST_CASE("downloads are worked through by one thread and let go of every file", "[cloud]") {
+    sqlive::test::TempDir t;
+    std::vector<juce::File> files;
+    for (int i = 0; i < 200; ++i) {
+        files.push_back(t.dir().getChildFile("part " + juce::String(i) + ".wav"));
+        files.back().replaceWithText("audio");
+    }
+    for (auto& f : files) startDownload(f);
+    startDownload(t.dir().getChildFile("missing.wav"));        // nothing to fetch: skipped quietly
+    waitForDownloads();
+    for (auto& f : files) CHECK(f.deleteFile());              // nothing is still holding one open
+    startDownload(t.dir().getChildFile("after.wav"));          // the thread is still there for more
+    waitForDownloads();
+}
 TEST_CASE("two files holding the same document are a conflict", "[cloud]") {
     sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
     auto song = root.getChildFile("songs/One");

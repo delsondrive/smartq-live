@@ -1,8 +1,6 @@
 #include "model/CloudFiles.h"
 
 #include <cstdio>
-#include <string>
-#include <thread>
 
 namespace sqlive::model {
 
@@ -12,17 +10,19 @@ bool isOnThisComputer(const juce::File& file) {
     return ! file.getSiblingFile("." + file.getFileName() + ".icloud").exists();
 }
 
-void startDownload(const juce::File& file) {
-    // The thread owns a copy of the path and uses only the C library, so it touches nothing that is destroyed at exit.
+namespace cloud_detail {
+
+void fetchFile(const juce::String& path) {
     // iCloud's stub is ".<name>.icloud"; reading the real name is what asks for the download.
-    std::string path = file.getFullPathName().toStdString();
-    std::thread([path = std::move(path)] {
-        if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
-            char byte = 0;
-            (void) std::fread(&byte, 1, 1, f);
-            std::fclose(f);
-        }
-    }).detach();
+    if (std::FILE* f = std::fopen(path.toRawUTF8(), "rb")) {
+        char byte = 0;
+        (void) std::fread(&byte, 1, 1, f);
+        std::fclose(f);
+    }
 }
+
+void interruptFetch(std::thread&) noexcept {}   // a blocked fopen or fread can't be cut short here; exit waits for it
+
+}  // namespace cloud_detail
 
 }  // namespace sqlive::model
