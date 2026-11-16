@@ -35,18 +35,18 @@ public:
 
     std::function<void(const std::vector<DocKey>& changed)> onChanged;  // after a run, undo or redo that changed something
 
-    const BandModel& model() const noexcept { return bandModel; }
+    const BandModel& model() const noexcept { return band_model_; }
 
 private:
     struct Entry { juce::String name, coalesceKey; std::vector<BandModel::Change> changes; };
     void apply(const std::vector<BandModel::Change>&, bool useAfter);
     void notify(const std::vector<BandModel::Change>&);
 
-    static constexpr size_t maxSteps = 200;
+    static constexpr size_t kMaxSteps = 200;
 
-    BandModel& bandModel;
-    std::map<juce::String, Handler> handlers;
-    std::deque<Entry> undoStack, redoStack;
+    BandModel& band_model_;
+    std::map<juce::String, Handler> handlers_;
+    std::deque<Entry> undo_stack_, redo_stack_;
 };
 
 }  // namespace sqlive::model

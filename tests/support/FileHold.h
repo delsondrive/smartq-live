@@ -13,10 +13,10 @@ public:
     ExclusiveFileHold(const ExclusiveFileHold&) = delete;
     ExclusiveFileHold& operator=(const ExclusiveFileHold&) = delete;
 
-    bool held() const { return handle != nullptr; }
+    bool held() const { return handle_ != nullptr; }
 
 private:
-    void* handle = nullptr;
+    void* handle_ = nullptr;
 };
 
 }  // namespace sqlive::test

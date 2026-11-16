@@ -22,7 +22,7 @@ struct DocKey {
 // The band as it is in memory. Reads are free; edits are for command handlers and BandFolder::load.
 class BandModel {
 public:
-    const BandDoc& band() const noexcept { return bandDoc; }
+    const BandDoc& band() const noexcept { return band_doc_; }
     const SongDoc* song(const juce::String& id) const;          // nullptr when there is none
     const SetlistDoc* setlist(const juce::String& id) const;
     const RigDoc* rig(const juce::String& id) const;
@@ -31,7 +31,7 @@ public:
     std::vector<juce::String> rigIds() const;                   // by name
     const Role* role(const juce::String& roleId) const;
 
-    BandDoc& editBand() { return bandDoc; }
+    BandDoc& editBand() { return band_doc_; }
     SongDoc* editSong(const juce::String& id);
     SetlistDoc* editSetlist(const juce::String& id);
     RigDoc* editRig(const juce::String& id);
@@ -46,11 +46,11 @@ public:
 private:
     std::map<DocKey, juce::String> snapshot() const;
 
-    BandDoc bandDoc;
-    std::map<juce::String, SongDoc> songs;
-    std::map<juce::String, SetlistDoc> setlists;
-    std::map<juce::String, RigDoc> rigs;
-    std::map<DocKey, juce::String> started;
+    BandDoc band_doc_;
+    std::map<juce::String, SongDoc> songs_;
+    std::map<juce::String, SetlistDoc> setlists_;
+    std::map<juce::String, RigDoc> rigs_;
+    std::map<DocKey, juce::String> started_;
 };
 
 }  // namespace sqlive::model

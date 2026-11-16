@@ -30,7 +30,8 @@ juce::String safeFileName(const juce::String& title) {
     // "CON" and "CON.txt" are both reserved: the stem is what comes before the first dot.
     const int dot = out.indexOfChar('.');
     const auto stem = dot < 0 ? out : out.substring(0, dot);
-    if (isReservedWindowsName(stem)) out = trimSpacesAndDots((stem + "_" + (dot < 0 ? juce::String() : out.substring(dot))).substring(0, 60));
+    if (isReservedWindowsName(stem))
+        out = trimSpacesAndDots((stem + "_" + (dot < 0 ? juce::String() : out.substring(dot))).substring(0, 60));
     return out;
 }
 

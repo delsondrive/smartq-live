@@ -41,10 +41,13 @@ template <typename E, size_t N> const char* nameOf(const EnumName (&table)[N], E
     return table[0].name;
 }
 
-const EnumName kRoleKinds[] = {{(int) RoleKind::Part, "part"}, {(int) RoleKind::Click, "click"}, {(int) RoleKind::Cues, "cues"}, {(int) RoleKind::Pad, "pad"}};
-const EnumName kTransitions[] = {{(int) TransitionKind::Stop, "stop"}, {(int) TransitionKind::Gap, "gap"}, {(int) TransitionKind::Seamless, "seamless"}};
+const EnumName kRoleKinds[] = {
+    {(int) RoleKind::Part, "part"}, {(int) RoleKind::Click, "click"}, {(int) RoleKind::Cues, "cues"}, {(int) RoleKind::Pad, "pad"}};
+const EnumName kTransitions[] = {
+    {(int) TransitionKind::Stop, "stop"}, {(int) TransitionKind::Gap, "gap"}, {(int) TransitionKind::Seamless, "seamless"}};
 const EnumName kPlayModes[] = {{(int) PlayMode::SongBySong, "songBySong"}, {(int) PlayMode::Continuous, "continuous"}};
-const EnumName kLabels[] = {{(int) OutputLabel::Monitor, "monitor"}, {(int) OutputLabel::Foh, "foh"}, {(int) OutputLabel::Timecode, "timecode"}, {(int) OutputLabel::Unused, "unused"}};
+const EnumName kLabels[] = {{(int) OutputLabel::Monitor, "monitor"}, {(int) OutputLabel::Foh, "foh"},
+                            {(int) OutputLabel::Timecode, "timecode"}, {(int) OutputLabel::Unused, "unused"}};
 
 juce::var write(const Role& r) {
     auto o = startObject();
@@ -54,7 +57,8 @@ juce::var write(const Role& r) {
 }
 juce::var write(const TempoPointDoc& t) {
     auto o = startObject();
-    put(o, "bar", t.bar); put(o, "beat", t.beat); put(o, "bpm", t.bpm); put(o, "numerator", t.numerator); put(o, "denominator", t.denominator);
+    put(o, "bar", t.bar); put(o, "beat", t.beat); put(o, "bpm", t.bpm);
+    put(o, "numerator", t.numerator); put(o, "denominator", t.denominator);
     return finish(o, t.extra);
 }
 juce::var write(const ClickDoc& c) {
@@ -101,10 +105,10 @@ bool isNumber(const juce::var& v) { return v.isInt() || v.isInt64() || v.isDoubl
 
 class Reader {
 public:
-    Reader(const juce::var& v, const juce::String& where, ParseNotes& n) : obj(v.getDynamicObject()), path(where), notes(n) {}
-    bool valid() const { return obj != nullptr; }
+    Reader(const juce::var& v, const juce::String& where, ParseNotes& n) : obj_(v.getDynamicObject()), path_(where), notes_(n) {}
+    bool valid() const { return obj_ != nullptr; }
 
-    void skip(const char* key) { used.insert(juce::String(key)); }
+    void skip(const char* key) { used_.insert(juce::String(key)); }
 
     juce::String text(const char* key, const juce::String& def = {}) {
         auto* v = find(key);
@@ -126,7 +130,7 @@ public:
         if (! isNumber(*v)) { wrong(key, "a number", juce::String(def)); return def; }
         return limited(key, (double) *v, lo, hi);
     }
-    bool has(const char* key) const { return obj->hasProperty(juce::Identifier(key)); }
+    bool has(const char* key) const { return obj_->hasProperty(juce::Identifier(key)); }
     // With defaultWhenOutside, a value outside lo..hi is replaced by def (with a note) instead of being limited.
     int whole(const char* key, int def, int lo, int hi, bool defaultWhenOutside = false) {
         auto* v = find(key);
@@ -134,7 +138,8 @@ public:
         if (! isNumber(*v)) { wrong(key, "a number", juce::String(def)); return def; }
         auto x = std::round((double) *v);
         if (defaultWhenOutside && (x < lo || x > hi)) {
-            notes.notes.add(place(key) + " is " + juce::String(x) + ", outside " + juce::String(lo) + " to " + juce::String(hi) + ", so " + juce::String(def) + " is used.");
+            notes_.notes.add(place(key) + " is " + juce::String(x) + ", outside " + juce::String(lo) + " to " + juce::String(hi)
+                             + ", so " + juce::String(def) + " is used.");
             return def;
         }
         return (int) limited(key, x, (double) lo, (double) hi);
@@ -144,7 +149,9 @@ public:
         if (v == nullptr) return def;
         if (! isNumber(*v)) { wrong(key, "a number", juce::String(def) + " dB"); return def; }
         auto x = (float) (double) *v, c = clampDb(x);
-        if (c != x) notes.notes.add(place(key) + " is " + juce::String(x) + " dB, outside " + juce::String(kMinDb) + " to " + juce::String(kMaxDb) + ", so " + juce::String(c) + " dB is used.");
+        if (c != x)
+            notes_.notes.add(place(key) + " is " + juce::String(x) + " dB, outside " + juce::String(kMinDb) + " to "
+                             + juce::String(kMaxDb) + ", so " + juce::String(c) + " dB is used.");
         return c;
     }
     // A number that must be one of a short list; anything else becomes def.
@@ -153,7 +160,7 @@ public:
         if (v == nullptr) return def;
         if (! isNumber(*v)) { wrong(key, "a number", juce::String(def)); return def; }
         for (double a : allowed) if ((double) *v == a) return a;
-        notes.notes.add(place(key) + " is " + juce::String((double) *v) + ", which is not allowed, so " + juce::String(def) + " is used.");
+        notes_.notes.add(place(key) + " is " + juce::String((double) *v) + ", which is not allowed, so " + juce::String(def) + " is used.");
         return def;
     }
     template <typename E, size_t N> E choice(const char* key, E def, const EnumName (&table)[N]) {
@@ -161,7 +168,7 @@ public:
         if (v == nullptr) return def;
         if (v->isString()) {
             for (auto& t : table) if (v->toString() == t.name) return (E) t.value;
-            notes.notes.add(place(key) + " is \"" + v->toString() + "\", which is not known, so \"" + nameOf(table, def) + "\" is used.");
+            notes_.notes.add(place(key) + " is \"" + v->toString() + "\", which is not known, so \"" + nameOf(table, def) + "\" is used.");
             return def;
         }
         wrong(key, "text", "\"" + juce::String(nameOf(table, def)) + "\"");
@@ -180,7 +187,7 @@ public:
     juce::String id(std::set<juce::String>& seen) {
         auto s = text("id");
         if (s.isEmpty()) s = newId();
-        else if (seen.count(s) != 0) { notes.notes.add(place("id") + " \"" + s + "\" is used twice, so a new one is made."); s = newId(); }
+        else if (seen.count(s) != 0) { notes_.notes.add(place("id") + " \"" + s + "\" is used twice, so a new one is made."); s = newId(); }
         seen.insert(s);
         return s;
     }
@@ -191,7 +198,7 @@ public:
         auto* v = find(key);
         if (v == nullptr) return;
         if (v->getDynamicObject() == nullptr) { wrong(key, "an object", "the defaults"); return; }
-        Reader child(*v, place(key), notes);
+        Reader child(*v, place(key), notes_);
         read(child);
     }
     // Every element that is an object, read into a T. Others are dropped with a note.
@@ -203,8 +210,11 @@ public:
         out.clear();
         for (int i = 0; i < arr->size(); ++i) {
             auto at = place(key) + "[" + juce::String(i) + "]";
-            if (arr->getReference(i).getDynamicObject() == nullptr) { notes.notes.add(at + " is not an object, so it is dropped."); continue; }
-            Reader child(arr->getReference(i), at, notes);
+            if (arr->getReference(i).getDynamicObject() == nullptr) {
+                notes_.notes.add(at + " is not an object, so it is dropped.");
+                continue;
+            }
+            Reader child(arr->getReference(i), at, notes_);
             T item;
             readOne(child, item);
             out.push_back(std::move(item));
@@ -218,38 +228,39 @@ public:
         if (o == nullptr) { wrong(key, "an object", "an empty one"); return; }
         for (auto& p : o->getProperties()) each(p.name.toString(), p.value, place(key) + "." + p.name.toString());
     }
-    void note(const juce::String& s) { notes.notes.add(s); }
+    void note(const juce::String& s) { notes_.notes.add(s); }
     juce::String where(const char* key) const { return place(key); }
 
     // Everything that was not asked for.
     juce::NamedValueSet rest() const {
         juce::NamedValueSet extra;
-        for (auto& p : obj->getProperties())
-            if (used.count(p.name.toString()) == 0) extra.set(p.name, p.value);
+        for (auto& p : obj_->getProperties())
+            if (used_.count(p.name.toString()) == 0) extra.set(p.name, p.value);
         return extra;
     }
 
 private:
     const juce::var* find(const char* key) {
-        used.insert(juce::String(key));
+        used_.insert(juce::String(key));
         auto name = juce::Identifier(key);
-        return obj->hasProperty(name) ? &obj->getProperty(name) : nullptr;
+        return obj_->hasProperty(name) ? &obj_->getProperty(name) : nullptr;
     }
-    juce::String place(const char* key) const { return path.isEmpty() ? juce::String(key) : path + "." + key; }
+    juce::String place(const char* key) const { return path_.isEmpty() ? juce::String(key) : path_ + "." + key; }
     void wrong(const char* key, const char* wanted, const juce::String& instead) {
-        notes.notes.add(place(key) + " is not " + wanted + ", so " + instead + " is used.");
+        notes_.notes.add(place(key) + " is not " + wanted + ", so " + instead + " is used.");
     }
     double limited(const char* key, double x, double lo, double hi) {
         if (x >= lo && x <= hi) return x;
         auto r = x < lo ? lo : hi;
-        notes.notes.add(place(key) + " is " + juce::String(x) + ", outside " + juce::String(lo) + " to " + juce::String(hi) + ", so " + juce::String(r) + " is used.");
+        notes_.notes.add(place(key) + " is " + juce::String(x) + ", outside " + juce::String(lo) + " to " + juce::String(hi)
+                         + ", so " + juce::String(r) + " is used.");
         return r;
     }
 
-    juce::DynamicObject* obj;
-    juce::String path;
-    ParseNotes& notes;
-    std::set<juce::String> used;
+    juce::DynamicObject* obj_;
+    juce::String path_;
+    ParseNotes& notes_;
+    std::set<juce::String> used_;
 };
 
 void read(Reader& r, Role& out, std::set<juce::String>& seen) {
@@ -289,7 +300,8 @@ void read(Reader& r, SetlistEntry& out, std::set<juce::String>& seen) {
     out.extra = r.rest();
 }
 void read(Reader& r, OutputDoc& out, std::set<juce::String>& seen) {
-    out.id = r.id(seen); out.name = r.text("name"); out.firstChannel = r.whole("firstChannel", 1, 1, 1024); out.stereo = r.flag("stereo", true);
+    out.id = r.id(seen); out.name = r.text("name");
+    out.firstChannel = r.whole("firstChannel", 1, 1, 1024); out.stereo = r.flag("stereo", true);
     if (! r.has("label")) r.note(r.where("label") + " is missing, so the output is marked as not used.");
     out.label = r.choice("label", OutputLabel::Unused, kLabels);
     out.trimDb = r.db("trimDb", 0.0f);
@@ -310,7 +322,8 @@ bool open(const juce::var& v, Reader& r, ParseNotes& notes) {
     r.skip("version");
     auto ver = v.getProperty("version", juce::var());
     if (isNumber(ver) && (int) ver > kSchemaVersion)
-        notes.notes.add("This file was written by a newer version of Smart Q Live (format " + juce::String((int) ver) + "), so only the parts this version knows are read; the rest is kept.");
+        notes.notes.add("This file was written by a newer version of Smart Q Live (format " + juce::String((int) ver)
+                        + "), so only the parts this version knows are read; the rest is kept.");
     return true;
 }
 

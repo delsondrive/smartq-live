@@ -143,7 +143,8 @@ juce::Result makeDemo(const juce::File& root) {
         const auto audioDir = songDir.getChildFile("audio");
         if (! audioDir.createDirectory()) return juce::Result::fail("Couldn't make the folder " + audioDir.getFullPathName() + ".");
         const auto audio = generate(spec);
-        const std::pair<const char*, const std::vector<float>*> parts[] = {{"Keys", &audio.keys}, {"Bass", &audio.bass}, {"Perc", &audio.perc}};
+        const std::pair<const char*, const std::vector<float>*> parts[] = {
+            {"Keys", &audio.keys}, {"Bass", &audio.bass}, {"Perc", &audio.perc}};
         for (const auto& [name, samples] : parts) {
             const juce::String file = juce::String("audio/") + name + ".wav";
             if (auto r = writeWav(audioDir.getChildFile(juce::String(name) + ".wav"), *samples); r.failed()) return r;

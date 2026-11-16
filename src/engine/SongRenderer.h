@@ -22,7 +22,8 @@ public:
     void setPartMute(int part, bool) noexcept;
     void setClickGain(float linear) noexcept;
     void setSolo(int part) noexcept;                  // -1 = none; a soloed part silences the other parts, never the click
-    void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope) noexcept;  // adds; envelope may be null
+    // Adds into out; envelope may be null.
+    void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope) noexcept;
 
 private:
     struct Smoothed {

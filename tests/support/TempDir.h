@@ -8,19 +8,19 @@ namespace sqlive::test {
 class TempDir {
 public:
     TempDir()
-        : folder(juce::File::getSpecialLocation(juce::File::tempDirectory)
-                     .getChildFile("sqlive-test-" + juce::Uuid().toDashedString())) {
-        folder.createDirectory();
+        : folder_(juce::File::getSpecialLocation(juce::File::tempDirectory)
+                      .getChildFile("sqlive-test-" + juce::Uuid().toDashedString())) {
+        folder_.createDirectory();
     }
-    ~TempDir() { folder.deleteRecursively(); }
+    ~TempDir() { folder_.deleteRecursively(); }
 
     TempDir(const TempDir&) = delete;
     TempDir& operator=(const TempDir&) = delete;
 
-    const juce::File& dir() const { return folder; }
+    const juce::File& dir() const { return folder_; }
 
 private:
-    juce::File folder;
+    juce::File folder_;
 };
 
 }  // namespace sqlive::test

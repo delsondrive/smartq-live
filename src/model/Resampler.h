@@ -22,7 +22,7 @@ public:
     int pull(juce::AudioBuffer<float>& out, int maxFrames);
 
 private:
-    static constexpr double latency_ = (double) juce::WindowedSincInterpolator::getBaseLatency();
+    static constexpr double kLatency = (double) juce::WindowedSincInterpolator::getBaseLatency();
 
     // Makes up to maxFrames outputs at `speed` from the pending input, into `out`, or (one frame to throw away) into `scratch`.
     int run(double speed, juce::AudioBuffer<float>* out, float* scratch, int maxFrames);

@@ -89,7 +89,8 @@ std::vector<RoutingProblem> checkRig(const BandDoc& band, const RigDoc& rig, int
             const auto& ob = rig.outputs[b];
             if (ob.label == OutputLabel::Unused) continue;
             if (const int lo = firstSharedChannel(oa, ob); lo != 0)
-                out.push_back({Kind::ChannelsOverlap, oa.id, {}, oa.name + " and " + ob.name + " both use output " + juce::String(lo) + ".", true});
+                out.push_back({Kind::ChannelsOverlap, oa.id, {},
+                               oa.name + " and " + ob.name + " both use output " + juce::String(lo) + ".", true});
         }
     }
 
@@ -97,7 +98,9 @@ std::vector<RoutingProblem> checkRig(const BandDoc& band, const RigDoc& rig, int
         for (auto& o : rig.outputs)
             if (o.label != OutputLabel::Unused && lastChannel(o) > deviceChannels)
                 out.push_back({Kind::BeyondDevice, o.id, {},
-                               o.name + " uses output" + (o.stereo ? "s " : " ") + channelsText(o) + ", but this interface has " + juce::String(deviceChannels) + ".", false});
+                               o.name + " uses output" + (o.stereo ? "s " : " ") + channelsText(o) + ", but this interface has "
+                                   + juce::String(deviceChannels) + ".",
+                               false});
 
     if (!anyHeard)
         out.push_back({Kind::NothingHeard, {}, {}, "Nothing is sent to any output, so nothing would be heard.", true});

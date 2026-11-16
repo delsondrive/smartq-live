@@ -25,56 +25,56 @@ template <typename Map, typename Name> std::vector<juce::String> idsByName(const
 }
 }  // namespace
 
-const SongDoc* BandModel::song(const juce::String& id) const { return findIn(songs, id); }
-const SetlistDoc* BandModel::setlist(const juce::String& id) const { return findIn(setlists, id); }
-const RigDoc* BandModel::rig(const juce::String& id) const { return findIn(rigs, id); }
-std::vector<juce::String> BandModel::songIds() const { return idsByName(songs, [](const SongDoc& d) { return d.title; }); }
-std::vector<juce::String> BandModel::setlistIds() const { return idsByName(setlists, [](const SetlistDoc& d) { return d.name; }); }
-std::vector<juce::String> BandModel::rigIds() const { return idsByName(rigs, [](const RigDoc& d) { return d.name; }); }
+const SongDoc* BandModel::song(const juce::String& id) const { return findIn(songs_, id); }
+const SetlistDoc* BandModel::setlist(const juce::String& id) const { return findIn(setlists_, id); }
+const RigDoc* BandModel::rig(const juce::String& id) const { return findIn(rigs_, id); }
+std::vector<juce::String> BandModel::songIds() const { return idsByName(songs_, [](const SongDoc& d) { return d.title; }); }
+std::vector<juce::String> BandModel::setlistIds() const { return idsByName(setlists_, [](const SetlistDoc& d) { return d.name; }); }
+std::vector<juce::String> BandModel::rigIds() const { return idsByName(rigs_, [](const RigDoc& d) { return d.name; }); }
 
 const Role* BandModel::role(const juce::String& roleId) const {
-    for (auto& r : bandDoc.roles)
+    for (auto& r : band_doc_.roles)
         if (r.id == roleId) return &r;
     return nullptr;
 }
 
-SongDoc* BandModel::editSong(const juce::String& id) { return findMutable(songs, id); }
-SetlistDoc* BandModel::editSetlist(const juce::String& id) { return findMutable(setlists, id); }
-RigDoc* BandModel::editRig(const juce::String& id) { return findMutable(rigs, id); }
+SongDoc* BandModel::editSong(const juce::String& id) { return findMutable(songs_, id); }
+SetlistDoc* BandModel::editSetlist(const juce::String& id) { return findMutable(setlists_, id); }
+RigDoc* BandModel::editRig(const juce::String& id) { return findMutable(rigs_, id); }
 
-void BandModel::putSong(SongDoc d) { auto id = d.id; songs[id] = std::move(d); }
-void BandModel::putSetlist(SetlistDoc d) { auto id = d.id; setlists[id] = std::move(d); }
-void BandModel::putRig(RigDoc d) { auto id = d.id; rigs[id] = std::move(d); }
-bool BandModel::removeSong(const juce::String& id) { return songs.erase(id) > 0; }
-bool BandModel::removeSetlist(const juce::String& id) { return setlists.erase(id) > 0; }
-bool BandModel::removeRig(const juce::String& id) { return rigs.erase(id) > 0; }
+void BandModel::putSong(SongDoc d) { auto id = d.id; songs_[id] = std::move(d); }
+void BandModel::putSetlist(SetlistDoc d) { auto id = d.id; setlists_[id] = std::move(d); }
+void BandModel::putRig(RigDoc d) { auto id = d.id; rigs_[id] = std::move(d); }
+bool BandModel::removeSong(const juce::String& id) { return songs_.erase(id) > 0; }
+bool BandModel::removeSetlist(const juce::String& id) { return setlists_.erase(id) > 0; }
+bool BandModel::removeRig(const juce::String& id) { return rigs_.erase(id) > 0; }
 
 std::map<DocKey, juce::String> BandModel::snapshot() const {
     std::map<DocKey, juce::String> out;
-    out[{DocKind::Band, {}}] = toJson(bandDoc);
-    for (auto& kv : songs) out[{DocKind::Song, kv.first}] = toJson(kv.second);
-    for (auto& kv : setlists) out[{DocKind::Setlist, kv.first}] = toJson(kv.second);
-    for (auto& kv : rigs) out[{DocKind::Rig, kv.first}] = toJson(kv.second);
+    out[{DocKind::Band, {}}] = toJson(band_doc_);
+    for (auto& kv : songs_) out[{DocKind::Song, kv.first}] = toJson(kv.second);
+    for (auto& kv : setlists_) out[{DocKind::Setlist, kv.first}] = toJson(kv.second);
+    for (auto& kv : rigs_) out[{DocKind::Rig, kv.first}] = toJson(kv.second);
     return out;
 }
 
-void BandModel::beginChanges() { started = snapshot(); }
+void BandModel::beginChanges() { started_ = snapshot(); }
 
 std::vector<BandModel::Change> BandModel::endChanges() {
     auto now = snapshot();
     std::vector<Change> changes;
-    auto b = started.begin(); auto n = now.begin();
-    while (b != started.end() || n != now.end()) {
-        if (n == now.end() || (b != started.end() && b->first < n->first)) {
+    auto b = started_.begin(); auto n = now.begin();
+    while (b != started_.end() || n != now.end()) {
+        if (n == now.end() || (b != started_.end() && b->first < n->first)) {
             changes.push_back({b->first, b->second, {}}); ++b;
-        } else if (b == started.end() || n->first < b->first) {
+        } else if (b == started_.end() || n->first < b->first) {
             changes.push_back({n->first, {}, n->second}); ++n;
         } else {
             if (b->second != n->second) changes.push_back({n->first, b->second, n->second});
             ++b; ++n;
         }
     }
-    started.clear();
+    started_.clear();
     return changes;
 }
 
@@ -83,7 +83,7 @@ void BandModel::applyText(const DocKey& key, const juce::String& json) {
     switch (key.kind) {
         case DocKind::Band: {
             BandDoc d;
-            if (json.isNotEmpty() && fromJson(json, d, notes)) bandDoc = std::move(d);
+            if (json.isNotEmpty() && fromJson(json, d, notes)) band_doc_ = std::move(d);
             break;
         }
         case DocKind::Song: {

@@ -91,7 +91,7 @@ void Resampler::pushSilence(int frames) {
 int Resampler::pull(juce::AudioBuffer<float>& out, int maxFrames) {
     if (! primed_) {
         float discarded = 0.0f;
-        if (run(latency_, nullptr, &discarded, 1) == 0) return 0;
+        if (run(kLatency, nullptr, &discarded, 1) == 0) return 0;
         primed_ = true;
     }
     return run(speed_, &out, nullptr, maxFrames);

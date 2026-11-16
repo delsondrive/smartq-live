@@ -4,8 +4,8 @@
 
 namespace sqlive {
 
-// Which build this is: the version the project declares and the commit it was made from. juce_core only, so the
-// plug-in and the bridge each carry their own, and the check that they match is one they can both make.
+// Which build this is: the version the project declares and the commit it was made from, for the About box and for bug
+// reports. juce_core only, so the tests can check it without the GUI.
 struct BuildInfo {
     juce::String version;           // "0.1.0", the CMake project version
     juce::String commit;            // the short commit, or "unknown" when the build had no git
