@@ -74,15 +74,18 @@ class MixerPage::TrimValue : public juce::Component {
 public:
     explicit TrimValue(app::Session& session) : session_(session) { setMouseCursor(juce::MouseCursor::UpDownResizeCursor); }
 
-    void set(const juce::String& outputId) {
+    // True when what it shows changed.
+    bool set(const juce::String& outputId) {
+        if (outputId.isEmpty() && outputId_.isEmpty()) return false;   // "This song": not shown, nothing to read
         outputId_ = outputId;
         const LevelTarget target = this->target();
         const float db = session_.level(target).value_or(0.0f);
         const bool changed = session_.changedTonight(target);
-        if (db == db_ && changed == changed_) return;
+        if (db == db_ && changed == changed_) return false;
         db_ = db;
         changed_ = changed;
         repaint();
+        return true;
     }
     int idealWidth() const { return std::max(kValueMinWidth, ceilToInt(widthOf(valueFont(), trimText(db_))) + 2 * kValuePadX); }
 
@@ -134,6 +137,7 @@ MixerPage::MixerPage(app::Session& session)
     songs_.onChange = [this](int index) {
         if (juce::isPositiveAndBelow(index, songIds_.size())) openSong(songIds_[index]);
     };
+    panel_.onStateChanged = [this] { applyPanelState(); };
     keepOffKeyboard(*this);
     session_.changes().addChangeListener(this);
 }
@@ -157,11 +161,14 @@ void MixerPage::visibilityChanged() {
 }
 
 void MixerPage::refresh(bool force) {
-    // Hidden, it waits until it is shown: the session's changes come 30 times a second while a song plays.
+    // Hidden, it waits until it is shown: the session's changes come 30 times a second while a song plays. Shown, a tick
+    // with nothing new in it lays nothing out: the panel follows the session by itself (one makeMixerState a tick) and
+    // tells the page when its state changes; the page itself only looks at the songs and the trim.
     if (!isVisible() && !force) {
         fresh_ = false;
         return;
     }
+    const bool wasFresh = fresh_;
     fresh_ = true;
     const auto& model = session_.model();
 
@@ -178,12 +185,33 @@ void MixerPage::refresh(bool force) {
                                                            : juce::String();
     }
 
-    panel_.show(songId_, outputId_);
+    bool layOut = false;
+    if (ids != songIds_ || titles != songTitles_) {
+        songIds_ = ids;
+        songTitles_ = titles;
+        songs_.setItems(titles, ids.indexOf(songId_));
+        layOut = true;                                            // the dropdown's width follows the titles
+    } else {
+        songs_.setSelected(ids.indexOf(songId_));
+    }
+    // The panel is told only what it should show: a new song or output, or after the page was hidden. Its state, if that
+    // changes, comes back through applyPanelState.
+    if (force || !wasFresh || songId_ != panel_.songId() || outputId_ != panel_.outputId()) panel_.show(songId_, outputId_);
+    if (trim_->set(outputId_)) layOut = true;
+    if (layOut) layOutAgain();
+}
+
+void MixerPage::applyPanelState() {
     const auto& state = panel_.state();
     if (state.chosen == 0) outputId_.clear();                     // an output no longer in the rig: "This song"
 
     juce::StringArray options;
     for (const auto& option : state.options) options.add(option.name);
+    const bool sideChanged = state.panelTitle != shownSide_.panelTitle || state.panelLabel != shownSide_.panelLabel
+                             || state.panelLabelKind != shownSide_.panelLabelKind || state.panelChannels != shownSide_.panelChannels
+                             || state.panelText != shownSide_.panelText;
+    if (options == options_ && state.chosen == shownChosen_ && !sideChanged) return;   // only the strips changed: the panel's own
+
     if (options != options_) {                                    // setItems forgets the hovered segment: only when they change
         options_ = options;
         levelsFor_.setItems(options, state.chosen);
@@ -192,19 +220,23 @@ void MixerPage::refresh(bool force) {
         levelsFor_.setSelected(state.chosen);
         levelsForList_.setSelected(state.chosen);
     }
-    if (ids != songIds_ || titles != songTitles_) {
-        songIds_ = ids;
-        songTitles_ = titles;
-        songs_.setItems(titles, ids.indexOf(songId_));
-    } else {
-        songs_.setSelected(ids.indexOf(songId_));
-    }
+    shownChosen_ = state.chosen;
+    shownSide_.panelTitle = state.panelTitle;
+    shownSide_.panelLabel = state.panelLabel;
+    shownSide_.panelLabelKind = state.panelLabelKind;
+    shownSide_.panelChannels = state.panelChannels;
+    shownSide_.panelText = state.panelText;
     trim_->set(outputId_);
+    layOutAgain();
+}
+
+void MixerPage::layOutAgain() {
     resized();
     repaint();
 }
 
 void MixerPage::resized() {
+    ++layouts_done_;
     layoutHeader();
     auto content = getLocalBounds().withTrimmedTop(kHeaderHeight).withTrimmedBottom(kPadBottom).reduced(kPadX, 0);
     side_ = content.removeFromRight(std::min(kSideWidth, std::max(0, content.getWidth() / 2)));

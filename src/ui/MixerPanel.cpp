@@ -374,12 +374,18 @@ void MixerPanel::toggleMute(int stripIndex) {
 }
 
 // A press starts a gesture and a release ends it; neither is a level of its own (a fader that isn't sent reports -60
-// there, which isn't "off"). Each move, and a double-click or wheel notch (a gesture of its own), is.
+// there, which isn't "off"). Each move, and a double-click or wheel notch (a gesture of its own), is, except one that
+// leaves a fader that isn't sent at the bottom: a pixel's wobble, or a notch down, doesn't start sending it at -60.
 void MixerPanel::faderMoved(int stripIndex, float db, bool gestureStart, bool gestureEnd) {
     if (!juce::isPositiveAndBelow(stripIndex, static_cast<int>(state_.strips.size()))) return;
     if (gestureStart) gesture_ = juce::Uuid().toString();
     if (gestureStart != gestureEnd) return;
-    session_.setLevel(state_.strips[static_cast<std::size_t>(stripIndex)].target, db, gesture_);
+    const auto& strip = state_.strips[static_cast<std::size_t>(stripIndex)];
+    if (!strip.db && db <= LevelFader::kMinDb) {
+        strips_[static_cast<std::size_t>(stripIndex)]->set(strip, compact_, metering_);   // the cap back to "not sent"
+        return;
+    }
+    session_.setLevel(strip.target, db, gesture_);
     refresh(true);
 }
 
@@ -402,10 +408,12 @@ void MixerPanel::refresh(bool force) {
         return;
     }
     fresh_ = true;
+    ++states_made_;
     auto next = makeMixerState(session_, songId_, outputId_);
     const auto now = session_.now();
     const bool metering = now.playing && (outputId_.isNotEmpty() || now.playingSongId == songId_);   // drawn at each fader's level
-    if (next == state_ && metering == metering_ && strips_.size() == state_.strips.size()) return;
+    const bool stateChanged = !(next == state_);
+    if (!stateChanged && metering == metering_ && strips_.size() == state_.strips.size()) return;
 
     const bool sameStrips = next.strips.size() == strips_.size()
                             && std::equal(next.strips.begin(), next.strips.end(), state_.strips.begin(),
@@ -425,6 +433,7 @@ void MixerPanel::refresh(bool force) {
     }
     for (std::size_t i = 0; i < strips_.size(); ++i) strips_[i]->set(state_.strips[i], compact_, metering_);
     if (!sameStrips) layoutRow();
+    if (stateChanged && onStateChanged) onStateChanged();
 }
 
 void MixerPanel::paint(juce::Graphics& g) { theme::paintPanel(g, getLocalBounds().toFloat()); }

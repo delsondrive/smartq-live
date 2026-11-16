@@ -172,8 +172,12 @@ TEST_CASE("a click on a fader that isn't sent sends nothing; a drag is one undo 
     fader.onDrag(LevelFader::kMinDb, true, false);                // pressed and released where it is: -60 is "off", not a level
     fader.onDrag(LevelFader::kMinDb, false, true);
     CHECK_FALSE(s.level(target).has_value());
-
     const auto undoBefore = s.commands().undoName();
+    fader.onDrag(LevelFader::kMinDb, true, false);                // pressed, moved a pixel (still at the bottom), released
+    fader.onDrag(LevelFader::kMinDb, false, false);
+    fader.onDrag(LevelFader::kMinDb, false, true);
+    CHECK_FALSE(s.level(target).has_value());
+    CHECK(s.commands().undoName() == undoBefore);                 // and no undo step
     fader.onDrag(LevelFader::kMinDb, true, false);                // a drag up to -12, in three moves
     fader.onDrag(-30.0f, false, false);
     fader.onDrag(-20.0f, false, false);
@@ -184,6 +188,33 @@ TEST_CASE("a click on a fader that isn't sent sends nothing; a drag is one undo 
     s.commands().undo();                                          // the whole drag goes back at once
     CHECK_FALSE(s.level(target).has_value());
     CHECK(s.commands().undoName() == undoBefore);
+}
+
+TEST_CASE("a tick of the session with nothing new in it costs the mixer one state and no layout", "[mixer]") {
+    DemoSession d; auto& s = *d.session;
+    auto& rig = *s.model().rig(s.rigId());
+    const auto songId = d.setlist().entries[0].songId;
+    sqlive::test::ScopedLook look;
+    ui::MixerPage page(s);  page.setBounds(0, 0, 1280, 698);  page.setVisible(true);
+    page.openSong(songId);
+    s.playSong(songId, 0.0);                                      // 30 ticks a second while it plays
+    s.advanceWithoutDevice(4800);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    REQUIRE(s.now().playing);
+    for (const juce::String outputId : {juce::String(), rig.outputs[0].id}) {
+        INFO("output " << outputId);
+        page.chooseOutput(outputId);
+        const int states = page.panel().statesMade(), layouts = page.layoutsDone();
+        s.changes().sendSynchronousChangeMessage();               // one tick, nothing changed
+        CHECK(page.panel().statesMade() == states + 1);
+        CHECK(page.layoutsDone() == layouts);
+    }
+    // Something the page shows changed: it is laid out again.
+    const int layouts = page.layoutsDone();
+    s.setLevel({LevelTarget::Kind::OutputTrim, {}, {}, rig.outputs[0].id, {}}, -12.5f, "trim");
+    s.changes().sendSynchronousChangeMessage();
+    CHECK(page.layoutsDone() > layouts);
+    s.perform(app::Action::Stop);
 }
 
 TEST_CASE("the mixer's M stops sending a role, or mutes a part in this song", "[mixer]") {

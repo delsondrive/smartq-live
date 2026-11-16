@@ -34,6 +34,7 @@ public:
 
     juce::Rectangle<int> headerBounds() const { return header_; }   // for tests
     juce::Rectangle<int> sideBounds() const { return side_; }       // for tests: the side panel's box
+    int layoutsDone() const { return layouts_done_; }             // for tests: how many times the page was laid out
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -44,6 +45,8 @@ private:
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void refresh(bool force = false);
+    void applyPanelState();                                       // the panel's state changed: the switch and the side panel
+    void layOutAgain();
     void layoutHeader();
     void layoutSide();
 
@@ -51,7 +54,10 @@ private:
     juce::String songId_, outputId_;
     juce::StringArray songIds_, songTitles_;                      // the dropdown's songs, by title
     juce::StringArray options_;                                   // the "Levels for" options as last given to the switch
+    int shownChosen_ = -1;                                        // the option the switch and side panel were last set for
+    MixerState shownSide_;                                        // its panel* fields as last laid out
     bool fresh_ = false;
+    int layouts_done_ = 0;
 
     MixerPanel panel_;
     Segmented levelsFor_;

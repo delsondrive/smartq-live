@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -58,10 +59,14 @@ public:
     ~MixerPanel() override;
 
     void show(const juce::String& songId, const juce::String& outputId);   // and refreshes now
+    juce::String songId() const { return songId_; }
+    juce::String outputId() const { return outputId_; }
+    std::function<void()> onStateChanged;                         // after a refresh that changed state()
     void setCompact(bool);
     bool compact() const { return compact_; }
 
     const MixerState& state() const { return state_; }
+    int statesMade() const { return states_made_; }                 // for tests: how many times makeMixerState ran
     const juce::Viewport& viewport() const;                       // for tests: the row of strips, which scrolls sideways
     void toggleMute(int stripIndex);                              // what a strip's "M" does; nothing for a strip without one
 
@@ -84,6 +89,7 @@ private:
     MixerState state_;
     bool compact_ = false, fresh_ = false, metering_ = false;
     juce::String gesture_;                                        // the fader drag going on
+    int states_made_ = 0;
 
     juce::Viewport viewport_;
     std::unique_ptr<Row> row_;
