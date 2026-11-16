@@ -298,33 +298,27 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     const std::uint64_t ended = playing_.serial;
     report(type, ended, streamTime);
     renderer_.setSong(nullptr);   // before the song can be freed
-    // A song that follows straight on (seamlessly, or after a gap of no length) keeps the MIDI transport running.
-    const bool straightOn = type == EngineEvent::Type::Ended && cueFits() &&
-                            (follow_.kind == FollowKind::Seamless || (follow_.kind == FollowKind::Gap && gapFrames() <= 0));
-    midi_.end(streamTime, straightOn);
+    // What follows: the cue straight on (seamlessly, or after a gap of no length), the cue after a gap, or nothing.
+    const bool followOn = type == EngineEvent::Type::Ended && cueFits() && follow_.kind != FollowKind::Stop;
+    const std::int64_t gap = followOn && follow_.kind == FollowKind::Gap ? gapFrames() : 0;
+    const bool straightOn = followOn && gap <= 0;
+    // The MIDI transport runs on into a song that follows straight on: MidiOut reads both songs while both are alive.
+    midi_.end(streamTime, straightOn ? cued_.song : nullptr);
     retire(playing_);
     state_ = PlayState::Stopped;
     song_time_ = 0;
     fade_pos_ = 0;
-    if (type != EngineEvent::Type::Ended || !cueFits()) return;
+    if (!followOn) return;
 
-    switch (follow_.kind) {
-    case FollowKind::Stop:
-        break;
-    case FollowKind::Seamless:   // straight into bar 1: the count-in is skipped
-        playCued(cued_.song->bodyStart, streamTime, false, true);
-        break;
-    case FollowKind::Gap:        // silence, then the whole song, count-in included
-        gap_left_ = gapFrames();
-        if (gap_left_ <= 0) {
-            playCued(cued_.song->start, streamTime, false, true);
-            break;
-        }
-        state_ = PlayState::Playing;
-        in_gap_ = true;
-        gap_after_ = ended;
-        break;
+    if (straightOn) {   // Seamless: straight into bar 1, the count-in skipped. A gap of no length: the whole song.
+        playCued(follow_.kind == FollowKind::Seamless ? cued_.song->bodyStart : cued_.song->start, streamTime, false, true);
+        return;
     }
+    // Silence, then the whole song, count-in included.
+    gap_left_ = gap;
+    state_ = PlayState::Playing;
+    in_gap_ = true;
+    gap_after_ = ended;
 }
 
 // The gap is over at streamTime: the cue plays from its start, or, if it was cleared meanwhile, the engine stops. The song

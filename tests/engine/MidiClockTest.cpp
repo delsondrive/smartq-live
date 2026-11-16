@@ -169,3 +169,76 @@ TEST_CASE("the start message follows the chase", "[clock]") {
     CHECK(out[0].data[0] == 0xC0);  CHECK(out[1].data[0] == 0xFA);  CHECK(out[2].data[0] == 0xF8);
     CHECK(out[0].streamTime == out[1].streamTime);  CHECK(out[1].streamTime == out[2].streamTime);
 }
+
+namespace {
+
+// The start and stop messages, as (stream time from base, device, status, serial), in queue order.
+struct Transport {
+    std::int64_t at; int device; int status; std::uint64_t serial;
+    bool operator==(const Transport&) const = default;
+};
+
+std::vector<Transport> transportOf(const std::vector<OutMidi>& out, std::int64_t base) {
+    std::vector<Transport> t;
+    for (auto& m : out)
+        if (m.data[0] == 0xFA || m.data[0] == 0xFC) t.push_back({m.streamTime - base, m.device, m.data[0], m.serial});
+    return t;
+}
+
+// a (48000 samples), then b (24000) straight on; returns everything sent, with the serials and where a began.
+struct Pair { std::vector<OutMidi> out; std::uint64_t a = 0, b = 0; std::int64_t base = 0; };
+
+Pair playSeamless(PreparedSong a, PreparedSong b) {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    e.setFollowOn({FollowKind::Seamless, 0.0});
+    Pair p;
+    p.a = e.cue(share(std::move(a)));  e.start();
+    renderOffline(e, 2, 1024, 512);
+    p.b = e.cue(share(std::move(b)));
+    p.base = e.status().streamTime - 1024;
+    renderOffline(e, 2, 48000 + 24000 + 2000, 512);
+    p.out = drainMidi(e);
+    return p;
+}
+
+} // namespace
+
+TEST_CASE("a device carries on into a seamless follow-on only when it is the same device, whatever its number", "[clock]") {
+    SECTION("the numbers swap: the old device stops and the new one starts") {
+        auto a = testSong("a", 48000, 0.0f);   a.midiDeviceIds = {"g1", "g2"};  a.startStopDevices = {0};
+        auto b = testSong("b", 24000, 0.0f);   b.midiDeviceIds = {"g2"};        b.startStopDevices = {0};   // g1 was removed
+        auto p = playSeamless(std::move(a), std::move(b));
+        CHECK(transportOf(p.out, p.base) == std::vector<Transport>{
+            {0, 0, 0xFA, p.a}, {48000, 0, 0xFC, p.a}, {48000, 0, 0xFA, p.b}, {72000, 0, 0xFC, p.b}});
+    }
+    SECTION("the same device under a new number carries on") {
+        auto a = testSong("a", 48000, 0.0f);   a.midiDeviceIds = {"g1", "g2"};  a.startStopDevices = {1};
+        auto b = testSong("b", 24000, 0.0f);   b.midiDeviceIds = {"g2"};        b.startStopDevices = {0};
+        auto p = playSeamless(std::move(a), std::move(b));
+        CHECK(transportOf(p.out, p.base) == std::vector<Transport>{{0, 1, 0xFA, p.a}, {72000, 0, 0xFC, p.b}});
+    }
+}
+
+TEST_CASE("a seamless follow-on stops the devices it drops and starts the ones it adds", "[clock]") {
+    auto a = testSong("a", 48000, 0.0f);   a.startStopDevices = {0, 1};   // no device ids: matched by number
+    auto b = testSong("b", 24000, 0.0f);   b.startStopDevices = {1, 2};
+    auto p = playSeamless(std::move(a), std::move(b));
+    CHECK(transportOf(p.out, p.base) == std::vector<Transport>{
+        {0, 0, 0xFA, p.a}, {0, 1, 0xFA, p.a}, {48000, 0, 0xFC, p.a}, {48000, 2, 0xFA, p.b}, {72000, 1, 0xFC, p.b},
+        {72000, 2, 0xFC, p.b}});
+}
+
+TEST_CASE("a start partway through a song starts the devices there, and the clock at the next tick", "[clock]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = testSong("c", 96000, 0.0f);
+    song.clockDevices = {0};  song.startStopDevices = {0};
+    song.clockTicks = buildClockTicks(song.tempo, 48000.0, song.start, song.end);
+    e.cue(share(song));  e.startAt(10500);
+    auto base = e.status().streamTime;
+    renderOffline(e, 2, 2048, 512);
+    auto out = drainMidi(e);
+    REQUIRE(out.size() >= 3);
+    CHECK(out[0].data[0] == 0xFA);  CHECK(out[0].streamTime == base);
+    CHECK(out[1].data[0] == 0xF8);  CHECK(out[1].streamTime == base + 500);   // the tick at 11000
+    CHECK(out[2].data[0] == 0xF8);  CHECK(out[2].streamTime == base + 1500);
+}

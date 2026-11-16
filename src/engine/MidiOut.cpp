@@ -21,6 +21,19 @@ std::uint32_t deviceBits(const std::vector<std::uint16_t>& devices) noexcept {
     return bits;
 }
 
+// The number in `to` of the device numbered d in `from`, when `to` starts and stops it (it is among `wanted`), or -1. A
+// device is the same when its id is, wherever its number moved; songs without the ids (or not that many) match by number.
+int sameDevice(const PreparedSong& from, int d, const PreparedSong& to, std::uint32_t wanted) noexcept {
+    const auto& fromIds = from.midiDeviceIds;
+    const auto& toIds = to.midiDeviceIds;
+    for (int n = 0; n < kMaxMidiDevices; ++n) {
+        if ((wanted & (1u << n)) == 0) continue;
+        const bool byId = static_cast<std::size_t>(d) < fromIds.size() && static_cast<std::size_t>(n) < toIds.size();
+        if (byId ? fromIds[static_cast<std::size_t>(d)] == toIds[static_cast<std::size_t>(n)] : n == d) return n;
+    }
+    return -1;
+}
+
 } // namespace
 
 MidiOut::MidiOut() : queue_(kQueueCapacity) {}
@@ -38,10 +51,9 @@ void MidiOut::begin(const PreparedSong& song, std::uint64_t serial, SamplePos so
     next_tick_ = static_cast<std::size_t>(std::lower_bound(song.clockTicks.begin(), song.clockTicks.end(), songTime) -
                                           song.clockTicks.begin());
 
-    // The transport, after the chase. Following straight on from a song that left devices running, those this song starts
-    // and stops too carry on, and the others are stopped (as that song's devices). Every other device of this song starts.
+    // The transport, after the chase. Following straight on, the devices end() found carrying on are running already (by
+    // this song's numbers); every other start-stop device of this song starts.
     const std::uint32_t wanted = deviceBits(song.startStopDevices);
-    stopDevices(started_ & ~wanted, streamTime);
     for (int d = 0; d < kMaxMidiDevices; ++d) {
         const std::uint32_t bit = 1u << d;
         if ((wanted & bit) == 0 || (started_ & bit) != 0) continue;
@@ -80,7 +92,7 @@ void MidiOut::resend(int device, SamplePos songTime, std::int64_t streamTime) no
     chase(device, std::max(chase_point_, songTime - 1), streamTime);
 }
 
-void MidiOut::end(std::int64_t streamTime, bool followedOn) noexcept {
+void MidiOut::end(std::int64_t streamTime, const PreparedSong* next) noexcept {
     int kept = 0;
     for (int i = 0; i < note_count_; ++i) {
         const Note n = notes_[static_cast<std::size_t>(i)];
@@ -88,10 +100,22 @@ void MidiOut::end(std::int64_t streamTime, bool followedOn) noexcept {
         notes_[static_cast<std::size_t>(kept++)] = n;   // the queue is full: it still sounds, so it is ended next time
     }
     note_count_ = kept;
-    if (!followedOn) {
-        stopDevices(started_, streamTime);
-        started_serial_ = 0;
+    // A running device carries on into the next song when that song starts and stops the same device; it is kept under
+    // the next song's number for it, and begin() takes it on. Every other running device stops, as the outgoing song's.
+    std::uint32_t from = 0, to = 0;
+    if (next != nullptr && song_ != nullptr) {
+        const std::uint32_t wanted = deviceBits(next->startStopDevices);
+        for (int d = 0; d < kMaxMidiDevices; ++d) {
+            if ((started_ & (1u << d)) == 0) continue;
+            const int n = sameDevice(*song_, d, *next, wanted);
+            if (n < 0 || (to & (1u << n)) != 0) continue;
+            from |= 1u << d;
+            to |= 1u << n;
+        }
     }
+    stopDevices(started_ & ~from, streamTime);
+    started_ = to;
+    if (to == 0) started_serial_ = 0;
     song_ = nullptr;
     serial_ = 0;
     next_ = 0;
@@ -130,6 +154,8 @@ void MidiOut::tick(std::int64_t streamTime) noexcept {
 }
 
 // 0xFC to these running devices, as the song that started them; they are no longer running, even one the full queue drops.
+// Unlike a dropped note-off, it is not sent again: a device that missed its stop only runs on without a clock, while one
+// sent later could land after the next song has started it, and stop that song's transport.
 void MidiOut::stopDevices(std::uint32_t devices, std::int64_t streamTime) noexcept {
     devices &= started_;
     for (int d = 0; d < kMaxMidiDevices; ++d)

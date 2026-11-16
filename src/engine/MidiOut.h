@@ -26,6 +26,12 @@ namespace sqlive::engine {
 // A chase is not bounded against the queue: in the worst case it is 32 devices × 16 channels × up to 123 messages, far
 // more than kQueueCapacity. Like any other message, what doesn't fit is dropped (the tail of the chase, then the song's
 // events, until the dispatcher makes room); a song's lanes in practice chase a few messages per device.
+//
+// The clock and the transport: every clock device is sent 0xF8 at each of the song's clockTicks it plays. Each device that
+// follows start and stop is sent 0xFA at the song's first sample, after the chase, and 0xFC when the song is over, unless
+// another follows straight on: then a running device that song starts and stops too carries on (no 0xFC, no second 0xFA),
+// matched by its id in midiDeviceIds wherever its number moved; every other running device is stopped, and the new
+// song's other start-stop devices are started. A device number of kMaxMidiDevices or more gets no clock, start or stop.
 class MidiOut {
 public:
     static constexpr std::size_t kQueueCapacity = 4096;
@@ -34,7 +40,7 @@ public:
     MidiOut();
 
     // Producer. The song begins playing from songTime, its first sample at streamTime; it must stay alive until end().
-    // Clock devices tick from songTime; start-stop devices not already running are sent 0xFA after the chase.
+    // Clock devices tick from songTime; start-stop devices end() didn't carry on are sent 0xFA after the chase.
     // fromStart: it begins at its start (or, following on seamlessly, at bar 1), so the chase point is bar 1 beat 1 (or
     // songTime, if later); otherwise the chase point is songTime.
     void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime, bool fromStart) noexcept;
@@ -45,10 +51,11 @@ public:
     // streamTime. Nothing when no song is playing, or for a device number the engine can't have.
     void resend(int device, SamplePos songTime, std::int64_t streamTime) noexcept;
     // Producer. The song is over at streamTime: a note-off for every note still sounding, and the song is let go of. A
-    // note-off the full queue drops leaves its note kept, to be ended at the next end(). Unless followedOn (another song
-    // begins at streamTime, straight on), every start-stop device still running is sent 0xFC; one the full queue drops is
-    // not sent again. Without a song (in a gap, or stopped) it still ends what is left: notes, and devices still running.
-    void end(std::int64_t streamTime, bool followedOn = false) noexcept;
+    // note-off the full queue drops leaves its note kept, to be ended at the next end(). next: the song that begins at
+    // streamTime straight on (its begin() follows at once), or nullptr. A running start-stop device next starts and stops
+    // too carries on; every other one is sent 0xFC, and one the full queue drops is not sent again. next is only read
+    // here. Without a song (in a gap, or stopped) it still ends what is left: notes, and devices still running.
+    void end(std::int64_t streamTime, const PreparedSong* next = nullptr) noexcept;
 
     // The one consumer thread.
     bool pop(OutMidi&) noexcept;
@@ -77,7 +84,8 @@ private:
     SamplePos chase_point_ = 0;          // program and control changes at or before it were covered by the chase
     std::array<Note, kMaxSoundingNotes> notes_{};
     int note_count_ = 0;
-    // The devices sent 0xFA and not yet 0xFC, by device number (bit d), and the song whose device numbers they are.
+    // The devices sent 0xFA and not yet 0xFC, by device number (bit d), and the song whose device numbers they are. Between
+    // an end() that carries devices on and the begin() that follows, the bits are already the next song's numbers.
     std::uint32_t started_ = 0;
     std::uint64_t started_serial_ = 0;
     static_assert(kMaxMidiDevices <= 32, "a device's start and stop is one bit of started_");
