@@ -2,18 +2,18 @@
 
 namespace sqlive::model {
 
-Autosaver::Autosaver(BandFolder& f, const BandModel& m) : folder(f), model(m) {}
+Autosaver::Autosaver(BandFolder& f, const BandModel& m) : folder_(f), model_(m) {}
 
-void Autosaver::noteChanged(const std::vector<DocKey>& keys) { pending.insert(keys.begin(), keys.end()); }
+void Autosaver::noteChanged(const std::vector<DocKey>& keys) { pending_.insert(keys.begin(), keys.end()); }
 
-bool Autosaver::hasPending() const { return !pending.empty(); }
+bool Autosaver::hasPending() const { return !pending_.empty(); }
 
 juce::Result Autosaver::flush() {
     auto outcome = juce::Result::ok();
-    const std::vector<DocKey> keys(pending.begin(), pending.end());
+    const std::vector<DocKey> keys(pending_.begin(), pending_.end());
     for (const auto& key : keys) {
-        auto r = folder.save(key, model);
-        if (r.wasOk()) pending.erase(key);
+        auto r = folder_.save(key, model_);
+        if (r.wasOk()) pending_.erase(key);
         else if (outcome.wasOk()) outcome = r;
     }
     if (onSaved) onSaved(outcome);

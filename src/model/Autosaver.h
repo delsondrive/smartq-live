@@ -15,12 +15,13 @@ public:
     void noteChanged(const std::vector<DocKey>&);
     bool hasPending() const;
     juce::Result flush();                                  // saves every pending document; what fails stays pending
-    std::function<void(const juce::Result&)> onSaved;      // once per flush: the first failure, or success
+    // Once per flush: the first failure, or success. Also called, with success, for a flush that had nothing pending.
+    std::function<void(const juce::Result&)> onSaved;
 
 private:
-    BandFolder& folder;
-    const BandModel& model;
-    std::set<DocKey> pending;
+    BandFolder& folder_;
+    const BandModel& model_;
+    std::set<DocKey> pending_;
 };
 
 }  // namespace sqlive::model
