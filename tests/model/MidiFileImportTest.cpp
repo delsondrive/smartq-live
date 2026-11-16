@@ -98,3 +98,60 @@ TEST_CASE("a track's name suggests a device", "[midifile]") {
     CHECK(suggestDeviceId({"LIGHTS", {}, 0, 0, 0, {}}, band) == "d3");
     CHECK(suggestDeviceId({"Track 4", {}, 0, 0, 0, {}}, band).isEmpty());
 }
+
+TEST_CASE("a file longer than the documents allow is refused, however absurd its ticks", "[midifile]") {
+    sqlive::test::TempDir t; MidiFileContent c;
+    const char* longer = "This MIDI file is longer than Smart Q Live can use (99,999 bars).";
+    auto far = writeMidiFile(t.dir().getChildFile("far.mid"), 480, {{at(juce::MidiMessage::programChange(1, 1), 480 * 4 * 100000.0)}});
+    CHECK(readMidiFile(far, c).getErrorMessage() == longer);
+    CHECK(c.tracks.empty());
+    auto near = writeMidiFile(t.dir().getChildFile("near.mid"), 480, {{at(juce::MidiMessage::programChange(1, 1), 480 * 4 * 99998.0)}});
+    CHECK(readMidiFile(near, c).wasOk());
+    // Seventy deltas of 2^27 ticks at one tick per quarter note: well past what an int holds, in bars.
+    std::vector<juce::MidiMessage> chain;
+    for (int i = 0; i <= 70; ++i) chain.push_back(at(juce::MidiMessage::programChange(1, i % 128), i * 134217728.0));
+    CHECK(readMidiFile(writeMidiFile(t.dir().getChildFile("chain.mid"), 1, {chain}), c).getErrorMessage() == longer);
+}
+
+TEST_CASE("bytes after the last track are ignored", "[midifile]") {
+    sqlive::test::TempDir t; MidiFileContent c;
+    auto file = writeMidiFile(t.dir().getChildFile("tail.mid"), 480, {{at(juce::MidiMessage::programChange(1, 7), 0)}});
+    juce::MemoryBlock data; REQUIRE(file.loadFileAsData(data));
+    const char zeros[4] = {0, 0, 0, 0};
+    data.append(zeros, 4);
+    REQUIRE(file.replaceWithData(data.getData(), data.getSize()));
+    REQUIRE(readMidiFile(file, c).wasOk());
+    REQUIRE(c.tracks.size() == 1);  CHECK(c.tracks[0].programChanges == 1);
+}
+
+TEST_CASE("pedal sweeps: 200 values stay, 201 are left out", "[midifile]") {
+    sqlive::test::TempDir t;
+    for (int count : {200, 201}) {
+        std::vector<juce::MidiMessage> track;
+        for (int i = 0; i < count; ++i) track.push_back(at(juce::MidiMessage::controllerEvent(1, 11, i % 128), i * 4));
+        track.push_back(at(juce::MidiMessage::programChange(1, 2), 0));
+        MidiFileContent c; REQUIRE(readMidiFile(writeMidiFile(t.dir().getChildFile("s.mid"), 480, {track}), c).wasOk());
+        CHECK(c.tracks[0].controlChanges == (count == 200 ? 200 : 0));
+        CHECK(c.notes.joinIntoString(" ").contains("CC 11") == (count == 201));
+    }
+}
+
+TEST_CASE("a note that never ends lasts a quarter note; an empty file says so", "[midifile]") {
+    sqlive::test::TempDir t; MidiFileContent c;
+    REQUIRE(readMidiFile(writeMidiFile(t.dir().getChildFile("n.mid"), 480, {{at(juce::MidiMessage::noteOn(1, 40, 0.5f), 0)}}), c).wasOk());
+    CHECK(c.tracks[0].markers[0].messages[0].beats == Catch::Approx(1.0));
+    REQUIRE(readMidiFile(writeMidiFile(t.dir().getChildFile("e.mid"), 480, {{}}), c).wasOk());
+    CHECK(c.bars == 0);
+    CHECK(c.notes.joinIntoString(" ").contains("no program changes"));
+}
+
+TEST_CASE("a file with thousands of changes is capped, in plain words", "[midifile]") {
+    sqlive::test::TempDir t; MidiFileContent c;
+    std::vector<juce::MidiMessage> a, b;
+    for (int i = 0; i < 1500; ++i) { a.push_back(at(juce::MidiMessage::noteOn(1, 40, 0.5f), i * 480.0)); b.push_back(at(juce::MidiMessage::programChange(2, 1), i * 480.0)); }
+    REQUIRE(readMidiFile(writeMidiFile(t.dir().getChildFile("many.mid"), 480, {a, b}), c).wasOk());
+    size_t total = 0; for (auto& tr : c.tracks) total += tr.markers.size();
+    CHECK(total == 2000);
+    CHECK(c.tracks[1].programChanges == 500);
+    CHECK(c.notes.joinIntoString(" ").contains("1000"));
+}

@@ -18,6 +18,8 @@ constexpr int kMaxValuesPerController = 200;     // more than this in one track 
 constexpr double kBeatResolution = 960.0;        // positions are rounded to 1/960 of a beat
 constexpr int kLastBar = 99999;                  // the documents' last bar
 constexpr double kDefaultBpm = 120.0;
+constexpr double kFarBar = 1.0e6;                // positions are saturated here, so no cast of a huge double happens
+constexpr size_t kMaxMarkers = 2000;             // places with changes, over all tracks
 
 const char* const kUnreadable = "This file couldn't be read as a MIDI file.";
 
@@ -33,6 +35,7 @@ public:
             if (tick <= last.tick) { last = make(last.tick, last.bar, sig.first, sig.second); continue; }
             if (sig.first == last.numerator && sig.second == last.denominator) continue;
             const double bars = std::max(1.0, std::ceil((tick - last.tick) / last.ticksPerBar - 1e-9));
+            if (last.bar + bars > kFarBar) break;                  // far past any song: the length check refuses the file
             stretches_.push_back(make(last.tick + bars * last.ticksPerBar, last.bar + (int) bars, sig.first, sig.second));
         }
     }
@@ -41,7 +44,7 @@ public:
     Position at(double tick) const {
         const auto& s = stretchAt(tick);
         const double rel = std::max(0.0, tick - s.tick);
-        const double wholeBars = std::floor(rel / s.ticksPerBar + 1e-9);
+        const double wholeBars = std::min(std::floor(rel / s.ticksPerBar + 1e-9), kFarBar);   // never past int
         const double beats = std::round((rel - wholeBars * s.ticksPerBar) / s.ticksPerBeat * kBeatResolution) / kBeatResolution;
         Position p{s.bar + (int) wholeBars, 1.0 + beats};
         if (beats >= s.numerator) { ++p.bar; p.beat = 1.0; }
@@ -50,7 +53,7 @@ public:
     // The bar line nearest a tick; halfway goes to the later one.
     int nearestBar(double tick) const {
         const auto& s = stretchAt(tick);
-        return s.bar + (int) std::floor(std::max(0.0, tick - s.tick) / s.ticksPerBar + 0.5);
+        return s.bar + (int) std::min(std::floor(std::max(0.0, tick - s.tick) / s.ticksPerBar + 0.5), kFarBar);
     }
     bool onBarLine(double tick) const {
         const auto& s = stretchAt(tick);
@@ -122,17 +125,22 @@ void summarise(const juce::MidiMessageSequence& seq, int number, double ppq, con
     if (name.isEmpty()) name = "Track " + juce::String(number);
 
     // A bank: CC 0 and CC 32 on the program's channel, at its tick or up to a sixteenth note before.
+    std::map<std::pair<int, int>, std::vector<size_t>> bankCcs;   // (channel, 0 or 32) -> indices, in tick order
+    for (size_t i = 0; i < raws.size(); ++i)
+        if (raws[i].type == MidiMessageDoc::Type::Control && (raws[i].number == 0 || raws[i].number == 32))
+            bankCcs[{raws[i].channel, raws[i].number}].push_back(i);
     for (auto& program : raws) {
         if (program.type != MidiMessageDoc::Type::Program) continue;
         for (int controller : {0, 32}) {
-            Raw* best = nullptr;
-            for (auto& cc : raws)
-                if (cc.type == MidiMessageDoc::Type::Control && cc.number == controller && cc.channel == program.channel
-                    && cc.tick <= program.tick && program.tick - cc.tick <= ppq / 4.0 && (best == nullptr || cc.tick >= best->tick))
-                    best = &cc;
-            if (best == nullptr) continue;
-            best->isBank = true;
-            (controller == 0 ? program.bankMsb : program.bankLsb) = best->value;
+            auto found = bankCcs.find({program.channel, controller});
+            if (found == bankCcs.end()) continue;
+            auto& list = found->second;
+            auto after = std::upper_bound(list.begin(), list.end(), program.tick, [&](double t, size_t i) { return t < raws[i].tick; });
+            if (after == list.begin()) continue;
+            Raw& best = raws[*(after - 1)];
+            if (program.tick - best.tick > ppq / 4.0) continue;
+            best.isBank = true;
+            (controller == 0 ? program.bankMsb : program.bankLsb) = best.value;
         }
     }
     std::map<int, int> values;
@@ -191,10 +199,25 @@ void summarise(const juce::MidiMessageSequence& seq, int number, double ppq, con
 juce::Result readMidiFile(const juce::File& file, MidiFileContent& content) {
     content = {};
     juce::MidiFile midi;
+    // Read leniently: keep the header and the declared number of chunks, and ignore anything after them.
+    juce::MemoryBlock data;
+    if (! file.loadFileAsData(data) || data.getSize() > 200u * 1024u * 1024u) return juce::Result::fail(kUnreadable);
     {
-        juce::FileInputStream in(file);
-        if (in.failedToOpen() || ! midi.readFrom(in, false)) return juce::Result::fail(kUnreadable);
+        const auto* bytes = static_cast<const juce::uint8*>(data.getData());
+        const size_t size = data.getSize();
+        auto big32 = [&](size_t at) { return (juce::uint64) juce::ByteOrder::bigEndianInt(bytes + at); };
+        if (size < 14 || juce::ByteOrder::bigEndianInt(bytes) != juce::ByteOrder::bigEndianInt("MThd"))
+            return juce::Result::fail(kUnreadable);
+        size_t end = 8 + (size_t) std::min<juce::uint64>(big32(4), size);
+        for (int chunks = (bytes[10] << 8) | bytes[11]; chunks > 0 && end + 8 <= size; --chunks) {
+            const juce::uint64 next = end + 8 + big32(end + 4);
+            if (next > size) break;
+            end = (size_t) next;
+        }
+        data.setSize(std::min(end, size));
     }
+    juce::MemoryInputStream in(data, false);
+    if (! midi.readFrom(in, false)) return juce::Result::fail(kUnreadable);
     const int format = midi.getTimeFormat();
     if (format < 0) return juce::Result::fail("This MIDI file uses a time format Smart Q Live can't read. Export it with bars and beats.");
     if (format == 0) return juce::Result::fail(kUnreadable);
@@ -243,9 +266,10 @@ juce::Result readMidiFile(const juce::File& file, MidiFileContent& content) {
     std::sort(changes.begin(), changes.end());
     changes.erase(std::unique(changes.begin(), changes.end()), changes.end());
     std::vector<TempoPointDoc> points;
+    double bpm = kDefaultBpm;
+    size_t nextTempo = 0;
     for (double tick : changes) {
-        double bpm = kDefaultBpm;
-        for (auto& t : tempos) if (t.first <= tick) bpm = t.second;
+        while (nextTempo < tempos.size() && tempos[nextTempo].first <= tick) bpm = tempos[nextTempo++].second;
         TempoPointDoc p;
         const auto place = grid.at(tick);
         p.bar = place.bar; p.beat = place.beat; p.bpm = bpm; p.numerator = grid.numeratorAt(tick); p.denominator = grid.denominatorAt(tick);
@@ -272,8 +296,28 @@ juce::Result readMidiFile(const juce::File& file, MidiFileContent& content) {
 
     // Tracks.
     for (int t = 0; t < midi.getNumTracks(); ++t) summarise(*midi.getTrack(t), t + 1, ppq, grid, content);
-    for (auto& track : content.tracks)
-        if (! track.markers.empty()) content.bars = std::max(content.bars, track.markers.back().bar);
+    // At most kMaxMarkers places over all tracks; the first ones in file order are kept, and the counts follow what is kept.
+    size_t kept = 0, leftOut = 0;
+    for (auto& track : content.tracks) {
+        const size_t room = kept < kMaxMarkers ? kMaxMarkers - kept : 0;
+        if (track.markers.size() > room) {
+            leftOut += track.markers.size() - room;
+            track.markers.resize(room);
+            track.programChanges = track.controlChanges = track.notes = 0;
+            for (auto& marker : track.markers)
+                for (auto& m : marker.messages) {
+                    if (m.type == MidiMessageDoc::Type::Program) ++track.programChanges;
+                    else if (m.type == MidiMessageDoc::Type::Control) ++track.controlChanges;
+                    else ++track.notes;
+                }
+        }
+        kept += track.markers.size();
+    }
+    std::erase_if(content.tracks, [](const MidiFileTrack& track) { return track.markers.empty(); });
+for (auto& track : content.tracks) content.bars = std::max(content.bars, track.markers.back().bar);
+    if (leftOut > 0)
+        content.notes.add(juce::String(leftOut) + " places with changes were left out. Smart Q Live reads at most "
+                          + juce::String((int) kMaxMarkers) + " from one file.");
 
     // Sections: one per named marker, on the nearest bar line; two on the same bar keep the later.
     std::vector<std::pair<int, juce::String>> starts;
