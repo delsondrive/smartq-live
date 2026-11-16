@@ -220,7 +220,7 @@ void TempoLane::mouseDown(const juce::MouseEvent& e) {
         return;
     }
     if (tool() == EditTool::Draw && editable() && scale() != nullptr) {   // in Show mode the press moves the cursor
-        addAt(snapped(e.position.x));
+        addAt(snapped(e.position.x, e.mods));
         return;
     }
     emptyPress_ = true;
@@ -230,7 +230,7 @@ void TempoLane::mouseDown(const juce::MouseEvent& e) {
 void TempoLane::mouseDrag(const juce::MouseEvent& e) {
     if (dragging_ >= 0) {
         if (!dragTo_ && e.getDistanceFromDragStart() < 3) return;
-        dragTo_ = snapped(e.position.x);
+        dragTo_ = snapped(e.position.x, e.mods);
         repaint();
     } else if (emptyPress_ && !e.mods.isPopupMenu()) {
         pointer(e, false);
@@ -248,7 +248,7 @@ void TempoLane::mouseUp(const juce::MouseEvent&) {
 void TempoLane::mouseDoubleClick(const juce::MouseEvent& e) {
     if (e.mods.isPopupMenu()) return;
     if (const auto hit = plateAt(e.position)) editInPlace(*hit);
-    else if (tool() == EditTool::Select && editable() && scale() != nullptr) addAt(snapped(e.position.x));
+    else if (tool() == EditTool::Select && editable() && scale() != nullptr) addAt(snapped(e.position.x, e.mods));
 }
 
 void TempoLane::editInPlace(int index) {

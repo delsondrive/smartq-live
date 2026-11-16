@@ -85,6 +85,11 @@ const EditorSelection& Lane::selection() const {
 
 engine::BarBeat Lane::snapped(float x) const { return scale_ != nullptr ? snapAt(*scale_, x, snap_) : engine::BarBeat{}; }
 
+engine::BarBeat Lane::snapped(float x, juce::ModifierKeys mods) const {
+    if (scale_ == nullptr || !mods.isAltDown()) return snapped(x);
+    return scale_->tempo().barBeatAt(scale_->secondsAtX(x));     // Alt: no snap, in every lane
+}
+
 void Lane::mouseDown(const juce::MouseEvent& e) {
     pressedEmpty_ = !e.mods.isPopupMenu();
     if (pressedEmpty_) pointer(e, true);

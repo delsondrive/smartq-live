@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include <map>
+#include <memory>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -17,16 +19,30 @@ struct NewComputerState {
     juce::StringArray types;  int type = 0;                       // the audio driver types, and the chosen one
     juce::StringArray devices;  int device = -1;                  // the chosen type's devices; -1 = none chosen yet
     bool canFinish = false;                                       // a device is chosen
+    // The mockup's MIDI table: each of the band's MIDI devices and its port on this computer.
+    struct MidiRow {
+        juce::String deviceId, name;
+        juce::Colour colour;
+        juce::StringArray ports;                                  // this computer's MIDI outputs, then "Not on this computer"
+        int port = -1;                                            // the one chosen; -1 = none yet ("Choose a port…")
+        juce::String status;                                      // "✓ found", "needs a port" or "skipped"
+        bool operator==(const MidiRow&) const = default;
+    };
+    std::vector<MidiRow> midi;
 };
 
 // What the page shows for a rig ("" = the session's) and a driver type ("" = the one the rig already uses on this computer,
-// else the first). A device is chosen only when the rig already names one for this computer.
-NewComputerState makeNewComputerState(const app::Session&, app::AudioHost&, const juce::String& rigId, const juce::String& type);
+// else the first). A device is chosen only when the rig already names one for this computer. midiPorts holds the MIDI ports
+// chosen on the page so far, by device id ("" = not on this computer); a device not in it shows the port the rig already
+// has for it here, if that port is plugged in. Without MidiPorts (tests) no port is listed.
+NewComputerState makeNewComputerState(const app::Session&, app::AudioHost&, const juce::String& rigId, const juce::String& type,
+                                      const std::map<juce::String, juce::String>& midiPorts = {});
 
-// The mockup's screen 6, right: "Set up this computer", the rig, the audio interface, a test tone and Done. Choosing a
-// device opens it at once, so that "Test tone" has something to play on; Done saves the choice in the rig (as a command),
-// chooses the rig and opens the device from it.
-class NewComputerPage : public juce::Component {
+// The mockup's screen 6, right: "Set up this computer", the rig, the audio interface, the MIDI devices' ports, a test tone
+// and Done. Choosing a device opens it at once, so that "Test tone" has something to play on; Done saves the choices in the
+// rig (as commands: the interface, then each MIDI port chosen), chooses the rig and opens the device from it. The MIDI table
+// follows the ports as they are plugged in or out.
+class NewComputerPage : public juce::Component, private juce::ChangeListener {
 public:
     NewComputerPage(app::Session&, app::AudioHost&);
     ~NewComputerPage() override;
@@ -34,12 +50,17 @@ public:
     std::function<void()> onDone;
 
     const NewComputerState& state() const { return state_; }
+    void chooseMidiPort(int row, int index);                      // an index into that row's ports; the last skips the device
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
+    class MidiTable;
+
+    void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void rebuild(const juce::String& type);                       // the state for the chosen rig and a type, shown
+    void rebuildMidi();                                           // the MIDI rows only, as the ports are now
     void chooseDevice(int index);
     void finish();
     void say(const juce::String& problem);
@@ -52,9 +73,13 @@ private:
     std::vector<juce::String> rigIds_;
     juce::String rigId_;
     NewComputerState state_;
+    std::map<juce::String, juce::String> midiPorts_;              // chosen here, saved by Done
     Choice rig_, type_, device_;
     PillButton tone_, done_;
+    juce::Viewport midiView_;                                     // the MIDI rows, after the controls above (tests count them)
+    std::unique_ptr<MidiTable> midiTable_;
     juce::String problem_;
+    juce::Rectangle<int> midiBox_, midiColumns_;
 };
 
 }  // namespace sqlive::ui

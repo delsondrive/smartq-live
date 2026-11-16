@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "app/AudioHost.h"
+#include "app/MidiPorts.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
 #include "ui/NewComputerPage.h"
 #include "ui/WelcomePage.h"
@@ -45,4 +47,39 @@ TEST_CASE("a recent folder that is no longer a band folder is not opened", "[wel
     page.openFolder(page.state().recent[0].folder);
     CHECK(opened == 0);
     CHECK(page.problem() == "That folder isn't a band folder. Choose the folder that has band.json in it.");
+}
+TEST_CASE("a new computer chooses a port for each MIDI device, or skips it", "[welcome]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(s);
+    const auto add = [&](const char* name) { return s.commands().run("device.add", params({{"name", name}})).value.toString(); };
+    const auto g1 = add("Guitar 1"), g2 = add("Guitar 2"), lights = add("Lights");
+    const juce::String port = "USB MIDI Interface Port 1";
+    // This computer's outputs, as the test says they are: never a real port.
+    struct Quiet : app::MidiPorts::Output { void send(const std::uint8_t*, int) override {} };
+    app::MidiPorts ports(s, [port] { return juce::StringArray(port); },
+                         [](const juce::String&) -> std::unique_ptr<app::MidiPorts::Output> { return std::make_unique<Quiet>(); });
+    s.attachMidi(&ports);
+    ports.refresh();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", s.settings().computerName()}, {"port", port}}));
+
+    auto state = makeNewComputerState(s, host, s.rigId(), {});
+    REQUIRE(state.midi.size() == 3);
+    CHECK(state.midi[0].name == "Guitar 1");
+    CHECK(state.midi[0].status == juce::String::fromUTF8("✓ found"));  CHECK(state.midi[0].port == 0);
+    CHECK(state.midi[1].status == "needs a port");  CHECK(state.midi[1].port == -1);
+    CHECK(state.midi[1].ports == juce::StringArray{port, "Not on this computer"});
+    const auto skipped = makeNewComputerState(s, host, s.rigId(), {}, {{lights, ""}, {g2, port}});
+    CHECK(skipped.midi[1].status == juce::String::fromUTF8("✓ found"));
+    CHECK(skipped.midi[2].status == "skipped");  CHECK(skipped.midi[2].port == 1);
+
+    ScopedLook look;
+    ui::NewComputerPage page(s, host);
+    CHECK(fractionNotBackground(snapshot(page, 960, 680)) > 0.005);
+    CHECK(childrenInside(page));
+    CHECK_FALSE(page.getChildComponent(4)->isEnabled());          // Done, still the fifth child
+    page.chooseMidiPort(1, 0);
+    page.chooseMidiPort(2, 1);
+    CHECK(page.state().midi[1].status == juce::String::fromUTF8("✓ found"));
+    CHECK(page.state().midi[2].status == "skipped");
+    CHECK(s.model().rig(s.rigId())->computers.at(s.settings().computerName()).midiPorts.count(g2) == 0);   // saved by Done
+    s.attachMidi(nullptr);
 }

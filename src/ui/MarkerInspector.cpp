@@ -399,13 +399,13 @@ void MarkerInspector::setPlace(int bar, double beat) { placeOn(picked_, bar, bea
 
 void MarkerInspector::placeOn(const EditorSelection& target, int bar, double beat) {
     const auto* change = target.kind == EditorSelection::Kind::Marker ? findMarker(session_, songId_, target.deviceId, target.id) : nullptr;
-    if (change == nullptr || bar < 1 || !(beat >= 1.0) || (change->bar == bar && change->beat == beat)) return;
+    if (change == nullptr || session_.mode() != app::Mode::Edit || bar < 1 || !(beat >= 1.0) || (change->bar == bar && change->beat == beat)) return;
     run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", target.deviceId}, {"markerId", target.id}, {"bar", bar}, {"beat", beat}}));
 }
 
 // The bar and beat as typed, to the change the fields were showing; nothing when they are as it was shown.
 void MarkerInspector::commitPlace() {
-    if (loading_ || fieldsFor_.kind != EditorSelection::Kind::Marker) return;
+    if (loading_ || !editable() || fieldsFor_.kind != EditorSelection::Kind::Marker) return;   // Show mode: nothing typed goes in
     const auto barText = bar_.getText(), beatText = beat_.getText();
     if (barText == loadedBar_ && beatText == loadedBeat_) return;
     loadedBar_ = barText;
@@ -476,12 +476,12 @@ void MarkerInspector::setLabel(const juce::String& label) { labelOn(picked_, lab
 
 void MarkerInspector::labelOn(const EditorSelection& target, const juce::String& label) {
     const auto* change = target.kind == EditorSelection::Kind::Marker ? findMarker(session_, songId_, target.deviceId, target.id) : nullptr;
-    if (change == nullptr || change->label == label.trim()) return;
+    if (change == nullptr || session_.mode() != app::Mode::Edit || change->label == label.trim()) return;
     run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", target.deviceId}, {"markerId", target.id}, {"label", label.trim()}}));
 }
 
 void MarkerInspector::commitLabel() {
-    if (loading_ || fieldsFor_.kind != EditorSelection::Kind::Marker || label_.getText() == loadedLabel_) return;
+    if (loading_ || !editable() || fieldsFor_.kind != EditorSelection::Kind::Marker || label_.getText() == loadedLabel_) return;
     loadedLabel_ = label_.getText();
     labelOn(fieldsFor_, loadedLabel_);
 }

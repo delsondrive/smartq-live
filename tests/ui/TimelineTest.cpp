@@ -1,3 +1,4 @@
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -238,4 +239,24 @@ TEST_CASE("in Show mode the Draw tool's press on the tempo lane moves the cursor
     tempo->mouseDown(eventOn(*tempo, {400.0f, 14.0f}));
     CHECK(s.model().song(song)->tempo.size() == 1);               // nothing added
     CHECK(timeline.cursorSeconds() == Catch::Approx(map.secondsAt(scale.snap(400.0f, 1))));   // the cursor went there
+}
+
+TEST_CASE("the tempo lane snaps a new point unless Alt is down, as every lane does", "[timeline]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(song);
+    snapshot(page, 1280, 698);
+    auto& timeline = page.timeline();
+    auto* tempo = dynamic_cast<ui::TempoLane*>(timeline.lanes().front().get());
+    REQUIRE(tempo != nullptr);
+    timeline.setTool(EditTool::Draw);
+    tempo->mouseDown(eventOn(*tempo, {403.0f, 14.0f}));
+    REQUIRE(s.model().song(song)->tempo.size() == 2);
+    const double snappedBeat = s.model().song(song)->tempo[1].beat;
+    CHECK(snappedBeat == std::floor(snappedBeat));                // on a beat
+    tempo->mouseDown(eventOn(*tempo, {603.0f, 14.0f},
+                             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)));
+    REQUIRE(s.model().song(song)->tempo.size() == 3);
+    const double freeBeat = s.model().song(song)->tempo[2].beat;
+    CHECK(freeBeat != std::floor(freeBeat));                      // where it was pressed, between beats
 }

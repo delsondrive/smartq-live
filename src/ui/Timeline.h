@@ -67,6 +67,7 @@ protected:
     SnapTo snap() const { return snap_; }
     const EditorSelection& selection() const;
     engine::BarBeat snapped(float x) const;                       // bar 1 beat 1 with no scale
+    engine::BarBeat snapped(float x, juce::ModifierKeys) const;   // the same, but with Alt down not snapped: where x is
 
     virtual void contextChanged() {}                              // after every setContext
     virtual void scaleChanged() {}                                // the scale is a different one (before contextChanged)

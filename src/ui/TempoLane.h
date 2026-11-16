@@ -34,7 +34,8 @@ TempoLaneState makeTempoLaneState(const app::Session&, const juce::String& songI
 
 // The mockup's Tempo row (28 px): each point a small plate at its place (.tempo). The Draw tool, or a double-click with
 // Select, adds a point where it is pressed; a press on a plate selects it and a drag moves it (the first point stays at bar
-// 1 beat 1); a double-click on a plate edits its BPM and signature in place ("128 · 4/4", "92.5", "6/8"). Every edit is
+// 1 beat 1); places are snapped as the toolbar says, or not at all with Alt down, as in every lane. A double-click on a
+// plate edits its BPM and signature in place ("128 · 4/4", "92.5", "6/8"). Every edit is
 // one song.setTempo (one undo step), in Edit mode only, with the points kept in order; an edit that would put two points
 // in one place does nothing.
 class TempoLane : public Lane {

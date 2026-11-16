@@ -5,42 +5,57 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
+#include "ui/MidiSetupPage.h"
 #include "ui/RoutingGrid.h"
 #include "ui/Widgets.h"
 
 namespace sqlive::app {
 class AudioHost;
+class ControlInput;
 }
 
 namespace sqlive::ui {
 
-// Setup's audio and routing page (the mockup's screen 11). On the left its sub-tab, "Audio & routing" (later stages add
-// theirs). On the right, a panel with the RIG (choosing one chooses it in the session and opens its interface), the AUDIO
+// Setup (the mockup's screens 11 and 12). On the left its sub-tabs, "Audio & routing" and "MIDI & controls" (later stages
+// add theirs); a click on one shows it on the right.
+//
+// Audio & routing: a panel with the RIG (choosing one chooses it in the session and opens its interface), the AUDIO
 // INTERFACE for this computer (driver type and device, saved in the rig under settings().computerName() with
 // rig.setDevice, then opened), the SAMPLE RATE and BUFFER (saved in the rig, then opened again), the connection pill,
 // "Duplicate rig" (asks for a name), "⋯" (New rig, Rename, Remove) and "Test tone": while it is on, clicking an output's
 // header plays a tone there instead of opening its menu. Under the panel the rig's problems (model::checkRig), in danger
 // for those that block a show and caution for the others; then the RoutingGrid.
 //
+// MIDI & controls: the MidiSetupPage, which learns pedals through the window's ControlInput (nullptr in tests and
+// screenshots: nothing is learned). Leaving the sub-tab, or the page hiding, stops it waiting for a key or a pedal.
+//
 // With no AudioHost (tests, screenshots) nothing is opened and the interface is the one the rig names, if any. Every change
-// to the band is a command, in Edit mode only; nothing here takes the keyboard. It refreshes on Session::changes() while
-// shown; the driver types and devices are asked for only when the rig or its interface changes, or the page is shown.
+// to the band is a command, in Edit mode only; nothing here takes the keyboard (but the MIDI page while it waits for a key
+// or a pedal). It refreshes on Session::changes() while shown; the driver types and devices are asked for only when the rig
+// or its interface changes, or the page is shown.
 class SetupPage : public juce::Component, private juce::ChangeListener {
 public:
-    SetupPage(app::Session&, app::AudioHost*);
+    SetupPage(app::Session&, app::AudioHost*, app::ControlInput* = nullptr);
     ~SetupPage() override;
+
+    enum class SubTab { Audio, Midi };
+    void showSubTab(SubTab);                                      // what a click on a sub-tab does
+    SubTab subTab() const { return sub_tab_choice_; }
+    MidiSetupPage& midi() { return midi_; }
 
     const RoutingState& state() const { return state_; }
     RoutingGrid& grid() { return grid_; }
     bool testToneOn() const { return tone_on_; }
 
     juce::Rectangle<int> subTabsBounds() const { return sub_tabs_; }   // for tests
+    juce::Rectangle<int> subTabBounds(SubTab tab) const { return tab == SubTab::Audio ? sub_tab_ : midi_tab_; }   // for tests
     juce::Rectangle<int> topBounds() const { return top_; }            // for tests: the panel with the rig and interface
     juce::Rectangle<int> problemsBounds() const { return problems_; }  // for tests
 
     void paint(juce::Graphics&) override;
     void resized() override;
     void visibilityChanged() override;
+    void mouseDown(const juce::MouseEvent&) override;
 
 private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
@@ -76,9 +91,11 @@ private:
     StatusPill connection_;
     PillButton duplicate_, more_, tone_;
     RoutingGrid grid_;
+    MidiSetupPage midi_;
+    SubTab sub_tab_choice_ = SubTab::Audio;
 
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<int> sub_tabs_, sub_tab_, top_, problems_, rig_label_, interface_label_, rate_label_, buffer_label_;
+    juce::Rectangle<int> sub_tabs_, sub_tab_, midi_tab_, top_, problems_, rig_label_, interface_label_, rate_label_, buffer_label_;
 };
 
 }  // namespace sqlive::ui

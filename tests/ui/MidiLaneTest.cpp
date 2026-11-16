@@ -40,6 +40,10 @@ TEST_CASE("a MIDI lane shows its changes by name and edits them through commands
     CHECK(state.markers[0].label == "Clean");  CHECK(state.markers[0].selected);
     lane.moveMarker(id, {7, 3.0});
     CHECK(s.model().song(song)->midiLanes.at(g1)[0].bar == 7);
+    const auto other = lane.addAt({12, 1.0});                                         // a drop on another change's place is skipped
+    lane.moveMarker(id, {12, 1.0});
+    CHECK(s.model().song(song)->midiLanes.at(g1)[0].bar == 7);
+    lane.removeMarker(other);
     lane.duplicate(id);
     CHECK(s.model().song(song)->midiLanes.at(g1).size() == 2);
     CHECK(s.model().song(song)->midiLanes.at(g1)[1].bar == 8);                     // one bar later
@@ -332,36 +336,81 @@ TEST_CASE("an edit in the inspector stays with the change it started on", "[midi
     ui::MarkerInspector inspector(s);
     inspector.setBounds(0, 0, 266, 500);
     inspector.onSelect = [&](EditorSelection next) { inspector.show(song, next); };   // as the page does
-    inspector.addToDesktop(0);
-    inspector.setVisible(true);
-    inspector.toFront(true);
     inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});
     juce::TextEditor* bar = nullptr;
     for (auto* child : inspector.getChildren())
         if (auto* editor = dynamic_cast<juce::TextEditor*>(child); editor != nullptr && bar == nullptr) bar = editor;
     REQUIRE(bar != nullptr);
     REQUIRE(bar->getText() == "3");
+    REQUIRE(bar->onFocusLost != nullptr);
     const auto lane = [&] { return s.model().song(song)->midiLanes.at(g1); };
 
-    // The bar field has the keyboard, untouched; Duplicate selects the copy; the field lets go: the copy stays a bar later.
-    bar->grabKeyboardFocus();
-    REQUIRE(bar->hasKeyboardFocus(false));
+    // No window is needed: the field letting go of the keyboard is its onFocusLost, called as JUCE calls it.
+    // Duplicate selects the copy; the field lets go: the copy stays a bar later.
     inspector.duplicate();
     REQUIRE(lane().size() == 2);
     CHECK(bar->getText() == "4");                                  // the fields show the copy
-    inspector.unfocusAllComponents();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    bar->onFocusLost();
     REQUIRE(lane().size() == 2);
     CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 4);
     CHECK(s.commands().undoName() == "marker.add");                // one undo step: no marker.set on the copy
 
     // A bar typed for the copy, then the original selected: the typed bar goes to the copy, and the fields show the original.
-    bar->grabKeyboardFocus();
     bar->setText("7", juce::dontSendNotification);
     inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});
     CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 7);
     CHECK(bar->getText() == "3");
+    bar->onFocusLost();                                            // letting go now changes nothing more
+    CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 7);
+
+    // In Show mode, nothing typed is committed, whichever way the field lets go.
+    s.enterShow();
+    bar->setText("9", juce::dontSendNotification);
+    bar->onFocusLost();
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, lane()[1].id, -1});
+    CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 7);
+}
+
+TEST_CASE("an inspector field that has the keyboard keeps what is typed until it lets go", "[midilane]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    auto id = s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 3}, {"beat", 1}})).value.toString();
+    sqlive::test::ScopedLook look;
+    ui::MarkerInspector inspector(s);
+    inspector.setBounds(0, 0, 266, 500);
+    inspector.onSelect = [&](EditorSelection next) { inspector.show(song, next); };
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});
+    juce::TextEditor* bar = nullptr;
+    for (auto* child : inspector.getChildren())
+        if (auto* editor = dynamic_cast<juce::TextEditor*>(child); editor != nullptr && bar == nullptr) bar = editor;
+    REQUIRE(bar != nullptr);
+    const auto lane = [&] { return s.model().song(song)->midiLanes.at(g1); };
+
+    // This half needs a real window with the keyboard, which a test machine may not give.
+    inspector.addToDesktop(0);
+    inspector.setVisible(true);
+    inspector.toFront(true);
+    bar->grabKeyboardFocus();
+    if (!bar->hasKeyboardFocus(false)) {
+        inspector.removeFromDesktop();
+        SKIP("this desktop doesn't give a test window the keyboard");
+    }
+    // Untouched, it has the keyboard as Duplicate selects the copy: it shows the copy and lets go, leaving the copy where it is.
+    inspector.duplicate();
+    REQUIRE(lane().size() == 2);
+    CHECK(bar->getText() == "4");
     CHECK_FALSE(bar->hasKeyboardFocus(false));
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 4);
+
+    // Typed in while it has the keyboard, a refresh of the same change keeps what is typed.
+    bar->grabKeyboardFocus();
+    bar->setText("7", juce::dontSendNotification);
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, lane()[1].id, -1});
+    CHECK(bar->getText() == "7");
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});   // another change: the typed bar goes to the copy
+    CHECK(lane()[1].bar == 7);
+    CHECK(bar->getText() == "3");
     inspector.removeFromDesktop();
 }
 

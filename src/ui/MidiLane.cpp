@@ -131,7 +131,7 @@ void MidiLane::contextChanged() {
 
 engine::BarBeat MidiLane::placeAt(float x, juce::ModifierKeys mods) const {
     if (scale() == nullptr) return {};
-    auto at = mods.isAltDown() ? scale()->tempo().barBeatAt(scale()->secondsAtX(x)) : snapped(x);   // Alt: no snap
+    auto at = snapped(x, mods);                                   // Alt: no snap
     if (at.bar < 1) at = {1, 1.0};                                // a change can't be in the count-in
     return at;
 }
@@ -157,6 +157,7 @@ juce::String MidiLane::addAt(engine::BarBeat at) {
 void MidiLane::moveMarker(const juce::String& id, engine::BarBeat at) {
     const auto* marker = find(id);
     if (marker == nullptr || at.bar < 1 || (marker->bar == at.bar && marker->beat == at.beat)) return;
+    if (const auto there = markerAt(session_, songId_, deviceId_, at); there.isNotEmpty() && there != id) return;   // another's place: skipped
     if (run(session_, "marker.set",
             jsonObject({{"songId", songId_}, {"deviceId", deviceId_}, {"markerId", id}, {"bar", at.bar}, {"beat", at.beat}})))
         refresh();

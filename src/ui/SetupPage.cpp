@@ -20,7 +20,7 @@ namespace {
 // 11 px line under it, 8 px corners, the chosen one on a field with a 3 px mint bar inside its left edge), .col (gap 12),
 // .box (padding 10 12; here a row with a gap of 18), h4 (11 px bold, letter-spaced 0.8, dim, 6 px under it).
 constexpr int kPadX = 16, kPadY = 14, kGap = 14, kColumnGap = 12;
-constexpr int kSubTabsWidth = 190, kSubTabHeight = 47, kSubTabPadX = 12, kSubTabPadY = 8;
+constexpr int kSubTabsWidth = 190, kSubTabHeight = 47, kSubTabGap = 3, kSubTabPadX = 12, kSubTabPadY = 8;
 constexpr int kBoxPadX = 12, kBoxPadY = 10, kGroupGap = 18, kCaptionHeight = 15, kCaptionGap = 6, kControlHeight = 28;
 constexpr int kPairGap = 6, kButtonGap = 8, kPillHeight = 22, kProblemHeight = 18, kMaxProblemLines = 4;
 
@@ -42,9 +42,9 @@ const model::ComputerBinding* bindingOf(const app::Session& session) {
 
 }  // namespace
 
-SetupPage::SetupPage(app::Session& session, app::AudioHost* host)
+SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlInput* input)
     : session_(session), host_(host), duplicate_("Duplicate rig"), more_(juce::String::fromUTF8("\xe2\x8b\xaf")), tone_("Test tone"),
-      grid_(session) {
+      grid_(session), midi_(session, input) {
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
                                                                &more_, &tone_, &grid_})
         addAndMakeVisible(*child);
@@ -79,6 +79,7 @@ SetupPage::SetupPage(app::Session& session, app::AudioHost* host)
     tone_.setTooltip("While it is on, click an output's name to hear a tone there.");
     grid_.onOutputPressed = [this](const juce::String& outputId) { return playTone(outputId); };
 
+    addChildComponent(midi_);                                     // shown with its sub-tab
     keepOffKeyboard(*this);
     session_.changes().addChangeListener(this);
     refresh(true);
@@ -96,11 +97,37 @@ void SetupPage::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(); }
 void SetupPage::visibilityChanged() {
     if (!isVisible()) {
         setTestTone(false);
+        midi_.cancelGestures();                                   // no key or pedal is waited for on a hidden page
         return;
     }
     interfaces_for_.clear();                                      // a device may have come or gone while it was hidden
     refresh(true);
     grid_.refreshNow();                                           // it isn't told when the page is shown
+    if (midi_.isVisible()) midi_.refreshNow();
+}
+
+void SetupPage::showSubTab(SubTab tab) {
+    if (tab == sub_tab_choice_) return;
+    sub_tab_choice_ = tab;
+    const bool midi = tab == SubTab::Midi;
+    if (midi) setTestTone(false);
+    for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
+                                                               &more_, &tone_, &grid_})
+        child->setVisible(!midi);
+    midi_.setVisible(midi);                                       // shown, it reads the band again; hidden, it stops waiting
+    if (!midi) {
+        interfaces_for_.clear();
+        refresh(true);
+        grid_.refreshNow();
+    }
+    resized();
+    repaint();
+}
+
+void SetupPage::mouseDown(const juce::MouseEvent& e) {
+    if (e.mods.isPopupMenu()) return;
+    if (sub_tab_.contains(e.getPosition())) showSubTab(SubTab::Audio);
+    else if (midi_tab_.contains(e.getPosition())) showSubTab(SubTab::Midi);
 }
 
 void SetupPage::refresh(bool force) {
@@ -306,6 +333,8 @@ void SetupPage::resized() {
     auto area = getLocalBounds().reduced(kPadX, kPadY);
     sub_tabs_ = area.removeFromLeft(std::min(kSubTabsWidth, area.getWidth()));
     sub_tab_ = sub_tabs_.withHeight(kSubTabHeight);
+    midi_tab_ = sub_tab_.translated(0, kSubTabHeight + kSubTabGap);
+    midi_.setBounds(area.withTrimmedLeft(std::min(kGap, area.getWidth())));
     area.removeFromLeft(kGap);
 
     // The panel's groups side by side; the pill and the buttons at its right, or on a row of their own when they don't fit.
@@ -377,12 +406,13 @@ void SetupPage::resized() {
 }
 
 void SetupPage::paint(juce::Graphics& g) {
-    // The sub-tab: "Audio & routing", chosen.
-    if (!sub_tab_.isEmpty()) {
-        const auto tab = sub_tab_.toFloat();
-        g.setColour(theme::field);
-        g.fillRoundedRectangle(tab, theme::radiusButton);
-        {
+    // The sub-tabs: each a name and what it holds; the chosen one on a field with a mint bar inside its left edge.
+    const auto drawSubTab = [&](juce::Rectangle<int> area, const juce::String& name, const juce::String& small, bool chosen) {
+        if (area.isEmpty()) return;
+        const auto tab = area.toFloat();
+        if (chosen) {
+            g.setColour(theme::field);
+            g.fillRoundedRectangle(tab, theme::radiusButton);
             juce::Graphics::ScopedSaveState state(g);
             juce::Path shape;
             shape.addRoundedRectangle(tab, theme::radiusButton);
@@ -390,14 +420,17 @@ void SetupPage::paint(juce::Graphics& g) {
             g.setColour(theme::mint);
             g.fillRect(tab.withWidth(3.0f));
         }
-        auto text = sub_tab_.reduced(kSubTabPadX, kSubTabPadY);
-        g.setColour(theme::text);
+        auto text = area.reduced(kSubTabPadX, kSubTabPadY);
+        g.setColour(chosen ? theme::text : theme::mid);
         g.setFont(theme::font(theme::sizeBody, true));
-        g.drawText("Audio & routing", text.removeFromTop(17), juce::Justification::centredLeft, true);
+        g.drawText(name, text.removeFromTop(17), juce::Justification::centredLeft, true);
         g.setColour(theme::dim);
         g.setFont(theme::font(theme::sizeCaption));
-        g.drawText("Rig, outputs, roles", text, juce::Justification::centredLeft, true);
-    }
+        g.drawText(small, text, juce::Justification::centredLeft, true);
+    };
+    drawSubTab(sub_tab_, "Audio & routing", "Rig, outputs, roles", sub_tab_choice_ == SubTab::Audio);
+    drawSubTab(midi_tab_, "MIDI & controls", "Pedalboards, keys, pedals", sub_tab_choice_ == SubTab::Midi);
+    if (sub_tab_choice_ != SubTab::Audio) return;                 // the MIDI page draws itself
 
     theme::paintPanel(g, top_.toFloat());
     g.setColour(theme::dim);

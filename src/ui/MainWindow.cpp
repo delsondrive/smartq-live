@@ -15,7 +15,7 @@ MainWindow::MainWindow(app::Session& session, app::AudioHost* host)
       shell_(session, host),
       tooltips_(nullptr, 600) {
     shell_.setShowController(&controller_);
-    plugInPages(shell_, session_, host, &controller_);
+    plugInPages(shell_, session_, host, &controller_, &controlInput_);
     shell_.onOpenAnotherBand = [this] { if (onOpenAnotherBand) onOpenAnotherBand(); };
 
     setUsingNativeTitleBar(true);

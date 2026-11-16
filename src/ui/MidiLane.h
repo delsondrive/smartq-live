@@ -81,7 +81,7 @@ public:
     const MidiLaneState& state() const { return state_; }
 
     juce::String addAt(engine::BarBeat);                          // the new change's id, selected; "" when none was added
-    void moveMarker(const juce::String& id, engine::BarBeat);
+    void moveMarker(const juce::String& id, engine::BarBeat);     // a drop on another change's place is skipped
     void copyMarker(const juce::String& id, engine::BarBeat);     // the copy is selected
     void removeMarker(const juce::String& id);
     void duplicate(const juce::String& id);                       // a copy a bar later, selected
