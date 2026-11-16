@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "ui/MixerPage.h"
 #include "ui/NewSongDialog.h"
 #include "ui/SetlistsPage.h"
 #include "ui/SongEditorPage.h"
@@ -55,9 +56,12 @@ private:
 void plugInPages(AppShell& shell, app::Session& session, app::AudioHost*, app::ShowController*) {
     auto setlists = std::make_unique<SetlistsPage>(session);
     auto editor = std::make_unique<SongEditorPage>(session);
-    auto* songEditor = editor.get();                              // both pages live as long as the shell
-    const auto openInEditor = [&shell, songEditor](const juce::String& songId) {
+    auto mixer = std::make_unique<MixerPage>(session);
+    auto* songEditor = editor.get();                              // the pages live as long as the shell
+    auto* songMixer = mixer.get();
+    const auto openInEditor = [&shell, songEditor, songMixer](const juce::String& songId) {
         songEditor->openSong(songId);
+        songMixer->openSong(songId);                              // the Mixer's "This song" follows the song being edited
         shell.showPage(Page::SongEditor);
     };
     setlists->onOpenSong = openInEditor;
@@ -84,6 +88,7 @@ void plugInPages(AppShell& shell, app::Session& session, app::AudioHost*, app::S
     editor->onNewSong = [newSong] { newSong({}); };
     shell.setPageComponent(Page::Setlists, std::move(setlists));
     shell.setPageComponent(Page::SongEditor, std::move(editor));
+    shell.setPageComponent(Page::Mixer, std::move(mixer));
 }
 
 }  // namespace sqlive::ui

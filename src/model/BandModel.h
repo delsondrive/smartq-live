@@ -31,7 +31,8 @@ public:
     std::vector<juce::String> rigIds() const;                   // by name
     const Role* role(const juce::String& roleId) const;
 
-    BandDoc& editBand() { return band_doc_; }
+    // The edits. While changes are tracked (beginChanges), each one first keeps the document's text as it was.
+    BandDoc& editBand() { touch({DocKind::Band, {}}); return band_doc_; }
     SongDoc* editSong(const juce::String& id);
     SetlistDoc* editSetlist(const juce::String& id);
     RigDoc* editRig(const juce::String& id);
@@ -39,18 +40,22 @@ public:
     bool removeSong(const juce::String& id);  bool removeSetlist(const juce::String& id);  bool removeRig(const juce::String& id);
 
     struct Change { DocKey key; juce::String before, after; };   // JSON text; empty = the document did not exist
+    // Between these, only the documents reached through the edits above are written out and compared, so a step costs
+    // the documents it touches, not the whole band. (Every change goes through them: the reads are const.)
     void beginChanges();
     std::vector<Change> endChanges();        // every document that is different now, in key order
     void applyText(const DocKey&, const juce::String& json);     // sets the document from JSON, or removes it when json is empty
 
 private:
-    std::map<DocKey, juce::String> snapshot() const;
+    void touch(const DocKey&);                                  // tracking: keeps the document's text, the first time only
+    juce::String textOf(const DocKey&) const;                   // the document as JSON; empty when there is none
 
     BandDoc band_doc_;
     std::map<juce::String, SongDoc> songs_;
     std::map<juce::String, SetlistDoc> setlists_;
     std::map<juce::String, RigDoc> rigs_;
-    std::map<DocKey, juce::String> started_;
+    bool tracking_ = false;
+    std::map<DocKey, juce::String> started_;                    // the touched documents' texts before the changes
 };
 
 }  // namespace sqlive::model

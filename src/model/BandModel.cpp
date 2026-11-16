@@ -38,42 +38,41 @@ const Role* BandModel::role(const juce::String& roleId) const {
     return nullptr;
 }
 
-SongDoc* BandModel::editSong(const juce::String& id) { return findMutable(songs_, id); }
-SetlistDoc* BandModel::editSetlist(const juce::String& id) { return findMutable(setlists_, id); }
-RigDoc* BandModel::editRig(const juce::String& id) { return findMutable(rigs_, id); }
+SongDoc* BandModel::editSong(const juce::String& id) { touch({DocKind::Song, id}); return findMutable(songs_, id); }
+SetlistDoc* BandModel::editSetlist(const juce::String& id) { touch({DocKind::Setlist, id}); return findMutable(setlists_, id); }
+RigDoc* BandModel::editRig(const juce::String& id) { touch({DocKind::Rig, id}); return findMutable(rigs_, id); }
 
-void BandModel::putSong(SongDoc d) { auto id = d.id; songs_[id] = std::move(d); }
-void BandModel::putSetlist(SetlistDoc d) { auto id = d.id; setlists_[id] = std::move(d); }
-void BandModel::putRig(RigDoc d) { auto id = d.id; rigs_[id] = std::move(d); }
-bool BandModel::removeSong(const juce::String& id) { return songs_.erase(id) > 0; }
-bool BandModel::removeSetlist(const juce::String& id) { return setlists_.erase(id) > 0; }
-bool BandModel::removeRig(const juce::String& id) { return rigs_.erase(id) > 0; }
+void BandModel::putSong(SongDoc d) { auto id = d.id; touch({DocKind::Song, id}); songs_[id] = std::move(d); }
+void BandModel::putSetlist(SetlistDoc d) { auto id = d.id; touch({DocKind::Setlist, id}); setlists_[id] = std::move(d); }
+void BandModel::putRig(RigDoc d) { auto id = d.id; touch({DocKind::Rig, id}); rigs_[id] = std::move(d); }
+bool BandModel::removeSong(const juce::String& id) { touch({DocKind::Song, id}); return songs_.erase(id) > 0; }
+bool BandModel::removeSetlist(const juce::String& id) { touch({DocKind::Setlist, id}); return setlists_.erase(id) > 0; }
+bool BandModel::removeRig(const juce::String& id) { touch({DocKind::Rig, id}); return rigs_.erase(id) > 0; }
 
-std::map<DocKey, juce::String> BandModel::snapshot() const {
-    std::map<DocKey, juce::String> out;
-    out[{DocKind::Band, {}}] = toJson(band_doc_);
-    for (auto& kv : songs_) out[{DocKind::Song, kv.first}] = toJson(kv.second);
-    for (auto& kv : setlists_) out[{DocKind::Setlist, kv.first}] = toJson(kv.second);
-    for (auto& kv : rigs_) out[{DocKind::Rig, kv.first}] = toJson(kv.second);
-    return out;
+juce::String BandModel::textOf(const DocKey& key) const {
+    switch (key.kind) {
+        case DocKind::Band: return toJson(band_doc_);
+        case DocKind::Song: { const auto* d = song(key.id); return d != nullptr ? toJson(*d) : juce::String(); }
+        case DocKind::Setlist: { const auto* d = setlist(key.id); return d != nullptr ? toJson(*d) : juce::String(); }
+        case DocKind::Rig: { const auto* d = rig(key.id); return d != nullptr ? toJson(*d) : juce::String(); }
+    }
+    return {};
 }
 
-void BandModel::beginChanges() { started_ = snapshot(); }
+void BandModel::touch(const DocKey& key) {
+    if (tracking_ && started_.find(key) == started_.end()) started_.emplace(key, textOf(key));
+}
+
+void BandModel::beginChanges() {
+    started_.clear();
+    tracking_ = true;
+}
 
 std::vector<BandModel::Change> BandModel::endChanges() {
-    auto now = snapshot();
     std::vector<Change> changes;
-    auto b = started_.begin(); auto n = now.begin();
-    while (b != started_.end() || n != now.end()) {
-        if (n == now.end() || (b != started_.end() && b->first < n->first)) {
-            changes.push_back({b->first, b->second, {}}); ++b;
-        } else if (b == started_.end() || n->first < b->first) {
-            changes.push_back({n->first, {}, n->second}); ++n;
-        } else {
-            if (b->second != n->second) changes.push_back({n->first, b->second, n->second});
-            ++b; ++n;
-        }
-    }
+    for (const auto& [key, before] : started_)                   // in key order, as the map keeps them
+        if (auto after = textOf(key); after != before) changes.push_back({key, before, std::move(after)});
+    tracking_ = false;
     started_.clear();
     return changes;
 }

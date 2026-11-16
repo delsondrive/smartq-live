@@ -70,3 +70,28 @@ TEST_CASE("a command that throws is rolled back", "[commands]") {
     CHECK(m.band().name == "Old");
     CHECK(calls == 0);  CHECK_FALSE(c.canUndo());
 }
+TEST_CASE("a command reports only the documents it changed, whichever it touched", "[commands]") {
+    BandModel m; m.editBand().name = "Band";
+    for (auto id : {"a", "b", "c"}) { SongDoc s; s.id = id; s.title = juce::String("Song ") + id; m.putSong(s); }
+    CommandLayer c(m);
+    c.registerCommand("test.retitle", [](BandModel& model, const juce::var& p) {
+        model.editSong("a");                                     // reached but left as it was: not a change
+        model.editSong(p["songId"].toString())->title = p["title"].toString();
+        if (p["alsoRemove"].toString().isNotEmpty()) model.removeSong(p["alsoRemove"].toString());
+        if (p["fail"]) return CommandResult::failure("No.");
+        return CommandResult::success();
+    });
+    std::vector<DocKey> seen; c.onChanged = [&](const std::vector<DocKey>& keys) { seen = keys; };
+    CHECK(c.run("test.retitle", params({{"songId", "b"}, {"title", "Bee"}})).ok);
+    CHECK(seen == std::vector{DocKey{DocKind::Song, "b"}});
+    CHECK(c.run("test.retitle", params({{"songId", "b"}, {"title", "Bea"}, {"alsoRemove", "c"}})).ok);
+    CHECK(seen == std::vector{DocKey{DocKind::Song, "b"}, DocKey{DocKind::Song, "c"}});
+    CHECK(m.song("c") == nullptr);
+    CHECK_FALSE(c.run("test.retitle", params({{"songId", "a"}, {"title", "Ay"}, {"alsoRemove", "b"}, {"fail", true}})).ok);
+    CHECK(m.song("a")->title == "Song a");  CHECK(m.song("b")->title == "Bea");   // a refused one is rolled back
+    c.undo();
+    CHECK(m.song("b")->title == "Bee");  REQUIRE(m.song("c") != nullptr);  CHECK(m.song("c")->title == "Song c");
+    c.undo();
+    CHECK(m.song("b")->title == "Song b");
+    CHECK_FALSE(c.canUndo());
+}
