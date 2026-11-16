@@ -39,6 +39,14 @@ public:
     float drawnTitleSize() const { return titleSize_ * scale_; } // for tests: its font size, in the window's pixels
     bool holdRingShown() const { return hold_ > 0.0; }           // for tests
     int layoutsDone() const { return layouts_done_; }            // for tests: how many times anything was laid out
+    // For tests: the repaints the view asked for since forgetRepaints(), how many and the area they cover together, in
+    // its own pixels; and the area a change to the song's progress repaints.
+    int repaintsAsked() const { return repaints_asked_; }
+    juce::Rectangle<int> repaintedArea() const { return repainted_; }
+    void forgetRepaints() { repaints_asked_ = 0;  repainted_ = {}; }
+    juce::Rectangle<int> progressRowArea() const { return areaOf(barRow_); }
+    // For tests: the call to action's words as last drawn between songs: the action, its detail and the pill.
+    juce::StringArray drawnCallToAction() const { return drawnCallToAction_; }
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -72,6 +80,8 @@ private:
     void fitTitle(const juce::String&, float width);
     void repaintChanges(const ShowState& next, double hold);
     void repaintDesign(juce::Rectangle<float>);
+    void repaintAll();
+    juce::Rectangle<int> areaOf(juce::Rectangle<float>) const;   // a part's area in the view's pixels, with its antialiasing
     int progressPixels(double progress) const;
 
     void paintHeader(juce::Graphics&);
@@ -88,6 +98,9 @@ private:
     bool laidOut_ = false, fresh_ = false;
     double lastRefreshMs_ = 0.0;
     int layouts_done_ = 0;
+    int repaints_asked_ = 0;
+    juce::Rectangle<int> repainted_;
+    juce::StringArray drawnCallToAction_;
     BeatLights beats_;
 
     // Laid out by layout(), in the mockup's pixels (the window's divided by scale_), and drawn by paint().

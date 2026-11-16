@@ -106,12 +106,14 @@ void drawBox(juce::Graphics& g, juce::Rectangle<float> box, float radius, float 
     g.drawRoundedRectangle(box.reduced(0.5f * thickness), radius, thickness);
 }
 
-// Text in a box, shortened with "…" to its width.
-void drawFitted(juce::Graphics& g, const juce::String& text, const juce::Font& font, juce::Colour colour, juce::Rectangle<float> box,
-                juce::Justification justification = juce::Justification::centredLeft) {
+// Text in a box, shortened with "…" to its width. Returns the words drawn.
+juce::String drawFitted(juce::Graphics& g, const juce::String& text, const juce::Font& font, juce::Colour colour, juce::Rectangle<float> box,
+                        juce::Justification justification = juce::Justification::centredLeft) {
     g.setFont(font);
     g.setColour(colour);
-    g.drawText(shorten(text, font, box.getWidth()), box, justification, false);
+    auto shown = shorten(text, font, box.getWidth());
+    g.drawText(shown, box, justification, false);
+    return shown;
 }
 
 }  // namespace
@@ -189,7 +191,7 @@ void StageView::refresh() {
         hold_ = hold;
         shape_ = shape;
         layout();
-        repaint();
+        repaintAll();
     } else {
         repaintChanges(state, hold);
         state_ = std::move(state);
@@ -201,8 +203,21 @@ void StageView::refresh() {
     else if (!state_.playing && isTimerRunning()) stopTimer();
 }
 
+juce::Rectangle<int> StageView::areaOf(juce::Rectangle<float> area) const {
+    return (area * scale_).getSmallestIntegerContainer().expanded(2);
+}
+
 void StageView::repaintDesign(juce::Rectangle<float> area) {
-    repaint((area * scale_).getSmallestIntegerContainer().expanded(2));
+    const auto pixels = areaOf(area);
+    ++repaints_asked_;
+    repainted_ = repainted_.isEmpty() ? pixels : repainted_.getUnion(pixels);
+    repaint(pixels);
+}
+
+void StageView::repaintAll() {
+    ++repaints_asked_;
+    repainted_ = getLocalBounds();
+    repaint();
 }
 
 int StageView::progressPixels(double progress) const {
@@ -442,13 +457,14 @@ void StageView::paintBetween(juce::Graphics& g) {
         inner.removeFromLeft(kCtaGap);
 
         const float pillWidth = std::min(std::ceil(widthOf(pillFont(), state_.pill)) + 2.0f, std::max(0.0f, 0.4f * inner.getWidth()));
-        drawFitted(g, state_.pill, pillFont(), ready ? theme::mint : failed ? theme::danger : theme::dim, inner.removeFromRight(pillWidth),
+        const auto pill = drawFitted(g, state_.pill, pillFont(), ready ? theme::mint : failed ? theme::danger : theme::dim, inner.removeFromRight(pillWidth),
                    juce::Justification::centredRight);
         inner.removeFromRight(kCtaGap);
 
         auto words = inner.withSizeKeepingCentre(inner.getWidth(), kActionLine + kDetailLine + (loading ? kLoadGap + kBarHeight : 0.0f));
-        drawFitted(g, state_.action, actionFont(), loading ? theme::mid : theme::text, words.removeFromTop(kActionLine));
-        drawFitted(g, state_.actionDetail, detailFont(), theme::mid, words.removeFromTop(kDetailLine));
+        const auto action = drawFitted(g, state_.action, actionFont(), loading ? theme::mid : theme::text, words.removeFromTop(kActionLine));
+        const auto detail = drawFitted(g, state_.actionDetail, detailFont(), theme::mid, words.removeFromTop(kDetailLine));
+        drawnCallToAction_ = {action, detail, pill};
         if (loading) {
             words.removeFromTop(kLoadGap);
             const auto track = words.removeFromTop(kBarHeight).withWidth(std::min(kLoadWidth, words.getWidth()));

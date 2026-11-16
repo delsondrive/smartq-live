@@ -132,6 +132,12 @@ TEST_CASE("Space on a song that is loading or can't play starts nothing, and the
     CHECK_FALSE(hasColour(loading, theme::mint, 4));
     CHECK_FALSE(hasColour(loading, theme::danger, 4));
     CHECK(hasColour(loading, theme::dim, 4));                    // the loading bar and pill
+    auto words = view.drawnCallToAction();                       // the action, its detail and the pill, as drawn
+    REQUIRE(words.size() == 3);
+    CHECK(words[0] == juce::String::fromUTF8("Loading First Light…"));
+    CHECK(words[1] == "Space will work as soon as this says Ready.");
+    CHECK(words[2] == "LOADING 0%");
+    CHECK(words[2] == makeShowState(s).pill);
     s.cache().setPaused(false);  d.settle();
 
     // Failed: the danger panel.
@@ -146,6 +152,11 @@ TEST_CASE("Space on a song that is loading or can't play starts nothing, and the
     CHECK(hasColour(failed, theme::danger));
     CHECK_FALSE(hasColour(failed, theme::mint, 4));
     CHECK(childrenInside(view));
+    words = view.drawnCallToAction();
+    REQUIRE(words.size() == 3);
+    CHECK(words[0] == "First Light can't be played");
+    CHECK(words[1] == "Keys: the audio file is missing.");
+    CHECK(words[2] == "CAN'T PLAY");
 }
 
 TEST_CASE("holding Space to stop draws the ring around the beat lights", "[stage]") {
@@ -222,6 +233,42 @@ TEST_CASE("a stage view tick with nothing new lays nothing out again", "[stage]"
     d.settle();
     CHECK(view.layoutsDone() > layouts);
     CHECK(view.drawnTitle() == "Renamed");
+}
+
+TEST_CASE("a stage view tick repaints only what changed", "[stage]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    sqlive::test::ScopedLook look;
+    ui::StageView view(s, nullptr);
+    view.setVisible(true);
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 3);  d.settle();
+    snapshot(view, 1280, 698);
+
+    // Ticks with nothing new (the engine doesn't move, the session's and the view's timers still fire): no repaint.
+    view.forgetRepaints();
+    const auto still = makeShowState(s);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+    REQUIRE(makeShowState(s) == still);
+    CHECK(view.repaintsAsked() == 0);
+
+    // Steps of 10 ms: one that moves only the progress bar repaints only the progress bar's row.
+    const auto row = view.progressRowArea();
+    REQUIRE_FALSE(row.isEmpty());
+    int progressOnly = 0;
+    for (int i = 0; i < 60; ++i) {
+        const auto before = makeShowState(s);
+        view.forgetRepaints();
+        s.advanceWithoutDevice(480);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(5);
+        auto after = makeShowState(s);
+        CHECK(view.repaintedArea() != view.getLocalBounds());
+        after.songProgress = before.songProgress;
+        for (std::size_t c = 0; c < after.cards.size() && c < before.cards.size(); ++c) after.cards[c].progress = before.cards[c].progress;
+        if (after == before && view.repaintsAsked() > 0) {
+            ++progressOnly;
+            CHECK(row.contains(view.repaintedArea()));
+        }
+    }
+    CHECK(progressOnly > 0);
 }
 
 TEST_CASE("in Show mode nothing in the stage view takes the keyboard", "[stage]") {
