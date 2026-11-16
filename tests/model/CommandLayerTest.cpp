@@ -1,3 +1,5 @@
+#include <stdexcept>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "model/CommandLayer.h"
@@ -55,4 +57,16 @@ TEST_CASE("history is limited to 200 steps", "[commands]") {
     for (int i = 0; i < 250; ++i) c.run("test.rename", params({{"name", juce::String(i)}}));
     int steps = 0; while (c.undo().ok) ++steps;
     CHECK(steps == 200);
+}
+TEST_CASE("a command that throws is rolled back", "[commands]") {
+    BandModel m; m.editBand().name = "Old"; CommandLayer c(m);
+    c.registerCommand("test.throws", [](BandModel& model, const juce::var&) -> CommandResult {
+        model.editBand().name = "Half done";
+        throw std::runtime_error("boom");
+    });
+    int calls = 0; c.onChanged = [&](const std::vector<DocKey>&) { ++calls; };
+    auto r = c.run("test.throws", {});
+    CHECK_FALSE(r.ok);  CHECK(r.message.contains("test.throws"));
+    CHECK(m.band().name == "Old");
+    CHECK(calls == 0);  CHECK_FALSE(c.canUndo());
 }

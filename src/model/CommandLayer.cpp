@@ -30,7 +30,12 @@ CommandResult CommandLayer::run(const juce::String& name, const juce::var& param
     if (it == handlers.end()) return CommandResult::failure("Unknown command: " + name);
 
     bandModel.beginChanges();
-    CommandResult result = it->second(bandModel, params);
+    CommandResult result;
+    try {
+        result = it->second(bandModel, params);
+    } catch (...) {
+        result = CommandResult::failure("Something went wrong while doing " + name + ", so nothing was changed.");
+    }
     auto changes = bandModel.endChanges();
 
     if (!result.ok) {
