@@ -174,7 +174,10 @@ void MidiOut::chase(int onlyDevice, SamplePos upTo, std::int64_t streamTime) noe
 bool MidiOut::push(std::uint64_t serial, std::uint16_t device, std::uint8_t size, std::uint8_t a, std::uint8_t b,
                    std::uint8_t c, std::int64_t streamTime) noexcept {
     OutMidi out{.streamTime = streamTime, .serial = serial, .device = device, .size = size, .data = {a, b, c}};
-    return queue_.push(std::move(out));   // a full queue drops it
+    if (queue_.push(std::move(out))) return true;
+    // A full queue drops it, and counts it. The producer is the only writer, so a load and a store do.
+    dropped_.store(dropped_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    return false;
 }
 
 } // namespace sqlive::engine

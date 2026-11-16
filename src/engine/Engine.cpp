@@ -92,6 +92,8 @@ bool Engine::popEvent(EngineEvent& event) { return events_.pop(event); }
 
 bool Engine::popMidi(OutMidi& out) { return midi_.pop(out); }
 
+std::uint64_t Engine::droppedMidiCount() const noexcept { return midi_.droppedCount(); }
+
 void Engine::resendMidiState(std::uint64_t serial, int device) {
     push({.type = Command::Type::ResendMidi, .serial = serial, .index = device});
 }

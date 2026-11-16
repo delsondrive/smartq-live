@@ -1,12 +1,14 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include "app/MidiScheduler.h"
 #include "app/Session.h"
 
 namespace sqlive::app {
@@ -52,10 +54,16 @@ public:
                                                                   // at Engine::sampleRate()
     std::function<void()> onChanged;                              // message thread
 
-    // What the device callback does: the engine's output, then the test tone. Public for tests.
+    // Any thread; written by the audio callback: the stream time of the last block's first sample, the moment the device
+    // asked for it, and the device's rate and output latency. Not valid before a device's first block: none has run yet,
+    // or the one that ran was another device's.
+    StreamAnchor anchor() const noexcept;
+
+    // What the device callback does: records the anchor, then the engine's output, then the test tone. Public for tests.
     void renderBlock(float* const* out, int numChannels, int frames) noexcept;
-    // What audioDeviceAboutToStart does on its own thread, before the first callback: Engine::prepare.
-    void deviceStarting(double sampleRate, int bufferSize);
+    // What audioDeviceAboutToStart does on its own thread, before the first callback: Engine::prepare, and the rate and
+    // output latency (read from the device there, once) for the anchor, which is not valid until the first block.
+    void deviceStarting(double sampleRate, int bufferSize, int outputLatencySamples = 0);
     // What audioDeviceStopped (or audioDeviceError) does first, on the device's thread: tells the session the device stopped.
     void deviceStopping();
     // What the device's callbacks lead to, on the message thread. Public for tests; they never say a device runs.
@@ -75,6 +83,7 @@ private:
     void deviceWentAway();                                        // message thread: the real device stopped or failed
     void deviceStarted(const juce::String& type, const juce::String& name, double sampleRate, int outputChannels);
     void onMessageThread(std::function<void()>);                  // runs it later, unless this host has gone by then
+    void publishAnchor(bool valid, std::int64_t streamTime, double wallSeconds) noexcept;
 
     Session& session_;
     engine::Engine& engine_;
@@ -87,6 +96,21 @@ private:
 
     std::atomic<int> tone_channel_{-1};
     std::atomic<double> tone_phase_{0.0};                         // radians; only the audio thread moves it
+
+    // Set by deviceStarting, copied into the anchor by each block.
+    std::atomic<double> device_rate_{48000.0};
+    std::atomic<double> device_latency_seconds_{0.0};
+    std::atomic<std::uint32_t> device_starts_{0};
+    // The anchor, written by one thread at a time (the audio callback, or deviceStarting while no callback runs). The
+    // count is odd while it is being written and even once done, so a reader that sees the same even count before and
+    // after reading the fields has one record.
+    std::atomic<std::uint32_t> anchor_seq_{0};
+    std::atomic<bool> anchor_valid_{false};
+    std::atomic<std::int64_t> anchor_stream_time_{0};
+    std::atomic<double> anchor_wall_seconds_{0.0};
+    std::atomic<double> anchor_rate_{48000.0};
+    std::atomic<double> anchor_latency_seconds_{0.0};
+    std::atomic<std::uint32_t> anchor_device_starts_{0};
 
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);       // what posted calls check, so none runs after this has gone
 };

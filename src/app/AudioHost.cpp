@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 namespace sqlive::app {
@@ -162,7 +163,43 @@ void AudioHost::setTestTone(int channel) {
     tone_channel_.store(std::max(-1, channel), std::memory_order_relaxed);
 }
 
+// A sequence lock, as Engine::status: retried until the fields were read between two equal, even counts.
+StreamAnchor AudioHost::anchor() const noexcept {
+    for (int spins = 0;;) {
+        const std::uint32_t before = anchor_seq_.load(std::memory_order_acquire);
+        if ((before & 1u) == 0) {
+            StreamAnchor a;
+            a.valid = anchor_valid_.load(std::memory_order_relaxed);
+            a.streamTime = anchor_stream_time_.load(std::memory_order_relaxed);
+            a.wallSeconds = anchor_wall_seconds_.load(std::memory_order_relaxed);
+            a.sampleRate = anchor_rate_.load(std::memory_order_relaxed);
+            a.outputLatencySeconds = anchor_latency_seconds_.load(std::memory_order_relaxed);
+            a.deviceStarts = anchor_device_starts_.load(std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_acquire);   // the loads above happen before the count is read again
+            if (anchor_seq_.load(std::memory_order_relaxed) == before) return a;
+        }
+        if (spins < 64) ++spins;
+        else std::this_thread::yield();                             // the writer may have been preempted mid-write
+    }
+}
+
+// The one writer at a time: the audio callback, or deviceStarting while no callback runs. Never waits.
+void AudioHost::publishAnchor(bool valid, std::int64_t streamTime, double wallSeconds) noexcept {
+    const std::uint32_t seq = anchor_seq_.load(std::memory_order_relaxed);
+    anchor_seq_.store(seq + 1, std::memory_order_relaxed);         // odd: writing
+    std::atomic_thread_fence(std::memory_order_release);           // a reader that sees any store below sees the odd count
+    anchor_valid_.store(valid, std::memory_order_relaxed);
+    anchor_stream_time_.store(streamTime, std::memory_order_relaxed);
+    anchor_wall_seconds_.store(wallSeconds, std::memory_order_relaxed);
+    anchor_rate_.store(device_rate_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    anchor_latency_seconds_.store(device_latency_seconds_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    anchor_device_starts_.store(device_starts_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    anchor_seq_.store(seq + 2, std::memory_order_release);         // even: done
+}
+
 void AudioHost::renderBlock(float* const* out, int numChannels, int frames) noexcept {
+    // Before the engine runs: this block's first sample is the engine's stream time now, asked for at this moment.
+    publishAnchor(true, engine_.status().streamTime, juce::Time::getMillisecondCounterHiRes() / 1000.0);
     engine_.process(out, numChannels, frames);
     const int channel = tone_channel_.load(std::memory_order_relaxed);
     const double rate = engine_.sampleRate();
@@ -184,14 +221,24 @@ void AudioHost::audioDeviceIOCallbackWithContext(const float* const*, int, float
 
 // ---- The device starting and stopping ----------------------------------------------------------------------------------
 
-void AudioHost::deviceStarting(double sampleRate, int bufferSize) { engine_.prepare(sampleRate, bufferSize); }
+void AudioHost::deviceStarting(double sampleRate, int bufferSize, int outputLatencySamples) {
+    engine_.prepare(sampleRate, bufferSize);
+    // The device's rate and latency, read once here rather than in every block. The last block's anchor was another
+    // device's clock, so there is none until this one's first block.
+    device_rate_.store(sampleRate, std::memory_order_relaxed);
+    device_latency_seconds_.store(sampleRate > 0.0 ? std::max(0, outputLatencySamples) / sampleRate : 0.0,
+                                  std::memory_order_relaxed);
+    device_starts_.store(device_starts_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    publishAnchor(false, engine_.status().streamTime, 0.0);
+}
 
 void AudioHost::audioDeviceAboutToStart(juce::AudioIODevice* device) {
     const double rate = device->getCurrentSampleRate();
     const int channels = device->getActiveOutputChannels().countNumberOfSetBits();
     // Here, before the first callback, while process can't run: the only time the engine may be prepared. So a device that
-    // comes back starts stopped and silent, at its own rate.
-    deviceStarting(rate, device->getCurrentBufferSizeSamples());
+    // comes back starts stopped and silent, at its own rate. Its latency is read from it here, as outputLatencySamples
+    // would say no device is open while open() is still starting it.
+    deviceStarting(rate, device->getCurrentBufferSizeSamples(), device->getOutputLatencyInSamples());
     if (changing_) return;                                       // open started it, and takes it from here
     onMessageThread([this, type = device->getTypeName(), name = device->getName(), rate, channels] {
         deviceStarted(type, name, rate, channels);

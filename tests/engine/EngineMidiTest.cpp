@@ -64,4 +64,11 @@ TEST_CASE("emitting MIDI allocates nothing, and a full queue drops rather than b
     { sqlive::test::AllocGuard guard; for (int i = 0; i < 40; ++i) e.process(out, 2, 512); }
     CHECK(sqlive::test::allocationCount() == 0);
     CHECK(drainMidi(e).size() == 4096);                               // 20 000 events rendered, the queue full, the rest dropped
+    CHECK(e.droppedMidiCount() == 20000 - 4096);                      // and counted (the chase sends the one at 0 instead)
+    e.stop();  renderOffline(e, 2, 9600, 512);  drainMidi(e);
+    CHECK(e.droppedMidiCount() == 20000 - 4096);                      // a queue with room drops nothing more
+}
+TEST_CASE("a new engine has dropped no MIDI", "[enginemidi]") {
+    Engine e; e.prepare(48000.0, 512);
+    CHECK(e.droppedMidiCount() == 0);
 }

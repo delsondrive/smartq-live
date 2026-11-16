@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -59,6 +60,8 @@ public:
 
     // The one consumer thread.
     bool pop(OutMidi&) noexcept;
+    // Any thread: how many messages a full queue has dropped since this was made. For diagnostics only.
+    std::uint64_t droppedCount() const noexcept { return dropped_.load(std::memory_order_relaxed); }
 
 private:
     struct Note {
@@ -76,6 +79,7 @@ private:
               std::int64_t streamTime) noexcept;   // false: the queue was full, and it was dropped
 
     SpscQueue<OutMidi> queue_;
+    std::atomic<std::uint64_t> dropped_{0};   // written by the producer only
     MidiChase chase_;
     const PreparedSong* song_ = nullptr;
     std::uint64_t serial_ = 0;
