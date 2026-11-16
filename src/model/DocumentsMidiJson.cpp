@@ -69,7 +69,9 @@ juce::var write(const ControlBinding& c) {
 }
 juce::var write(const MidiDeviceDoc& d) {
     auto o = startObject();
-    put(o, "id", d.id); put(o, "name", d.name); put(o, "colour", d.colour.toDisplayString(false).toLowerCase());
+    put(o, "id", d.id); put(o, "name", d.name);
+    // No colour is left out (the reader gives Colour() back); written, it would read back as opaque black.
+    if (d.colour != juce::Colour()) put(o, "colour", d.colour.toDisplayString(false).toLowerCase());
     put(o, "clock", d.clock); put(o, "startStop", d.startStop); put(o, "offsetMs", d.offsetMs);
     put(o, "patches", arrayOf(d.patches, [](const Patch& p) { return write(p); }));
     return finish(o, d.extra);

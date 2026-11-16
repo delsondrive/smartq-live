@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "model/CoreCommands.h"
+#include "model/MidiCommands.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
 #include "model/Units.h"
@@ -33,6 +34,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     : settings_(settings), folder_(std::move(bandRoot)), cache_(cacheBudgetBytes) {
     load_report_ = folder_.load(model_);
     model::registerCoreCommands(commands_);
+    model::registerMidiCommands(commands_);
     OutsideChanges::registerReloadCommand(commands_);
     commands_.onChanged = [this](const std::vector<model::DocKey>& keys) {
         autosaver_.noteChanged(keys);

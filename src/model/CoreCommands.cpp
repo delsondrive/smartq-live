@@ -6,6 +6,7 @@
 
 #include "engine/MixSetup.h"
 #include "engine/PreparedSong.h"
+#include "model/CommandParams.h"
 #include "model/Defaults.h"
 #include "model/DocumentsJson.h"
 #include "model/Routing.h"
@@ -17,78 +18,7 @@ namespace {
 
 using juce::String;
 using juce::var;
-
-struct Refusal { String message; };
-
-[[noreturn]] void refuse(const String& message) { throw Refusal{message}; }
-
-std::optional<double> asNumber(const var& v) {
-    if (v.isInt() || v.isInt64() || v.isDouble()) {
-        const double d = (double) v;
-        return std::isfinite(d) ? std::optional<double>(d) : std::nullopt;
-    }
-    if (v.isString()) {
-        auto s = v.toString().trim();
-        // At least one digit: "-", "e" and "." alone are not numbers, though getDoubleValue would make 0 of them.
-        if (s.containsAnyOf("0123456789") && s.containsOnly("0123456789.+-eE")) {
-            const double d = s.getDoubleValue();
-            if (std::isfinite(d)) return d;
-        }
-    }
-    return std::nullopt;
-}
-
-// The parameters of one call. A parameter is "given" when it is present and not void.
-class Params {
-public:
-    explicit Params(const var& v) : all_(v) {}
-
-    bool given(const char* key) const { return present(key) && ! raw(key).isVoid(); }
-    bool present(const char* key) const { return all_.hasProperty(juce::Identifier(key)); }
-    var raw(const char* key) const { return all_[juce::Identifier(key)]; }
-
-    String id(const char* key) const { auto v = raw(key); return v.isString() ? v.toString() : String(); }
-    String text(const char* key) const {
-        auto v = raw(key);
-        if (! v.isString()) refuse(String(key) + " must be text.");
-        return v.toString().trim();
-    }
-    // A number, limited to lo..hi the way the JSON reader limits it.
-    double number(const char* key, double lo, double hi) const {
-        auto n = asNumber(raw(key));
-        if (! n) refuse(String(key) + " must be a number.");
-        return std::min(hi, std::max(lo, *n));
-    }
-    int whole(const char* key, int lo, int hi) const { return (int) std::round(number(key, lo, hi)); }
-    float db(const char* key) const {
-        auto n = asNumber(raw(key));
-        if (! n) refuse(String(key) + " must be a number.");
-        return clampDb((float) *n);
-    }
-    bool flag(const char* key) const {
-        auto v = raw(key);
-        if (v.isBool()) return (bool) v;
-        if (v.isString() && (v.toString() == "true" || v.toString() == "false")) return v.toString() == "true";
-        refuse(String(key) + " must be true or false.");
-    }
-
-private:
-    var all_;
-};
-
-// The one place that says "that thing no longer exists".
-template <typename T> T& found(T* thing, const char* what) {
-    if (thing == nullptr) refuse("That " + String(what) + " no longer exists.");
-    return *thing;
-}
-template <typename List, typename Pred> auto* findIn(List& list, Pred&& pred) {
-    auto it = std::find_if(list.begin(), list.end(), pred);
-    return it == list.end() ? nullptr : &*it;
-}
-
-SongDoc& songOf(BandModel& m, const Params& p) { return found(m.editSong(p.id("songId")), "song"); }
-SetlistDoc& setlistOf(BandModel& m, const Params& p) { return found(m.editSetlist(p.id("setlistId")), "setlist"); }
-RigDoc& rigOf(BandModel& m, const Params& p) { return found(m.editRig(p.id("rigId")), "rig"); }
+using namespace commands;
 OutputDoc& outputOf(RigDoc& rig, const Params& p) {
     auto id = p.id("outputId");
     return found(findIn(rig.outputs, [&](const OutputDoc& o) { return o.id == id; }), "output");
@@ -105,7 +35,6 @@ Role& roleOf(BandModel& m, const String& id) {
     return found(findIn(m.editBand().roles, [&](const Role& r) { return r.id == id; }), "role");
 }
 
-String nonEmpty(const String& s, const String& message) { if (s.isEmpty()) refuse(message); return s; }
 
 template <typename E> struct Named { E value; const char* name; };
 
@@ -127,11 +56,6 @@ void checkRoleName(const BandModel& m, const String& name, const String& exceptI
         if (r.id != exceptId && r.name.equalsIgnoreCase(name)) refuse("There is already a role called " + name + ".");
 }
 
-juce::Colour parseColour(const String& text) {
-    auto s = text.trim().trimCharactersAtStart("#");
-    if (s.length() != 6 || ! s.containsOnly("0123456789abcdefABCDEF")) refuse("A colour is six hex digits, like ff9a68.");
-    return juce::Colour((juce::uint32) (0xff000000u | (juce::uint32) s.getHexValue32()));
-}
 
 String joinNames(const juce::StringArray& names) {
     if (names.size() < 2) return names.joinIntoString("");
@@ -159,19 +83,11 @@ void checkPaChannels(const RigDoc& rig, const OutputDoc& changed) {
     }
 }
 
-template <typename T, typename Pred> void eraseIf(std::vector<T>& v, Pred&& pred) {
-    v.erase(std::remove_if(v.begin(), v.end(), pred), v.end());
-}
 
 }  // namespace
 
 void registerCoreCommands(CommandLayer& layer) {
-    auto add = [&layer](const char* name, auto fn) {
-        layer.registerCommand(name, [fn](BandModel& m, const var& raw) {
-            try { return fn(m, Params(raw)); }
-            catch (const Refusal& r) { return CommandResult::failure(r.message); }
-        });
-    };
+    auto add = [&layer](const char* name, auto fn) { addCommand(layer, name, fn); };
 
     // --- band
     add("band.rename", [](BandModel& m, const Params& p) {
