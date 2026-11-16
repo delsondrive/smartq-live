@@ -16,8 +16,9 @@ class MainWindow;
 namespace sqlive::app {
 
 // What Main.cpp runs: reads this computer's settings, opens a band folder (--band <folder> on the command line, else the
-// newest recent one), makes the session and the audio host, opens the rig's device for this computer, and shows the
-// main window. With no band folder it asks for one (Task 10 puts the Welcome page there).
+// newest recent one), makes the session and the audio host, and shows the main window. With no band folder it shows the
+// Welcome page; a band whose rig has no device for this computer first shows the New computer page. A device that is bound
+// but can't be opened is not a reason for that page: the main window opens with the "No audio" pill.
 // Every band folder that opens is noted in the settings, which are saved.
 class App {
 public:
@@ -30,7 +31,13 @@ public:
     void openBand(const juce::File& root);                        // closes the band that is open, if any
 
 private:
-    void showWelcome();                                           // asks for a band folder; Task 10 puts the Welcome page here
+    class StartWindow;                                            // the window the Welcome and New computer pages show in
+
+    void showWelcome();
+    void showNewComputer();
+    void showMainWindow();
+    void openDemoBand();
+    void closeStartWindow();                                      // later, as it is often asked from inside the window
     void closeBand();
     void quit();
 
@@ -38,8 +45,9 @@ private:
     std::unique_ptr<Session> session_;
     std::unique_ptr<AudioHost> host_;
     std::unique_ptr<ui::MainWindow> window_;
-    std::unique_ptr<juce::FileChooser> chooser_;
+    std::unique_ptr<StartWindow> start_;
     juce::ScopedMessageBox message_;
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);       // what posted calls check, so none runs after this has gone
 };
 
 }  // namespace sqlive::app

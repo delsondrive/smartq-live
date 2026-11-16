@@ -1,7 +1,11 @@
 #include "app/App.h"
 
 #include "model/BandFolder.h"
+#include "model/DemoBand.h"
 #include "ui/MainWindow.h"
+#include "ui/NewComputerPage.h"
+#include "ui/Theme.h"
+#include "ui/WelcomePage.h"
 
 namespace sqlive::app {
 
@@ -16,6 +20,22 @@ juce::File bandFromCommandLine(const juce::StringArray& commandLine) {
 
 }  // namespace
 
+// A plain window around one page (Welcome, or New computer); closing it asks the app.
+class App::StartWindow : public juce::DocumentWindow {
+public:
+    StartWindow(std::unique_ptr<juce::Component> page, const juce::String& title, int width, int height)
+        : juce::DocumentWindow(title, theme::bg1, juce::DocumentWindow::allButtons) {
+        setUsingNativeTitleBar(true);
+        setResizable(true, false);
+        setResizeLimits(760, 600, 16384, 16384);
+        setContentOwned(page.release(), false);
+        centreWithSize(width, height);
+        setVisible(true);
+    }
+    void closeButtonPressed() override { if (onClose) onClose(); }
+    std::function<void()> onClose;
+};
+
 App::App(juce::File settingsFile, const juce::StringArray& commandLine) : settings_(std::move(settingsFile)) {
     auto band = bandFromCommandLine(commandLine);
     if (band == juce::File()) {
@@ -28,22 +48,30 @@ App::App(juce::File settingsFile, const juce::StringArray& commandLine) : settin
 
 App::~App() {
     message_.close();
+    start_.reset();
     closeBand();
 }
 
-bool App::wantsWindow() const { return window_ != nullptr || chooser_ != nullptr; }
+bool App::wantsWindow() const { return window_ != nullptr || start_ != nullptr; }
 
 void App::openBand(const juce::File& root) {
     closeBand();
+    start_.reset();
     session_ = std::make_unique<Session>(settings_, root);
     settings_.noteOpened(session_->folder().root());
     settings_.save();
 
     host_ = std::make_unique<AudioHost>(*session_);
-    // Always asked, so the session knows whether a device runs. A failure leaves the "No audio" pill showing; Task 10 shows
-    // the New computer page when the rig has no device for this computer.
-    host_->openFromRig();
+    if (host_->hasBindingForThisComputer()) {
+        // A failure leaves the "No audio" pill showing.
+        host_->openFromRig();
+        showMainWindow();
+    } else {
+        showNewComputer();
+    }
+}
 
+void App::showMainWindow() {
     window_ = std::make_unique<ui::MainWindow>(*session_, host_.get());
     window_->onClose = [this] { quit(); };
     window_->onOpenAnotherBand = [this] { showWelcome(); };
@@ -61,28 +89,60 @@ void App::quit() {
     if (onQuit) onQuit();
 }
 
+void App::closeStartWindow() {
+    std::weak_ptr<int> alive = alive_;
+    juce::MessageManager::callAsync([this, alive] {
+        if (alive.expired()) return;
+        start_.reset();
+    });
+}
+
 void App::showWelcome() {
-    const auto start = session_ != nullptr ? session_->folder().root().getParentDirectory()
-                                           : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
-    chooser_ = std::make_unique<juce::FileChooser>("Open your band folder", start, juce::String(), true);
-    chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-                          [this](const juce::FileChooser& chooser) {
-                              const auto folder = chooser.getResult();
-                              if (folder == juce::File()) {                  // cancelled: the band that was open stays
-                                  if (window_ == nullptr) quit();
-                                  return;
-                              }
-                              if (model::BandFolder::looksLikeBandFolder(folder)) {
-                                  openBand(folder);
-                                  return;
-                              }
-                              message_ = juce::AlertWindow::showScopedAsync(
-                                  juce::MessageBoxOptions()
-                                      .withIconType(juce::MessageBoxIconType::NoIcon)
-                                      .withTitle("That folder isn't a band folder. Choose the folder that has band.json in it.")
-                                      .withButton("OK"),
-                                  [this](int) { showWelcome(); });
-                          });
+    auto page = std::make_unique<ui::WelcomePage>(settings_);
+    std::weak_ptr<int> alive = alive_;
+    // The page's own callbacks run inside it, so what replaces the window waits until they have returned.
+    auto later = [this, alive](std::function<void()> work) {
+        juce::MessageManager::callAsync([this, alive, work = std::move(work)] { if (!alive.expired()) work(); });
+    };
+    page->onOpen = [this, later](juce::File folder) { later([this, folder] { openBand(folder); }); };
+    page->onCreate = [this, later](juce::File root, juce::String) { later([this, root] { openBand(root); }); };
+    page->onDemo = [this, later] { later([this] { openDemoBand(); }); };
+    start_ = std::make_unique<StartWindow>(std::move(page), "Smart Q Live", 960, 680);
+    start_->onClose = [this] {
+        if (window_ == nullptr) quit();                           // nothing else is open
+        else closeStartWindow();                                  // the band that is open stays
+    };
+}
+
+void App::showNewComputer() {
+    auto page = std::make_unique<ui::NewComputerPage>(*session_, *host_);
+    std::weak_ptr<int> alive = alive_;
+    page->onDone = [this, alive] {
+        juce::MessageManager::callAsync([this, alive] {
+            if (alive.expired()) return;
+            start_.reset();
+            showMainWindow();
+        });
+    };
+    start_ = std::make_unique<StartWindow>(std::move(page), "Smart Q Live", 960, 680);
+    start_->onClose = [this] { quit(); };
+}
+
+void App::openDemoBand() {
+    const auto root = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Smart Q Live demo");
+    if (!model::BandFolder::looksLikeBandFolder(root)) {
+        const auto made = model::createDemoBand(root);
+        if (made.failed()) {
+            message_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
+                                                              .withIconType(juce::MessageBoxIconType::NoIcon)
+                                                              .withTitle("The demo band couldn't be made")
+                                                              .withMessage(made.getErrorMessage())
+                                                              .withButton("OK"),
+                                                          nullptr);
+            return;
+        }
+    }
+    openBand(root);
 }
 
 }  // namespace sqlive::app
