@@ -149,13 +149,14 @@ TEST_CASE("the envelope scales every sample and a bus past the device is skipped
     Out one(2, 4); r.render(0, 4, one.ptrs.data(), 2, nullptr);
     CHECK(one.data[1][0] == 1.0f);
 }
-TEST_CASE("render allocates nothing", "[renderer]") {
+TEST_CASE("render allocates and frees nothing", "[renderer]") {
     auto song = testSong("s", 48000, 0.3f, 1, true);
     auto mix = stereoMix();
     SongRenderer r; r.prepare(48000.0, 512); r.setSong(&song); r.setMix(mix.get());
     Out out(2, 512);
     { sqlive::test::AllocGuard guard; for (int i = 0; i < 50; ++i) r.render(song.start + i * 512, 512, out.ptrs.data(), 2, nullptr); }
     CHECK(sqlive::test::allocationCount() == 0);
+    CHECK(sqlive::test::deallocationCount() == 0);
 }
 // Not in the brief: its block-size test renders only the count-in, where the part is silent, so it can't see a glide.
 // This one glides a part gain, a mix level, a trim and the click gain while the part and the click are both sounding,

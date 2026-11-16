@@ -11,6 +11,7 @@ namespace {
 
 constinit thread_local bool guardActive = false;
 constinit thread_local std::size_t counted = 0;
+constinit thread_local std::size_t freed = 0;
 
 void noteAllocation() noexcept {
     if (guardActive) ++counted;
@@ -31,18 +32,31 @@ void* orThrow(void* memory) {
     return memory;
 }
 
+// Deleting a null pointer frees nothing, so it isn't counted.
+void release(void* memory) noexcept {
+    if (memory != nullptr && guardActive) ++freed;
+    std::free(memory);
+}
+
+void releaseAligned(void* memory) noexcept {
+    if (memory != nullptr && guardActive) ++freed;
+    _aligned_free(memory);
+}
+
 }  // namespace
 
 namespace sqlive::test {
 
 AllocGuard::AllocGuard() noexcept {
     counted = 0;
+    freed = 0;
     guardActive = true;
 }
 
 AllocGuard::~AllocGuard() { guardActive = false; }
 
 std::size_t allocationCount() noexcept { return counted; }
+std::size_t deallocationCount() noexcept { return freed; }
 
 }  // namespace sqlive::test
 
@@ -61,15 +75,15 @@ void* operator new[](std::size_t size, std::align_val_t alignment, const std::no
     return allocateAligned(size, alignment);
 }
 
-void operator delete(void* memory) noexcept { std::free(memory); }
-void operator delete[](void* memory) noexcept { std::free(memory); }
-void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
-void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); }
-void operator delete(void* memory, const std::nothrow_t&) noexcept { std::free(memory); }
-void operator delete[](void* memory, const std::nothrow_t&) noexcept { std::free(memory); }
-void operator delete(void* memory, std::align_val_t) noexcept { _aligned_free(memory); }
-void operator delete[](void* memory, std::align_val_t) noexcept { _aligned_free(memory); }
-void operator delete(void* memory, std::size_t, std::align_val_t) noexcept { _aligned_free(memory); }
-void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept { _aligned_free(memory); }
-void operator delete(void* memory, std::align_val_t, const std::nothrow_t&) noexcept { _aligned_free(memory); }
-void operator delete[](void* memory, std::align_val_t, const std::nothrow_t&) noexcept { _aligned_free(memory); }
+void operator delete(void* memory) noexcept { release(memory); }
+void operator delete[](void* memory) noexcept { release(memory); }
+void operator delete(void* memory, std::size_t) noexcept { release(memory); }
+void operator delete[](void* memory, std::size_t) noexcept { release(memory); }
+void operator delete(void* memory, const std::nothrow_t&) noexcept { release(memory); }
+void operator delete[](void* memory, const std::nothrow_t&) noexcept { release(memory); }
+void operator delete(void* memory, std::align_val_t) noexcept { releaseAligned(memory); }
+void operator delete[](void* memory, std::align_val_t) noexcept { releaseAligned(memory); }
+void operator delete(void* memory, std::size_t, std::align_val_t) noexcept { releaseAligned(memory); }
+void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept { releaseAligned(memory); }
+void operator delete(void* memory, std::align_val_t, const std::nothrow_t&) noexcept { releaseAligned(memory); }
+void operator delete[](void* memory, std::align_val_t, const std::nothrow_t&) noexcept { releaseAligned(memory); }
