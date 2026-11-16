@@ -30,6 +30,7 @@ public:
     void keyboardLost();                           // another window took the keyboard: forget every held key
     double holdProgress() const;                   // 0..1 while Space is being held to stop, else 0
     std::function<void(Action)> onAction;          // defaults to session.perform
+    bool isWatching() const { return isTimerRunning(); }   // the 30 Hz timer runs only while a tracked key is down
 
     bool keyPressed(const juce::KeyPress&, juce::Component*) override;
     bool keyStateChanged(bool isKeyDown, juce::Component*) override;
@@ -38,6 +39,7 @@ private:
     void timerCallback() override;
     void act(Action a);
     void updateTimer();
+    void releaseVanishedKeys(double now);
 
     Session& session_;
     std::set<ShowKey> down_;

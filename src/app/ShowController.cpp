@@ -33,6 +33,7 @@ void ShowController::act(Action a) {
 
 void ShowController::keyDown(ShowKey key, double now) {
     last_time_ = now;
+    if (key == ShowKey::Other) return;             // never tracked: no key-up is polled for it
     if (!down_.insert(key).second) return;         // a repeat of a key already held
 
     switch (key) {
@@ -82,16 +83,22 @@ bool ShowController::keyPressed(const juce::KeyPress& k, juce::Component*) {
 }
 
 bool ShowController::keyStateChanged(bool, juce::Component*) {
-    const auto now = clockSeconds();
-    const auto held = down_;
-    for (auto& t : trackedKeys)
-        if (held.count(t.key) && !juce::KeyPress::isKeyCurrentlyDown(t.code)) keyUp(t.key, now);
+    releaseVanishedKeys(clockSeconds());
     updateTimer();
     return true;
 }
 
+// A key the system no longer reports as down was let go (or the keyboard was taken away): treat it as released.
+void ShowController::releaseVanishedKeys(double now) {
+    const auto held = down_;
+    for (auto& t : trackedKeys)
+        if (held.count(t.key) && !juce::KeyPress::isKeyCurrentlyDown(t.code)) keyUp(t.key, now);
+}
+
 void ShowController::timerCallback() {
-    tick(clockSeconds());
+    const auto now = clockSeconds();
+    releaseVanishedKeys(now);
+    tick(now);
     updateTimer();
 }
 

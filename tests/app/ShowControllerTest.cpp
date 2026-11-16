@@ -34,13 +34,36 @@ TEST_CASE("a tap during a song does nothing; a one-second hold stops it", "[keys
 TEST_CASE("Esc stops only when pressed twice within a second", "[keys]") {
     Rig r;
     r.c.keyDown(ShowKey::Space, 0.0);  r.c.keyUp(ShowKey::Space, 0.1);
-    r.c.keyDown(ShowKey::Escape, 1.0);  r.c.keyUp(ShowKey::Escape, 1.1);
+    r.c.keyDown(ShowKey::Escape, 1.0);  r.c.keyDown(ShowKey::Escape, 1.03);      // a repeat of a held Esc is not a second press
+    CHECK(r.seen.size() == 1);
+    r.c.keyUp(ShowKey::Escape, 1.1);
     r.c.keyDown(ShowKey::Escape, 2.5);  r.c.keyUp(ShowKey::Escape, 2.6);         // too late: counts as a first press
     CHECK(r.seen.size() == 1);
     r.c.keyDown(ShowKey::Escape, 3.0);
     CHECK(r.seen.back() == Action::Stop);
-    r.c.keyDown(ShowKey::Escape, 3.01);                                          // a repeat of a held Esc is not a second press
     CHECK(r.seen.size() == 2);
+}
+TEST_CASE("losing the keyboard during a hold sends no stop and the next press is a fresh one", "[keys]") {
+    Rig r;
+    r.c.keyDown(ShowKey::Space, 0.0);  r.c.keyUp(ShowKey::Space, 0.1);
+    r.c.keyDown(ShowKey::Space, 5.0);  r.c.tick(5.5);
+    r.c.keyboardLost();
+    r.c.tick(6.2);
+    CHECK(r.seen.size() == 1);
+    r.c.keyDown(ShowKey::Space, 6.5);  r.c.tick(7.0);                            // not mistaken for an auto-repeat
+    CHECK(r.c.holdProgress() == Catch::Approx(0.5).margin(0.02));
+    r.c.tick(7.51);
+    CHECK(r.seen.back() == Action::Stop);
+}
+TEST_CASE("a key that is not tracked never keeps the timer running", "[keys]") {
+    Rig r;
+    r.c.keyPressed(juce::KeyPress('a'), nullptr);
+    CHECK(!r.c.isWatching());
+    r.c.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey), nullptr);
+    CHECK(r.c.isWatching());
+    r.c.keyboardLost();
+    r.c.keyStateChanged(false, nullptr);                                         // nothing held any more: the timer stops
+    CHECK(!r.c.isWatching());
 }
 TEST_CASE("arrows and Tab act once per press", "[keys]") {
     Rig r;
