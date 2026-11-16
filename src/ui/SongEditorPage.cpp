@@ -44,7 +44,6 @@ juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 juce::Font boldFont() { return theme::font(theme::sizeBody, true); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
 juce::Font smallBoldFont() { return theme::font(theme::sizeSmall, true); }
-juce::Font kbdFont() { return theme::font(theme::sizeCaption, true); }
 
 float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
@@ -114,21 +113,6 @@ void fit(juce::Viewport& view, juce::Component& body, int idealHeight) {
     const bool scrolls = idealHeight > view.getHeight();
     const int width = std::max(0, view.getWidth() - (scrolls ? view.getScrollBarThickness() : 0));
     body.setSize(width, std::max(idealHeight, view.getHeight()));
-}
-
-// The mockup's kbd: 11 px semibold on a field with a hairline border, 2 px at the bottom, 4 px corners. Returns its width.
-float drawKey(juce::Graphics& g, const juce::String& key, float x, float centreY) {
-    const float w = widthOf(kbdFont(), key) + 10.0f;
-    const juce::Rectangle<float> box(x, centreY - 9.0f, w, 18.0f);
-    g.setColour(theme::field);
-    g.fillRoundedRectangle(box, 4.0f);
-    g.setColour(theme::hairline);
-    g.drawRoundedRectangle(box.reduced(0.5f), 4.0f, 1.0f);
-    g.fillRect(box.getX() + 2.0f, box.getBottom() - 1.0f, box.getWidth() - 4.0f, 1.0f);
-    g.setColour(theme::text);
-    g.setFont(kbdFont());
-    g.drawText(key, box.withTrimmedBottom(1.0f), juce::Justification::centred, false);
-    return w;
 }
 
 }  // namespace

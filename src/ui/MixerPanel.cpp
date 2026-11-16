@@ -18,7 +18,7 @@ namespace {
 // The mockup's CSS: .mixer (padding 14 and gap 10 on screen 10; 10 and 6 in the main view), .ch (a column, gap 6),
 // .ch .nm (11 px semibold, mid), .hint (12 px, dim), .fader (an 8 px track and a 32 px cap), .ms b (18 x 16, 3 px
 // corners, 10 px bold), .sep (1 px, hairline).
-constexpr int kPad = 14, kGap = 10, kCompactPad = 10, kCompactGap = 6;
+constexpr int kPad = 14, kGap = 10, kCompactPad = 10, kCompactGap = 6, kCompactCaption = 20;   // .mixer.live: 30 px on top
 constexpr int kMinStripWidth = 56, kStripGap = 6, kSeparatorWidth = 1;
 constexpr int kNameHeight = 15, kHintHeight = 16, kFaderWidth = 32, kMuteWidth = 18, kMuteHeight = 16;
 
@@ -430,7 +430,7 @@ void MixerPanel::refresh(bool force) {
 void MixerPanel::paint(juce::Graphics& g) { theme::paintPanel(g, getLocalBounds().toFloat()); }
 
 void MixerPanel::resized() {
-    viewport_.setBounds(getLocalBounds().reduced(compact_ ? kCompactPad : kPad));
+    viewport_.setBounds(compact_ ? getLocalBounds().reduced(kCompactPad).withTrimmedTop(kCompactCaption) : getLocalBounds().reduced(kPad));
     keepOffKeyboard(viewport_);                                   // the scroll bars, made again when the look changes
     layoutRow();
 }

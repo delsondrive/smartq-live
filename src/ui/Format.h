@@ -15,6 +15,7 @@ juce::String formatDbNumber(float db);          // "-60", "-2.5", "+3", "0": the
 // A level typed by the user: "-6", "+3", "2.5", "-6 dB", "-6dB" (any case). nullopt when it isn't a number.
 std::optional<float> parseDb(const juce::String&);
 juce::String formatBpm(double bpm);             // "128", "92.5": up to two decimals, no trailing zeros
+juce::String formatSeconds(double seconds);   // "4", "2.5": seconds to a tenth, with no trailing zero (a gap)
 juce::String formatChannels(int firstChannel, bool stereo);   // "3/4", "5" (1-based, as the model keeps them)
 
 // The text cut to fit a width in that font, ending with "…" when cut ("" when not even "…" fits).

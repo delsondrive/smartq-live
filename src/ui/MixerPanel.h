@@ -47,7 +47,8 @@ MixerState makeMixerState(const app::Session&, const juce::String& songId, const
 // The mixer's strips in a panel (the mockup's .mixer), used by the Mixer page and the main view. Each strip, top to
 // bottom: the name (with a dim ◉ when it is for in-ears only), the value, a LevelFader in the strip's colour, "M" when
 // it can be muted (red when on), the footer. Strips share the width, at least 56 px each; when they don't fit, the row
-// scrolls sideways. Compact (the main view): no value line, and the footer only when it is a warning.
+// scrolls sideways. Compact (the main view): no value line, the footer only when it is a warning, and 30 px along the top
+// for the main view's caption (the mockup's .mixer.live).
 //
 // A fader drag is one Session::setLevel gesture (one undo step in Edit mode, tonight's level in Show mode: the session
 // decides); a press or release without a move changes nothing. "M" mutes a part in the song (Session::setMute) or stops

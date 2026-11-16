@@ -46,13 +46,6 @@ juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items)
     return juce::var(o);
 }
 
-// "4", "2.5": a gap's seconds to a tenth, with no trailing zero.
-juce::String formatSeconds(double seconds) {
-    auto text = juce::String(std::round(seconds * 10.0) / 10.0, 1);
-    if (text.endsWith(".0")) text = text.dropLastCharacters(2);
-    return text;
-}
-
 juce::String transitionText(const model::Transition& t) {
     switch (t.kind) {
         case model::TransitionKind::Stop: break;

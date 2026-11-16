@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "ui/MainView.h"
 #include "ui/MixerPage.h"
 #include "ui/NewSongDialog.h"
 #include "ui/SetlistsPage.h"
@@ -91,6 +92,8 @@ void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, a
     shell.setPageComponent(Page::SongEditor, std::move(editor));
     shell.setPageComponent(Page::Mixer, std::move(mixer));
     shell.setPageComponent(Page::Setup, std::make_unique<SetupPage>(session, host));
+    // Show mode: the main view, and the stage view (Task 17; an empty component until then).
+    shell.setShowComponents(std::make_unique<MainView>(session), std::make_unique<juce::Component>());
 }
 
 }  // namespace sqlive::ui

@@ -1,0 +1,296 @@
+#include "ui/MainView.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include "ui/Format.h"
+#include "ui/Theme.h"
+
+namespace sqlive::ui {
+
+namespace {
+
+// The mockup's CSS: .map (padding 12 16 6), .bottom (padding 8 16 14, gap 12), .side (250 px, gap 10), .box (padding
+// 10 12), h4 (11 px bold, letter-spaced 0.8, 6 px below), the next song's title (18 px semibold), .hint (12 px, dim;
+// line-height 1.9 in the hints box), .mixer .cap2 (left 12, top 8, 10 px bold, letter-spaced 0.8).
+constexpr int kPadX = 16, kMapTop = 12, kMapBottom = 6, kBottomTop = 8, kBottomBottom = 14, kBottomGap = 12;
+constexpr int kSideWidth = 250, kSideGap = 10, kBoxPadX = 12, kBoxPadY = 10;
+constexpr int kCapsHeight = 15, kCapsGap = 6, kTitleHeight = 25, kHintHeight = 17, kHintLine = 23;
+constexpr int kCaptionLeft = 12, kCaptionTop = 7, kCaptionHeight = 16, kChoiceRight = 10, kChoiceTop = 5, kChoiceHeight = 20;
+constexpr int kChoiceMaxWidth = 220, kCaptionChoiceGap = 8;
+constexpr float kKeyGap = 3.0f, kWordGap = 4.0f;
+
+const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");
+
+juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
+juce::Font captionFont() { return theme::tracked(theme::font(theme::sizeTag, true), 0.8f); }
+juce::Font titleFont() { return theme::font(18.0f, true); }
+juce::Font hintFont() { return theme::font(theme::sizeSmall); }
+
+float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
+
+// Nothing in the main view takes the keyboard, not even with a click: Space and the arrows must reach the window.
+void keepOffKeyboard(juce::Component& component) {
+    component.setWantsKeyboardFocus(false);
+    component.setMouseClickGrabsKeyboardFocus(false);
+    for (auto* child : component.getChildren()) keepOffKeyboard(*child);
+}
+
+// A hint's words, a key name drawn as a key: "← → next song", "hold Space stop".
+bool isKey(const juce::String& word) {
+    for (const char* key : {"\xe2\x86\x90", "\xe2\x86\x92", "\xe2\x86\x91", "\xe2\x86\x93", "Space", "Tab", "Esc"})
+        if (word == juce::String::fromUTF8(key)) return true;
+    return false;
+}
+
+float hintWidth(const juce::String& hint) {
+    const auto words = juce::StringArray::fromTokens(hint, " ", "");
+    float width = 0.0f;
+    for (int i = 0; i < words.size(); ++i) {
+        if (i > 0) width += isKey(words[i]) && isKey(words[i - 1]) ? kKeyGap : kWordGap;
+        width += isKey(words[i]) ? keyWidth(words[i]) : widthOf(hintFont(), words[i]);
+    }
+    return width;
+}
+
+void drawHint(juce::Graphics& g, const juce::String& hint, float x, float centreY) {
+    const auto words = juce::StringArray::fromTokens(hint, " ", "");
+    g.setFont(hintFont());
+    for (int i = 0; i < words.size(); ++i) {
+        if (i > 0) x += isKey(words[i]) && isKey(words[i - 1]) ? kKeyGap : kWordGap;
+        if (isKey(words[i])) {
+            x += drawKey(g, words[i], x, centreY);
+        } else {
+            const float w = widthOf(hintFont(), words[i]);
+            g.setFont(hintFont());
+            g.setColour(theme::dim);
+            g.drawText(words[i], juce::Rectangle<float>(x, centreY - 0.5f * kHintHeight, w + 1.0f, kHintHeight), juce::Justification::centredLeft, false);
+            x += w;
+        }
+    }
+}
+
+}  // namespace
+
+// The mockup's .cap2: "LEVELS ARE LIVE · " in dim, then "AMBER = CHANGED TONIGHT" in caution.
+class MainView::Caption : public juce::Component {
+public:
+    Caption() { setInterceptsMouseClicks(false, false); }
+    void paint(juce::Graphics& g) override {
+        const juce::String first = "LEVELS ARE LIVE" + kDot, second = "AMBER = CHANGED TONIGHT";
+        const auto font = captionFont();
+        const float w = static_cast<float>(getWidth()), firstWidth = std::min(w, widthOf(font, first));
+        g.setFont(font);
+        g.setColour(theme::dim);
+        g.drawText(shorten(first, font, w), juce::Rectangle<float>(0.0f, 0.0f, firstWidth + 1.0f, static_cast<float>(getHeight())),
+                   juce::Justification::centredLeft, false);
+        g.setColour(theme::caution);
+        g.drawText(shorten(second, font, w - firstWidth),
+                   juce::Rectangle<float>(firstWidth, 0.0f, std::max(0.0f, w - firstWidth), static_cast<float>(getHeight())),
+                   juce::Justification::centredLeft, false);
+    }
+};
+
+MainView::MainView(app::Session& session)
+    : session_(session), strip_(session), map_(session), mixer_(session), caption_(std::make_unique<Caption>()) {
+    addAndMakeVisible(strip_);
+    addAndMakeVisible(map_);
+    addAndMakeVisible(mixer_);
+    addAndMakeVisible(*caption_);
+    addAndMakeVisible(levelsFor_);
+    mixer_.setCompact(true);
+    mixer_.onStateChanged = [this] { mixerStateChanged(); };
+    levelsFor_.onChange = [this](int index) {
+        const auto& options = mixer_.state().options;
+        if (!juce::isPositiveAndBelow(index, static_cast<int>(options.size()))) return;
+        outputId_ = options[static_cast<std::size_t>(index)].id;
+        mixer_.show(map_.songId(), outputId_);
+    };
+    keepOffKeyboard(*this);
+    session_.changes().addChangeListener(this);
+    refresh();
+}
+
+MainView::~MainView() {
+    stopTimer();
+    session_.changes().removeChangeListener(this);
+}
+
+void MainView::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(); }
+
+// While a song plays the session's changes come 30 times a second as well; a tick just after one of them has nothing new.
+void MainView::timerCallback() {
+    if (juce::Time::getMillisecondCounterHiRes() - lastRefreshMs_ >= 20.0) refresh();
+}
+
+void MainView::visibilityChanged() {
+    if (isVisible() && !fresh_) refresh();
+}
+
+bool MainView::shownWithParents() const {
+    for (const auto* c = static_cast<const juce::Component*>(this); c->getParentComponent() != nullptr; c = c->getParentComponent())
+        if (!c->isVisible()) return false;
+    return true;
+}
+
+void MainView::refresh() {
+    if (!shownWithParents()) {                                    // hidden: it catches up when shown
+        fresh_ = false;
+        stopTimer();
+        return;
+    }
+    fresh_ = true;
+    lastRefreshMs_ = juce::Time::getMillisecondCounterHiRes();
+    const auto state = makeShowState(session_);
+
+    strip_.set(state.cards);
+    map_.refresh();
+    if (map_.songId() != mixer_.songId()) mixer_.show(map_.songId(), outputId_);   // the mixer follows the song by itself
+
+    Side side;
+    side.endOfSet = state.endOfSet;
+    side.title = state.nextTitle;
+    side.follow = state.nextInfo.fromFirstOccurrenceOf("\n", false, false);
+    for (const auto& card : state.cards)
+        if (card.kind == ShowState::Card::Kind::Next) {
+            side.note = card.note;
+            side.noteGood = card.noteGood;
+            side.noteBad = card.noteBad;
+        }
+    side.hints = state.hints;
+    if (!(side == shownSide_)) {
+        const bool reshaped = side.endOfSet != shownSide_.endOfSet || side.hints != shownSide_.hints;
+        shownSide_ = side;
+        if (reshaped) layoutSide();                               // the boxes' heights follow what is in them
+        repaint(side_);
+    }
+
+    if (state.playing && !isTimerRunning()) startTimerHz(30);
+    else if (!state.playing && isTimerRunning()) stopTimer();
+}
+
+void MainView::mixerStateChanged() {
+    const auto& state = mixer_.state();
+    if (state.chosen == 0) outputId_.clear();                     // an output no longer in the rig: "This song"
+    juce::StringArray options;
+    for (const auto& option : state.options) options.add(option.name);
+    if (options != options_) {
+        options_ = options;
+        levelsFor_.setItems(options_, state.chosen);
+        layoutCaption();                                          // the dropdown's width follows its items
+    } else {
+        levelsFor_.setSelected(state.chosen);
+    }
+}
+
+void MainView::resized() {
+    ++layouts_done_;
+    auto area = getLocalBounds();
+    strip_.setBounds(area.removeFromTop(SetlistStrip::idealHeight));
+    area.removeFromTop(kMapTop);
+    map_.setBounds(area.removeFromTop(SongMapView::idealHeight).reduced(kPadX, 0));
+    area.removeFromTop(kMapBottom + kBottomTop);
+    area.removeFromBottom(kBottomBottom);
+    area.reduce(kPadX, 0);
+    area.setHeight(std::max(0, area.getHeight()));
+    side_ = area.removeFromRight(std::min(kSideWidth, area.getWidth()));
+    area.removeFromRight(std::min(kBottomGap, area.getWidth()));
+    mixer_.setBounds(area);
+    layoutCaption();
+    layoutSide();
+}
+
+void MainView::layoutCaption() {
+    ++layouts_done_;
+    const auto mixer = mixer_.getBounds();
+    const int choiceWidth = std::max(0, std::min({levelsFor_.idealWidth(), kChoiceMaxWidth, mixer.getWidth() - 2 * kChoiceRight}));
+    levelsFor_.setBounds(mixer.getRight() - kChoiceRight - choiceWidth, mixer.getY() + kChoiceTop, choiceWidth,
+                         std::min(kChoiceHeight, mixer.getHeight()));
+    const int captionX = mixer.getX() + kCaptionLeft;
+    caption_->setBounds(captionX, mixer.getY() + kCaptionTop, std::max(0, levelsFor_.getX() - kCaptionChoiceGap - captionX),
+                        std::min(kCaptionHeight, std::max(0, mixer.getHeight() - kCaptionTop)));
+}
+
+void MainView::layoutSide() {
+    // The hints, as many to a line as fit, " · " between them.
+    hintLines_.clear();
+    const float lineWidth = static_cast<float>(std::max(0, side_.getWidth() - 2 * kBoxPadX));
+    float used = 0.0f;
+    for (int i = 0; i < shownSide_.hints.size(); ++i) {
+        const float w = hintWidth(shownSide_.hints[i]);
+        const float withDot = w + widthOf(hintFont(), kDot);
+        if (hintLines_.empty() || used + withDot > lineWidth) {
+            hintLines_.push_back({i});
+            used = w;
+        } else {
+            hintLines_.back().push_back(i);
+            used += withDot;
+        }
+    }
+
+    auto column = side_;
+    const int nextHeight = 2 * kBoxPadY + kCapsHeight + (shownSide_.endOfSet ? 0 : kCapsGap + kTitleHeight + kHintHeight);
+    nextBox_ = column.removeFromTop(std::min(nextHeight, column.getHeight()));
+    column.removeFromTop(std::min(kSideGap, column.getHeight()));
+    const int hintsHeight = 2 * kBoxPadY + static_cast<int>(hintLines_.size()) * kHintLine;
+    hintsBox_ = hintLines_.empty() ? juce::Rectangle<int>() : column.removeFromTop(std::min(hintsHeight, column.getHeight()));
+}
+
+void MainView::paint(juce::Graphics& g) {
+    if (!g.getClipBounds().intersects(side_)) return;
+    juce::Graphics::ScopedSaveState clipped(g);
+    g.reduceClipRegion(side_);
+
+    // The next song: "NEXT SONG", its title, then "✓ Ready · after a 4 s gap".
+    if (!nextBox_.isEmpty()) {
+        theme::paintPanel(g, nextBox_.toFloat());
+        auto inner = nextBox_.reduced(kBoxPadX, kBoxPadY);
+        const float width = static_cast<float>(inner.getWidth());
+        g.setFont(capsFont());
+        g.setColour(theme::dim);
+        g.drawText(shorten(shownSide_.endOfSet ? "END OF THE SET" : "NEXT SONG", capsFont(), width), inner.removeFromTop(kCapsHeight),
+                   juce::Justification::centredLeft, false);
+        if (!shownSide_.endOfSet) {
+            inner.removeFromTop(kCapsGap);
+            g.setFont(titleFont());
+            g.setColour(theme::text);
+            g.drawText(shorten(shownSide_.title, titleFont(), width), inner.removeFromTop(kTitleHeight), juce::Justification::centredLeft, false);
+            const auto line = inner.removeFromTop(kHintHeight).toFloat();
+            const auto note = shorten(shownSide_.note, hintFont(), width);
+            const float noteWidth = widthOf(hintFont(), note);
+            g.setFont(hintFont());
+            g.setColour(shownSide_.noteGood ? theme::mint : shownSide_.noteBad ? theme::danger : theme::dim);
+            g.drawText(note, line.withWidth(noteWidth + 1.0f), juce::Justification::centredLeft, false);
+            if (shownSide_.follow.isNotEmpty()) {
+                g.setColour(theme::dim);
+                g.drawText(shorten(kDot + shownSide_.follow, hintFont(), std::max(0.0f, width - noteWidth)), line.withTrimmedLeft(noteWidth),
+                           juce::Justification::centredLeft, false);
+            }
+        }
+    }
+
+    // The key hints.
+    if (!hintsBox_.isEmpty()) {
+        theme::paintPanel(g, hintsBox_.toFloat());
+        const auto inner = hintsBox_.reduced(kBoxPadX, kBoxPadY).toFloat();
+        float centreY = inner.getY() + 0.5f * kHintLine;
+        for (const auto& line : hintLines_) {
+            float x = inner.getX();
+            for (std::size_t i = 0; i < line.size(); ++i) {
+                if (i > 0) {
+                    g.setFont(hintFont());
+                    g.setColour(theme::dim);
+                    const float w = widthOf(hintFont(), kDot);
+                    g.drawText(kDot, juce::Rectangle<float>(x, centreY - 0.5f * kHintHeight, w + 1.0f, kHintHeight), juce::Justification::centredLeft, false);
+                    x += w;
+                }
+                const auto& hint = shownSide_.hints[line[i]];
+                drawHint(g, hint, x, centreY);
+                x += hintWidth(hint);
+            }
+            centreY += kHintLine;
+        }
+    }
+}
+
+}  // namespace sqlive::ui

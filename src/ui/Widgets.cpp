@@ -602,4 +602,22 @@ void BeatLights::paint(juce::Graphics& g) {
     }
 }
 
+// ---- Keys ------------------------------------------------------------------------------------------------------------
+
+float keyWidth(const juce::String& key) { return widthOf(theme::font(theme::sizeCaption, true), key) + 10.0f; }
+
+float drawKey(juce::Graphics& g, const juce::String& key, float x, float centreY) {
+    const float w = keyWidth(key);
+    const juce::Rectangle<float> box(x, centreY - 9.0f, w, 18.0f);
+    g.setColour(theme::field);
+    g.fillRoundedRectangle(box, 4.0f);
+    g.setColour(theme::hairline);
+    g.drawRoundedRectangle(box.reduced(0.5f), 4.0f, 1.0f);
+    g.fillRect(box.getX() + 2.0f, box.getBottom() - 1.0f, box.getWidth() - 4.0f, 1.0f);
+    g.setColour(theme::text);
+    g.setFont(theme::font(theme::sizeCaption, true));
+    g.drawText(key, box.withTrimmedBottom(1.0f), juce::Justification::centred, false);
+    return w;
+}
+
 }  // namespace sqlive::ui

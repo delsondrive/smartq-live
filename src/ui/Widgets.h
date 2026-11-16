@@ -183,6 +183,11 @@ private:
     float dragFraction_ = 0.0f, lastY_ = 0.0f, wheelAccumulated_ = 0.0f;
 };
 
+// The mockup's kbd: the key's name, 11 px semibold, on a field with a hairline border, 2 px at the bottom, 4 px corners,
+// 18 px high and centred on centreY, starting at x. Returns its width.
+float drawKey(juce::Graphics&, const juce::String& key, float x, float centreY);
+float keyWidth(const juce::String& key);
+
 // The mockup's .beats: one light a beat of the bar, the current one mint with a glow, the others on a field with a
 // hairline border. 12 px in the top bar, 34 px on the stage view; the gap and the glow scale with them.
 class BeatLights : public juce::Component {

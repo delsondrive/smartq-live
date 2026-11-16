@@ -57,6 +57,12 @@ juce::String formatBpm(double bpm) {
     return text;
 }
 
+juce::String formatSeconds(double seconds) {
+    auto text = juce::String(std::round(seconds * 10.0) / 10.0, 1);
+    if (text.endsWith(".0")) text = text.dropLastCharacters(2);
+    return text;
+}
+
 juce::String formatChannels(int firstChannel, bool stereo) {
     return stereo ? juce::String(firstChannel) + "/" + juce::String(firstChannel + 1) : juce::String(firstChannel);
 }
