@@ -26,7 +26,33 @@ bool sameScale(const BarScale& a, const BarScale& b) {
            && sameTempo(a.tempo(), b.tempo());
 }
 
+// A header's fonts: 12 px on one line (the mockup's .hd), 11 and 10 px when the subtitle goes under the title.
+juce::Font headerTitleFont(bool twoLines) { return theme::font(twoLines ? theme::sizeCaption : theme::sizeSmall, true); }
+juce::Font headerSubtitleFont(bool twoLines) { return theme::font(twoLines ? theme::sizeTag : theme::sizeSmall); }
+
 }  // namespace
+
+LaneHeaderText laneHeaderText(const juce::String& title, const juce::String& subtitle, int headerWidth, bool hasDot) {
+    LaneHeaderText words;
+    words.tooltip = title.isEmpty() ? subtitle : subtitle.isEmpty() ? title : title + kDot + subtitle;
+    // The words' room: the header less its right border, 8 px either side, and the dot with its gap.
+    const float room = std::max(0.0f, static_cast<float>(headerWidth) - 1.0f - 16.0f - (hasDot ? 14.0f : 0.0f));
+    const auto titleFont = headerTitleFont(false), subtitleFont = headerSubtitleFont(false);
+    if (title.isEmpty() || subtitle.isEmpty()) {
+        words.title = shorten(title, titleFont, room);
+        words.subtitle = shorten(subtitle, subtitleFont, room);
+        return words;
+    }
+    if (widthOf(titleFont, title) + 6.0f + widthOf(subtitleFont, subtitle) <= room) {
+        words.title = title;
+        words.subtitle = subtitle;
+        return words;
+    }
+    words.twoLines = true;
+    words.title = shorten(title, headerTitleFont(true), room);
+    words.subtitle = shorten(subtitle, headerSubtitleFont(true), room);
+    return words;
+}
 
 engine::BarBeat snapAt(const BarScale& scale, float x, SnapTo snap) {
     if (snap == SnapTo::Bar) return scale.snap(x, 0);
@@ -85,7 +111,7 @@ bool Lane::run(app::Session& session, const juce::String& command, const juce::v
 
 // The viewed component: each lane's header in the column on the left, and the grid behind the lanes. A press on a header
 // is the lane's; a press on the lane area that no lane covers moves the cursor.
-class Timeline::Body : public juce::Component {
+class Timeline::Body : public juce::Component, public juce::TooltipClient {
 public:
     explicit Body(Timeline& timeline) : timeline_(timeline) {}
 
@@ -153,13 +179,25 @@ public:
             timeline_.pointerAt(e.position.x - static_cast<float>(headerWidth), e.mods, true, false);
     }
 
+    // Over a header whose words don't all show whole on one line, or that has a subtitle: its title and subtitle in full.
+    juce::String getTooltip() override {
+        const auto at = getMouseXYRelative();
+        if (at.x >= headerWidth) return {};
+        for (const auto& lane : timeline_.lanes_)
+            if (at.y >= lane->getY() && at.y < lane->getBottom()) {
+                const auto words = laneHeaderText(lane->title(), lane->subtitle(), headerWidth, !lane->dot().isTransparent());
+                return lane->subtitle().isNotEmpty() || words.title != lane->title() ? words.tooltip : juce::String();
+            }
+        return {};
+    }
+
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
         timeline_.mouseWheelMove(e.getEventRelativeTo(&timeline_), wheel);
     }
 
 private:
-    // The mockup's .hd: a darker cell with its dot, its title in 12 px semibold and its subtitle on the right in dim. A
-    // dimmed lane's dot and words are drawn at 55%.
+    // The mockup's .hd: a darker cell with its dot, its title in 12 px semibold and its subtitle on the right in dim, or under
+    // the title (11 and 10 px) when the two don't fit side by side. A dimmed lane's dot and words are drawn at 55%.
     static void paintHeader(juce::Graphics& g, juce::Rectangle<int> head, const Lane& lane) {
         g.setColour(juce::Colours::black.withAlpha(0.18f));
         g.fillRect(head);
@@ -167,25 +205,40 @@ private:
         g.fillRect(head.getRight() - 1, head.getY(), 1, head.getHeight());
         g.fillRect(head.getX(), head.getBottom() - 1, head.getWidth(), 1);
         const float alpha = lane.dimmed() ? 0.55f : 1.0f;
+        const auto dot = lane.dot();
+        const auto words = laneHeaderText(lane.title(), lane.subtitle(), head.getWidth(), !dot.isTransparent());
         auto text = head.toFloat().withTrimmedRight(1.0f).reduced(8.0f, 0.0f);
-        if (const auto dot = lane.dot(); !dot.isTransparent()) {
+        if (!dot.isTransparent()) {
             g.setColour(dot.withMultipliedAlpha(alpha));
             g.fillEllipse(text.getX(), text.getCentreY() - 4.0f, 8.0f, 8.0f);
             text.removeFromLeft(14.0f);
         }
-        const auto titleFont = theme::font(theme::sizeSmall, true), subtitleFont = theme::font(theme::sizeSmall);
-        if (const auto subtitle = lane.subtitle(); subtitle.isNotEmpty()) {
-            // What the title leaves, and at least half.
-            const float room = std::max(text.getWidth() / 2.0f, text.getWidth() - widthOf(titleFont, lane.title()) - 7.0f);
-            const float w = std::min(room, widthOf(subtitleFont, subtitle) + 1.0f);
+        const auto titleFont = headerTitleFont(words.twoLines), subtitleFont = headerSubtitleFont(words.twoLines);
+        if (words.twoLines) {
+            const float half = text.getHeight() / 2.0f;
+            const auto top = text.withHeight(half).translated(0.0f, 1.0f), bottom = text.withTrimmedTop(half).translated(0.0f, -1.0f);
+            g.setColour(theme::mid.withMultipliedAlpha(alpha));
+            g.setFont(titleFont);
+            g.drawText(words.title, top, juce::Justification::centredLeft, false);
             g.setColour(theme::dim.withMultipliedAlpha(alpha));
             g.setFont(subtitleFont);
-            g.drawText(shorten(subtitle, subtitleFont, w), text.removeFromRight(w), juce::Justification::centredRight, false);
-            text.removeFromRight(6.0f);
+            g.drawText(words.subtitle, bottom, juce::Justification::centredLeft, false);
+            return;
+        }
+        if (words.title.isEmpty()) {                              // the subtitle says it all
+            g.setColour(theme::dim.withMultipliedAlpha(alpha));
+            g.setFont(subtitleFont);
+            g.drawText(words.subtitle, text, juce::Justification::centredLeft, false);
+            return;
+        }
+        if (words.subtitle.isNotEmpty()) {
+            g.setColour(theme::dim.withMultipliedAlpha(alpha));
+            g.setFont(subtitleFont);
+            g.drawText(words.subtitle, text, juce::Justification::centredRight, false);
         }
         g.setColour(theme::mid.withMultipliedAlpha(alpha));
         g.setFont(titleFont);
-        g.drawText(shorten(lane.title(), titleFont, std::max(0.0f, text.getWidth())), text, juce::Justification::centredLeft, false);
+        g.drawText(words.title, text, juce::Justification::centredLeft, false);
     }
 
     Timeline& timeline_;

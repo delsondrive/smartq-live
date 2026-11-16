@@ -635,9 +635,9 @@ void SongEditorPage::resized() {
     if (changeShown()) {
         songCard_ = clickCard_ = {};
         markerView_.setBounds(inspector);
-        int width = inspector.getWidth();                         // narrower by the scroll bar when it is taller than the column
-        if (markerInspector_.idealHeight(width) > inspector.getHeight()) width = std::max(0, width - markerView_.getScrollBarThickness());
-        markerInspector_.setSize(width, markerInspector_.idealHeight(width));
+        const int ideal = markerInspector_.idealHeight();
+        const int width = std::max(0, inspector.getWidth() - (ideal > inspector.getHeight() ? markerView_.getScrollBarThickness() : 0));
+        markerInspector_.setSize(width, ideal);
         return;
     }
     const auto card = [&](int height) {

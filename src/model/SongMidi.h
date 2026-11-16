@@ -33,6 +33,10 @@ struct MidiBytes {
 // note-on. The one place the bank order is written.
 std::vector<MidiBytes> midiBytes(const MidiMessageDoc&, int channel1to16);
 
+// The channel (1 to 16) a message to that device goes out on: its own, else the rig's for the device, else 1. The one place
+// this is decided: what the song sends, "Send now" and the inspector's "ch N" all ask it. rig may be null.
+int midiChannel(const MidiMessageDoc&, const RigDoc* rig, const juce::String& deviceId);
+
 // What a marker is called on screen: its own label, or what its first message does ("Crunch", "PC 40", "CC80 127",
 // "Note C1"), with " +<n>" for the n messages after it. `device` may be null.
 juce::String markerLabel(const MarkerDoc&, const MidiDeviceDoc* device);

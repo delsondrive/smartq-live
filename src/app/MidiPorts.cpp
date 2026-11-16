@@ -280,13 +280,10 @@ void MidiPorts::send(const engine::OutMidi& m) {
 }
 
 void MidiPorts::sendNow(const juce::String& deviceId, const std::vector<model::MidiMessageDoc>& messages) {
-    int deviceChannel = 1;
-    if (const auto* rig = session_.model().rig(session_.rigId()))
-        if (const auto found = rig->midiChannels.find(deviceId); found != rig->midiChannels.end())
-            deviceChannel = std::clamp(found->second, 1, 16);
+    const auto* rig = session_.model().rig(session_.rigId());
     std::vector<model::MidiBytes> bytes;
     for (const auto& m : messages) {
-        const int channel = m.channel >= 1 && m.channel <= 16 ? m.channel : deviceChannel;
+        const int channel = model::midiChannel(m, rig, deviceId);
         for (const auto& b : model::midiBytes(m, channel)) bytes.push_back(b);
         if (m.type == model::MidiMessageDoc::Type::Note) {    // ended at once: nothing is left sounding
             model::MidiBytes off;

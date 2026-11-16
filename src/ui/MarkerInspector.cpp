@@ -26,6 +26,7 @@ namespace {
 constexpr int kPadX = 12, kPadY = 10, kCapsHeight = 14, kCapsGap = 6, kRow = 30, kSectionGap = 12, kFieldHeight = 24;
 constexpr int kPlaceWidth = 44, kWordGap = 4, kChoiceWidth = 150;
 constexpr int kMessageRow = 34, kMessageHeight = 24, kAddHeight = 24, kButtonHeight = 30, kButtonGap = 6, kRemoveWidth = 18;
+constexpr int kButtonPadding = 12, kMinButtonPadding = 6, kMinButtonGap = 3;
 
 const juce::String kAnotherProgram = "Another program" + kEllipsis, kNoProgram = "No program change";
 
@@ -132,17 +133,13 @@ MarkerInspectorState makeMarkerInspectorState(const app::Session& session, const
     if (program < 0) state.patchIndex = state.patchChoices.size() - 1;
     state.patch = state.patchChoices[state.patchIndex];
 
-    // The rig's channel for the device, else 1, unless a message has its own.
-    int deviceChannel = 1;
-    if (const auto* rig = session.model().rig(session.rigId()))
-        if (const auto found = rig->midiChannels.find(selection.deviceId); found != rig->midiChannels.end() && found->second >= 1 && found->second <= 16)
-            deviceChannel = found->second;
+    const auto* rig = session.model().rig(session.rigId());
     for (int i = 0; i < static_cast<int>(marker->messages.size()); ++i) {
         if (i == program) continue;
         const auto& m = marker->messages[static_cast<std::size_t>(i)];
         state.alsoSend.add(model::describe(m, device));
         state.alsoSendKinds.add(m.type == MidiMessageDoc::Type::Control ? "CC" : m.type == MidiMessageDoc::Type::Note ? "Note" : "PC");
-        state.alsoSendChannels.add("ch " + juce::String(m.channel >= 1 && m.channel <= 16 ? m.channel : deviceChannel));
+        state.alsoSendChannels.add("ch " + juce::String(model::midiChannel(m, rig, selection.deviceId)));
     }
 
     state.label = marker->label;
@@ -151,7 +148,8 @@ MarkerInspectorState makeMarkerInspectorState(const app::Session& session, const
     state.autoLabel = model::markerLabel(unlabelled, device);
     const auto* ports = session.midi();
     state.canSendNow = device != nullptr && ports != nullptr && ports->status(selection.deviceId) == app::MidiPorts::Status::Connected;
-    if (!state.canSendNow) state.sendNowTooltip = (device != nullptr ? device->name : juce::String("This device")) + " isn't connected";
+    if (device == nullptr) state.sendNowTooltip = "This device was removed from the band.";
+    else if (!state.canSendNow) state.sendNowTooltip = device->name + " isn't connected";
     return state;
 }
 
@@ -170,11 +168,11 @@ MarkerInspector::MarkerInspector(app::Session& session)
     for (auto* editor : {&bar_, &beat_}) {
         editor->onReturnKey = [this] { finishPlace(); };
         editor->onFocusLost = [this] { finishPlace(); };
-        editor->onEscapeKey = [this] { updateControls(); };
+        editor->onEscapeKey = [this] { setFieldTexts(true); };    // back to what the change has
     }
     label_.onReturnKey = [this] { finishLabel(); };
     label_.onFocusLost = [this] { finishLabel(); };
-    label_.onEscapeKey = [this] { updateControls(); };
+    label_.onEscapeKey = [this] { setFieldTexts(true); };
     patch_.onChange = [this](int index) { choosePatch(index); };
     send_.onClick = [this] { sendNow(); };
     duplicate_.onClick = [this] { duplicate(); };
@@ -186,14 +184,39 @@ MarkerInspector::MarkerInspector(app::Session& session)
 }
 
 void MarkerInspector::show(const juce::String& songId, const EditorSelection& selection) {
+    const auto target = selection.kind == EditorSelection::Kind::Marker ? selection : EditorSelection{};
+    const bool another = songId != songId_ || !(target == fieldsFor_);
+    if (another) {                                                // an edit in progress goes to the change it was begun on
+        commitPlace();
+        commitLabel();
+    }
     songId_ = songId;
     picked_ = selection;
     auto next = makeMarkerInspectorState(session_, songId_, picked_);
     const bool sameRows = next.alsoSend.size() == state_.alsoSend.size();
     state_ = std::move(next);
+   
+    if (another) {                                                // the fields let go of the keyboard and show this one
+        fieldsFor_ = target;
+        const juce::ScopedValueSetter<bool> quiet(loading_, true);
+        for (auto* editor : {&bar_, &beat_, &label_})
+            if (editor->hasKeyboardFocus(false)) editor->giveAwayKeyboardFocus();
+        setFieldTexts(true);
+    }
     updateControls();
     if (!sameRows) resized();
     repaint();
+}
+
+void MarkerInspector::setFieldTexts(bool evenFocused) {
+    const auto put = [evenFocused](juce::TextEditor& editor, juce::String& loaded, const juce::String& text) {
+        if (!evenFocused && editor.hasKeyboardFocus(false)) return;   // being typed in: kept, and told from `loaded` later
+        editor.setText(text, juce::dontSendNotification);
+        loaded = text;
+    };
+    put(bar_, loadedBar_, juce::String(state_.bar));
+    put(beat_, loadedBeat_, beatText(state_.beat));
+    put(label_, loadedLabel_, state_.label);
 }
 
 bool MarkerInspector::editable() const { return session_.mode() == app::Mode::Edit && marker() != nullptr; }
@@ -205,9 +228,7 @@ const model::MarkerDoc* MarkerInspector::marker() const {
 void MarkerInspector::updateControls() {
     const bool edit = session_.mode() == app::Mode::Edit && state_.visible;
     heading_.setText(state_.heading);
-    if (!bar_.hasKeyboardFocus(false)) bar_.setText(juce::String(state_.bar), juce::dontSendNotification);
-    if (!beat_.hasKeyboardFocus(false)) beat_.setText(beatText(state_.beat), juce::dontSendNotification);
-    if (!label_.hasKeyboardFocus(false)) label_.setText(state_.label, juce::dontSendNotification);
+    setFieldTexts(false);
     label_.setTextToShowWhenEmpty(state_.autoLabel, theme::dim);
     for (auto* editor : {&bar_, &beat_, &label_}) editor->setReadOnly(!edit);
     patch_.setItems(state_.patchChoices, state_.patchIndex);
@@ -218,9 +239,9 @@ void MarkerInspector::updateControls() {
     delete_.setEnabled(edit);
 }
 
-int MarkerInspector::idealHeight(int width) const {
+int MarkerInspector::idealHeight() const {
     return 2 * kPadY + kCapsHeight + kCapsGap + 3 * kRow + kSectionGap + kCapsHeight + state_.alsoSend.size() * kMessageRow + kAddHeight
-           + kSectionGap + buttonRows(width - 2 * kPadX) * (kButtonHeight + kButtonGap) - kButtonGap;
+           + kSectionGap + kButtonHeight;
 }
 
 void MarkerInspector::resized() {
@@ -264,32 +285,25 @@ void MarkerInspector::resized() {
     add_ = inner.removeFromTop(std::min(kAddHeight, inner.getHeight()));
     add_ = add_.withWidth(std::min(widthInPixels(theme::font(theme::sizeSmall, true), "+ Add a message"), add_.getWidth()));
 
-    // The buttons, side by side, and on to a second row when the column is too narrow for them all.
+    // The buttons on one row: the mockup's 12 px either side of their words, less when the column is too narrow for that
+    // (down to 6), then a narrower gap (down to 3).
     inner.removeFromTop(std::min(kSectionGap, inner.getHeight()));
-    auto buttons = inner.removeFromTop(std::min(buttonRows(inner.getWidth()) * (kButtonHeight + kButtonGap) - kButtonGap, inner.getHeight()));
-    auto line = buttons.removeFromTop(std::min(kButtonHeight, buttons.getHeight()));
-    for (auto* button : {&send_, &duplicate_, &delete_}) {
-        const int ideal = button->idealWidth();
-        if (ideal > line.getWidth() && line.getWidth() < buttons.getWidth()) {   // the next row
-            buttons.removeFromTop(std::min(kButtonGap, buttons.getHeight()));
-            line = buttons.removeFromTop(std::min(kButtonHeight, buttons.getHeight()));
-        }
-        button->setBounds(line.removeFromLeft(std::min(ideal, line.getWidth())));
-        line.removeFromLeft(std::min(kButtonGap, line.getWidth()));
+    auto buttons = inner.removeFromTop(std::min(kButtonHeight, inner.getHeight()));
+    const std::initializer_list<PillButton*> all{&send_, &duplicate_, &delete_};
+    int words = 0;
+    for (auto* button : all) {
+        button->setPadding(kButtonPadding);
+        words += button->idealWidth() - 2 * kButtonPadding;       // its words and its 1 px borders
     }
-}
-
-int MarkerInspector::buttonRows(int width) const {
-    int rows = 1, left = width;
-    for (const auto* button : {&send_, &duplicate_, &delete_}) {
-        const int ideal = button->idealWidth();
-        if (ideal > left && left < width) {
-            ++rows;
-            left = width;
-        }
-        left -= ideal + kButtonGap;
+    int padding = kButtonPadding, gap = kButtonGap;
+    const auto width = [&] { return words + 6 * padding + 2 * gap; };
+    while (padding > kMinButtonPadding && width() > buttons.getWidth()) --padding;
+    while (gap > kMinButtonGap && width() > buttons.getWidth()) --gap;
+    for (auto* button : all) {
+        button->setPadding(padding);
+        button->setBounds(buttons.removeFromLeft(std::min(button->idealWidth(), buttons.getWidth())));
+        buttons.removeFromLeft(std::min(gap, buttons.getWidth()));
     }
-    return rows;
 }
 
 void MarkerInspector::paint(juce::Graphics& g) {
@@ -381,16 +395,29 @@ bool MarkerInspector::setMessages(const std::vector<MidiMessageDoc>& messages) {
     return run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", picked_.deviceId}, {"markerId", picked_.id}, {"messages", list}}));
 }
 
-void MarkerInspector::setPlace(int bar, double beat) {
-    const auto* change = marker();
+void MarkerInspector::setPlace(int bar, double beat) { placeOn(picked_, bar, beat); }
+
+void MarkerInspector::placeOn(const EditorSelection& target, int bar, double beat) {
+    const auto* change = target.kind == EditorSelection::Kind::Marker ? findMarker(session_, songId_, target.deviceId, target.id) : nullptr;
     if (change == nullptr || bar < 1 || !(beat >= 1.0) || (change->bar == bar && change->beat == beat)) return;
-    run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", picked_.deviceId}, {"markerId", picked_.id}, {"bar", bar}, {"beat", beat}}));
+    run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", target.deviceId}, {"markerId", target.id}, {"bar", bar}, {"beat", beat}}));
+}
+
+// The bar and beat as typed, to the change the fields were showing; nothing when they are as it was shown.
+void MarkerInspector::commitPlace() {
+    if (loading_ || fieldsFor_.kind != EditorSelection::Kind::Marker) return;
+    const auto barText = bar_.getText(), beatText = beat_.getText();
+    if (barText == loadedBar_ && beatText == loadedBeat_) return;
+    loadedBar_ = barText;
+    loadedBeat_ = beatText;
+    const auto bar = typedWhole(barText, 1, 100000);
+    const auto beat = typedNumber(beatText);
+    if (bar && beat) placeOn(fieldsFor_, *bar, *beat);
 }
 
 void MarkerInspector::finishPlace() {
-    const auto bar = typedWhole(bar_.getText(), 1, 100000);
-    const auto beat = typedNumber(beat_.getText());
-    if (bar && beat && !bar_.isReadOnly()) setPlace(*bar, *beat);
+    if (loading_) return;
+    commitPlace();
     updateControls();
 }
 
@@ -445,14 +472,23 @@ void MarkerInspector::removeAlsoSend(int index) {
     setMessages(messages);
 }
 
-void MarkerInspector::setLabel(const juce::String& label) {
-    const auto* change = marker();
+void MarkerInspector::setLabel(const juce::String& label) { labelOn(picked_, label); }
+
+void MarkerInspector::labelOn(const EditorSelection& target, const juce::String& label) {
+    const auto* change = target.kind == EditorSelection::Kind::Marker ? findMarker(session_, songId_, target.deviceId, target.id) : nullptr;
     if (change == nullptr || change->label == label.trim()) return;
-    run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", picked_.deviceId}, {"markerId", picked_.id}, {"label", label.trim()}}));
+    run("marker.set", jsonObject({{"songId", songId_}, {"deviceId", target.deviceId}, {"markerId", target.id}, {"label", label.trim()}}));
+}
+
+void MarkerInspector::commitLabel() {
+    if (loading_ || fieldsFor_.kind != EditorSelection::Kind::Marker || label_.getText() == loadedLabel_) return;
+    loadedLabel_ = label_.getText();
+    labelOn(fieldsFor_, loadedLabel_);
 }
 
 void MarkerInspector::finishLabel() {
-    if (!label_.isReadOnly()) setLabel(label_.getText());
+    if (loading_) return;
+    commitLabel();
     updateControls();
 }
 
@@ -466,7 +502,12 @@ void MarkerInspector::sendNow() {
 void MarkerInspector::duplicate() {
     const auto* change = marker();
     if (change == nullptr) return;
-    const auto params = markerCopyParams(session_, songId_, picked_.deviceId, picked_.id, oneBarLater(session_, songId_, {change->bar, change->beat}));
+    const auto at = oneBarLater(session_, songId_, {change->bar, change->beat});
+    if (const auto there = markerAt(session_, songId_, picked_.deviceId, at); there.isNotEmpty()) {   // already a change there
+        if (onSelect) onSelect({EditorSelection::Kind::Marker, picked_.deviceId, there, -1});
+        return;
+    }
+    const auto params = markerCopyParams(session_, songId_, picked_.deviceId, picked_.id, at);
     juce::var copy;
     if (params.isVoid() || !run("marker.add", params, &copy)) return;
     if (onSelect) onSelect({EditorSelection::Kind::Marker, picked_.deviceId, copy.toString(), -1});

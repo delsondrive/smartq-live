@@ -75,7 +75,12 @@ void PillButton::setStyle(Style style) {
     repaint();
 }
 
-int PillButton::idealWidth() const { return ceilToInt(widthOf(buttonFont(), getButtonText()) + 2.0f * 12.0f + 2.0f); }
+int PillButton::idealWidth() const { return ceilToInt(widthOf(buttonFont(), getButtonText()) + 2.0f * static_cast<float>(padding_) + 2.0f); }
+
+void PillButton::setPadding(int pixels) {
+    padding_ = std::max(0, pixels);
+    repaint();
+}
 
 void PillButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
     const DisabledLayer layer(g, *this);
@@ -92,7 +97,7 @@ void PillButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
 
     g.setColour(ink);
     g.setFont(buttonFont());
-    g.drawText(getButtonText(), getLocalBounds().reduced(12, 0), juce::Justification::centred, true);
+    g.drawText(getButtonText(), getLocalBounds().reduced(padding_, 0), juce::Justification::centred, true);
 }
 
 // ---- Chip ------------------------------------------------------------------------------------------------------------

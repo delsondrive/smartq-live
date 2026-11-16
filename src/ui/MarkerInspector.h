@@ -45,7 +45,7 @@ public:
 
     void show(const juce::String& songId, const EditorSelection&);
     const MarkerInspectorState& state() const { return state_; }
-    int idealHeight(int width) const;                             // at that width (the buttons may take two rows)
+    int idealHeight() const;
     std::function<void(EditorSelection)> onSelect;                // Duplicate selects the copy; Delete selects nothing
 
     // The gestures the controls make.
@@ -66,11 +66,17 @@ public:
 
 private:
     bool editable() const;                                        // Edit mode, and the change is there
-    int buttonRows(int innerWidth) const;
     const model::MarkerDoc* marker() const;
     bool run(const juce::String& command, const juce::var& params, juce::var* value = nullptr);
     bool setMessages(const std::vector<model::MidiMessageDoc>&);
     void updateControls();
+    // The fields hold one change's bar, beat and label (fieldsFor_). What is typed goes to that change, on Return, when a
+    // field lets go of the keyboard, or when another change is shown (then the fields let go and show that one).
+    void setFieldTexts(bool evenFocused);                         // from state_; a field being typed in is kept unless evenFocused
+    void placeOn(const EditorSelection&, int bar, double beat);
+    void labelOn(const EditorSelection&, const juce::String&);
+    void commitPlace();
+    void commitLabel();
     void finishPlace();
     void finishLabel();
     void askProgram();
@@ -80,6 +86,9 @@ private:
     juce::String songId_;
     EditorSelection picked_;
     MarkerInspectorState state_;
+    EditorSelection fieldsFor_;                                   // the change the fields show
+    juce::String loadedBar_, loadedBeat_, loadedLabel_;           // what they were given, to tell what was typed
+    bool loading_ = false;                                        // the fields are being given another change: no commits
 
     CapsLabel heading_, alsoLabel_{"ALSO SEND"};
     juce::TextEditor bar_, beat_, label_;

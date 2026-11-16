@@ -30,6 +30,15 @@ struct EditorSelection {
 // x/4).
 engine::BarBeat snapAt(const BarScale&, float x, SnapTo);
 
+// A lane's header words as a header that wide draws them: the title and the subtitle side by side (the subtitle on the
+// right) when both fit, else the subtitle on a second line under the title, each then cut with "…" only when it can't fit
+// alone. With no title the subtitle stands where the title goes. tooltip is the title and the subtitle in full.
+struct LaneHeaderText {
+    juce::String title, subtitle, tooltip;
+    bool twoLines = false;
+};
+LaneHeaderText laneHeaderText(const juce::String& title, const juce::String& subtitle, int headerWidth, bool hasDot);
+
 // One row of the timeline: its header (dot, title and subtitle) is drawn by the Timeline in the column on the left, and the
 // lane itself sits right of it, as wide as the visible part of the song, on the Timeline's BarScale. A press or drag on a
 // lane that the lane doesn't use is handed to the Timeline (pointer()), which moves the cursor.

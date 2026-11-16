@@ -18,7 +18,9 @@
 #include "ui/Format.h"
 #include "ui/MarkerInspector.h"
 #include "ui/MidiLane.h"
+#include "ui/Helpers.h"
 #include "ui/SongEditorPage.h"
+#include "ui/Theme.h"
 
 using namespace sqlive;
 using namespace sqlive::ui;
@@ -46,6 +48,7 @@ TEST_CASE("a MIDI lane shows its changes by name and edits them through commands
     s.commands().run("device.remove", params({{"deviceId", g1}}));
     auto orphan = makeMidiLaneState(s, song, g1, {});
     CHECK(orphan.deviceMissing);  CHECK(orphan.subtitle == "no longer a device");  CHECK(orphan.markers.size() == 1);
+    CHECK(orphan.title.isEmpty());                                                  // "no longer a device" carries the header
     lane.moveMarker(orphan.markers[0].id, {9, 1.0});                                // a gone device's changes can still be moved
     CHECK(s.model().song(song)->midiLanes.at(g1)[0].bar == 9);
 }
@@ -248,7 +251,7 @@ TEST_CASE("the song editor has a lane per device, keeps one for a removed device
     CHECK(childrenInside(page));
     CHECK(hasColour(image.getClippedImage({350, 0, 640, 698}), s.model().band().midiDevices[0].colour));   // the chip
 
-    // A drag on the chip moves it, snapped, as one undo step; Alt at the press copies it.
+    // A drag on the chip moves it, snapped, as one undo step; Ctrl at the press copies it; Alt doesn't snap.
     auto* lane = dynamic_cast<ui::MidiLane*>(timeline.lanes()[1].get());
     REQUIRE(lane != nullptr);
     const auto& doc = *s.model().song(song);
@@ -265,12 +268,31 @@ TEST_CASE("the song editor has a lane per device, keeps one for a removed device
     s.commands().undo();
     CHECK(s.model().song(song)->midiLanes.at(g1)[0].bar == 2);
     d.settle();
-    const auto alt = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier);
-    lane->mouseDown(eventOn(*lane, chip, chip, alt));
-    lane->mouseDrag(eventOn(*lane, to, chip, alt));
-    lane->mouseUp(eventOn(*lane, to, chip, alt));
-    REQUIRE(s.model().song(song)->midiLanes.at(g1).size() == 2);
+    const auto ctrl = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::commandModifier);
+    lane->mouseDown(eventOn(*lane, chip, chip, ctrl));
+    lane->mouseDrag(eventOn(*lane, to, chip, ctrl));
+    lane->mouseUp(eventOn(*lane, to, chip, ctrl));
+    REQUIRE(s.model().song(song)->midiLanes.at(g1).size() == 2);  // Ctrl at the press: a copy
     CHECK(s.model().song(song)->midiLanes.at(g1)[1].bar == 4);
+    d.settle();
+    const auto copies = [&](juce::Point<float> from, juce::Point<float> onto) {   // a Ctrl-drag; the number of changes after it
+        lane->mouseDown(eventOn(*lane, from, from, ctrl));
+        lane->mouseDrag(eventOn(*lane, onto, from, ctrl));
+        lane->mouseUp(eventOn(*lane, onto, from, ctrl));
+        d.settle();
+        return s.model().song(song)->midiLanes.at(g1).size();
+    };
+    CHECK(copies(chip, chip + juce::Point<float>(4.0f, 0.0f)) == 2);   // released on its own place: skipped
+    CHECK(copies(chip, to) == 2);                                      // on a place another change has: skipped
+    const auto alt = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier);
+    const juce::Point<float> free(chip.x + 5.0f, 12.0f);               // a fifth of a beat on: Alt doesn't snap
+    lane->mouseDown(eventOn(*lane, chip, chip, alt));
+    lane->mouseDrag(eventOn(*lane, free, chip, alt));
+    lane->mouseUp(eventOn(*lane, free, chip, alt));
+    REQUIRE(s.model().song(song)->midiLanes.at(g1).size() == 2);  // moved, not copied
+    CHECK(s.model().song(song)->midiLanes.at(g1)[0].bar == 2);
+    CHECK(s.model().song(song)->midiLanes.at(g1)[0].beat > 1.0);  CHECK(s.model().song(song)->midiLanes.at(g1)[0].beat < 2.0);
+    s.commands().undo();
     d.settle();
 
     // The Draw tool adds where it is pressed; Delete removes the selected change, and the song panels come back.
@@ -300,4 +322,80 @@ TEST_CASE("the song editor has a lane per device, keeps one for a removed device
     d.settle();
     CHECK(timeline.selection().kind == EditorSelection::Kind::None);
     CHECK(findVisible<ui::MarkerInspector>(page) == nullptr);
+}
+
+TEST_CASE("an edit in the inspector stays with the change it started on", "[midilane]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    auto id = s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 3}, {"beat", 1}})).value.toString();
+    sqlive::test::ScopedLook look;
+    ui::MarkerInspector inspector(s);
+    inspector.setBounds(0, 0, 266, 500);
+    inspector.onSelect = [&](EditorSelection next) { inspector.show(song, next); };   // as the page does
+    inspector.addToDesktop(0);
+    inspector.setVisible(true);
+    inspector.toFront(true);
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});
+    juce::TextEditor* bar = nullptr;
+    for (auto* child : inspector.getChildren())
+        if (auto* editor = dynamic_cast<juce::TextEditor*>(child); editor != nullptr && bar == nullptr) bar = editor;
+    REQUIRE(bar != nullptr);
+    REQUIRE(bar->getText() == "3");
+    const auto lane = [&] { return s.model().song(song)->midiLanes.at(g1); };
+
+    // The bar field has the keyboard, untouched; Duplicate selects the copy; the field lets go: the copy stays a bar later.
+    bar->grabKeyboardFocus();
+    REQUIRE(bar->hasKeyboardFocus(false));
+    inspector.duplicate();
+    REQUIRE(lane().size() == 2);
+    CHECK(bar->getText() == "4");                                  // the fields show the copy
+    inspector.unfocusAllComponents();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    REQUIRE(lane().size() == 2);
+    CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 4);
+    CHECK(s.commands().undoName() == "marker.add");                // one undo step: no marker.set on the copy
+
+    // A bar typed for the copy, then the original selected: the typed bar goes to the copy, and the fields show the original.
+    bar->grabKeyboardFocus();
+    bar->setText("7", juce::dontSendNotification);
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});
+    CHECK(lane()[0].bar == 3);  CHECK(lane()[1].bar == 7);
+    CHECK(bar->getText() == "3");
+    CHECK_FALSE(bar->hasKeyboardFocus(false));
+    inspector.removeFromDesktop();
+}
+
+TEST_CASE("a lane's header keeps its words whole, on two lines when it must", "[midilane]") {
+    sqlive::test::ScopedLook look;
+    for (const auto& name : {juce::String("Guitar 1"), juce::String("Keyboard")})
+        for (const auto& words : {juce::String("not connected"), timingText(-20.0), timingText(-200.0), juce::String("clock on")}) {
+            const auto header = laneHeaderText(name, words, Timeline::headerWidth, true);
+            CHECK(header.title == name);  CHECK(header.subtitle == words);
+            CHECK(header.tooltip == name + juce::String::fromUTF8(" \xc2\xb7 ") + words);
+        }
+    const auto removed = laneHeaderText({}, "no longer a device", Timeline::headerWidth, true);
+    CHECK(removed.title.isEmpty());  CHECK(removed.subtitle == "no longer a device");  CHECK_FALSE(removed.twoLines);
+    CHECK(laneHeaderText("Tempo", {}, Timeline::headerWidth, false).title == "Tempo");
+}
+
+TEST_CASE("the inspector's buttons stay on one row, and a removed device's change says why it can't be sent", "[midilane]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    auto id = s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 3}, {"beat", 1}})).value.toString();
+    sqlive::test::ScopedLook look;
+    ui::MarkerInspector inspector(s);
+    inspector.setBounds(0, 0, 266, 500);                           // the 290 px column, less its padding
+    inspector.show(song, {EditorSelection::Kind::Marker, g1, id, -1});
+    inspector.setSize(266, inspector.idealHeight());
+    auto* send = buttonSaying(inspector, juce::String::fromUTF8("\xe2\x96\xb6 Send now"));
+    auto* duplicate = buttonSaying(inspector, "Duplicate");
+    auto* remove = buttonSaying(inspector, "Delete");
+    REQUIRE(send != nullptr);  REQUIRE(duplicate != nullptr);  REQUIRE(remove != nullptr);
+    CHECK(send->getY() == duplicate->getY());  CHECK(duplicate->getY() == remove->getY());
+    for (auto* button : {send, duplicate, remove})                 // each wide enough for its words
+        CHECK(button->getWidth() >= widthInPixels(theme::font(theme::sizeBody, true), button->getButtonText()) + 12);
+    CHECK(remove->getRight() <= 266 - 12);
+    s.commands().run("device.remove", params({{"deviceId", g1}}));
+    CHECK(makeMarkerInspectorState(s, song, {EditorSelection::Kind::Marker, g1, id, -1}).sendNowTooltip
+          == "This device was removed from the band.");
 }

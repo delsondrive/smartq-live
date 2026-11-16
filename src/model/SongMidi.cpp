@@ -28,10 +28,6 @@ engine::BarBeat beatsAfter(const engine::TempoMap& tempo, engine::BarBeat at, do
     }
 }
 
-int channelOf(const MidiMessageDoc& message, int deviceChannel) {
-    return message.channel >= 1 && message.channel <= 16 ? message.channel : deviceChannel;
-}
-
 const Patch* patchFor(const MidiMessageDoc& m, const MidiDeviceDoc* device) {
     if (device == nullptr) return nullptr;
     for (auto& p : device->patches)
@@ -89,9 +85,6 @@ MidiBuild buildMidi(const SongDoc& song, const BandDoc& band, const RigDoc& rig,
 
         const auto lane = song.midiLanes.find(device.id);
         if (lane == song.midiLanes.end()) continue;
-        const auto rigChannel = rig.midiChannels.find(device.id);
-        const int deviceChannel = rigChannel != rig.midiChannels.end() && rigChannel->second >= 1 && rigChannel->second <= 16
-                                      ? rigChannel->second : 1;
         const auto offset = (engine::SamplePos) std::llround(device.offsetMs / 1000.0 * sampleRate);
 
         std::vector<const MarkerDoc*> markers;
@@ -106,7 +99,7 @@ MidiBuild buildMidi(const SongDoc& song, const BandDoc& band, const RigDoc& rig,
             const engine::BarBeat place{marker->bar, marker->beat};
             const auto at = tempo.sampleAt(place, sampleRate) + offset;
             for (const auto& message : marker->messages) {
-                const int channel = channelOf(message, deviceChannel);
+                const int channel = midiChannel(message, &rig, device.id);
                 for (const auto& b : midiBytes(message, channel)) add(at, b);
                 if (message.type == MidiMessageDoc::Type::Note)
                     add(tempo.sampleAt(beatsAfter(tempo, place, message.beats), sampleRate) + offset,
@@ -117,6 +110,14 @@ MidiBuild buildMidi(const SongDoc& song, const BandDoc& band, const RigDoc& rig,
     std::stable_sort(out.events.begin(), out.events.end(),
                      [](const engine::MidiEvent& a, const engine::MidiEvent& b) { return a.at < b.at; });
     return out;
+}
+
+int midiChannel(const MidiMessageDoc& message, const RigDoc* rig, const juce::String& deviceId) {
+    if (message.channel >= 1 && message.channel <= 16) return message.channel;
+    if (rig != nullptr)
+        if (const auto found = rig->midiChannels.find(deviceId); found != rig->midiChannels.end() && found->second >= 1 && found->second <= 16)
+            return found->second;
+    return 1;
 }
 
 std::vector<MidiBytes> midiBytes(const MidiMessageDoc& m, int channel1to16) {

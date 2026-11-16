@@ -24,11 +24,13 @@ public:
     void setStyle(Style);
     Style style() const { return style_; }
     int idealWidth() const;
+    void setPadding(int pixels);                                  // either side of the words: the mockup's 12 unless set
 
     void paintButton(juce::Graphics&, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
 
 private:
     Style style_;
+    int padding_ = 12;
 };
 
 // The mockup's .chip: "128 BPM" with the value bright and semibold and the label in mid, on a field with a hairline
