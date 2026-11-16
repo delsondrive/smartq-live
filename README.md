@@ -13,4 +13,15 @@ The first runs the tests with that Catch2 filter; the second builds `build\Smart
 
 ## Status
 
-Stage 1a done: the engine and the band folder work and are tested. There is no window yet.
+Stage 1 done: songs, setlists, a mix per output, and a show from the keyboard. MIDI comes next.
+
+## Using it
+
+1. Start `Smart Q Live.exe`. Open your band folder, start a new one, or try the demo band.
+2. Set up this computer: choose your audio interface and check each output with the test tone.
+3. Add a song: drop a folder of stems on **+ New song**, check the roles, and create it.
+4. In the Song editor, set the tempo, the first bar and the count-in.
+5. Make a setlist, drag songs in, and set what happens after each song. Set up an output and a mix for each band member.
+6. Click **SHOW**, run the pre-show check, and play the show from the keyboard: Space to start, hold Space or press Esc twice to stop.
+
+The things to try by hand with your real interface are listed in `docs/acceptance.md`.
