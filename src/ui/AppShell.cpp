@@ -237,6 +237,23 @@ void AppShell::answerTonightQuestion(bool keep) {
 
 void AppShell::paint(juce::Graphics& g) { theme::paintAppBackground(g, getLocalBounds()); }
 
+bool AppShell::keyPressed(const juce::KeyPress& key) {
+    if (session_.mode() != Mode::Edit) return false;
+    const auto mods = key.getModifiers();
+    if (!mods.isCommandDown() || mods.isAltDown()) return false;
+    const auto letter = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
+    auto& commands = session_.commands();
+    if (letter == 'z' && !mods.isShiftDown()) {
+        if (commands.canUndo()) commands.undo();
+        return true;
+    }
+    if (letter == 'y' || letter == 'z') {
+        if (commands.canRedo()) commands.redo();
+        return true;
+    }
+    return false;
+}
+
 void AppShell::resized() {
     auto area = getLocalBounds();
     topBar_.setBounds(area.removeFromTop(TopBar::height));

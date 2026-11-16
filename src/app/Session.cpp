@@ -74,6 +74,20 @@ bool readableAs(model::DocKind kind, const juce::String& text) {
     return false;
 }
 
+// The text, read as a document, is the one the model has: the same document, however it is laid out (another version of
+// the app, or another tool, writes the same JSON differently).
+bool sameAsLoaded(const model::BandModel& m, const model::DocKey& key, const juce::String& text) {
+    model::ParseNotes notes;
+    const auto same = [&](const auto* have, auto doc) { return have != nullptr && model::fromJson(text, doc, notes) && doc == *have; };
+    switch (key.kind) {
+    case model::DocKind::Band: return same(&m.band(), model::BandDoc{});
+    case model::DocKind::Song: return same(m.song(key.id), model::SongDoc{});
+    case model::DocKind::Setlist: return same(m.setlist(key.id), model::SetlistDoc{});
+    case model::DocKind::Rig: return same(m.rig(key.id), model::RigDoc{});
+    }
+    return false;
+}
+
 // The document as this app would write it; "" when the model hasn't got it.
 juce::String documentText(const model::BandModel& m, const model::DocKey& key) {
     switch (key.kind) {
@@ -622,8 +636,8 @@ bool Session::mayWrite(const model::DocKey& key) {
     if (waiting) return hold();
     auto change = folder_watch_->changedOnDisk(key);             // changed since the last poll: not written over unseen
     if (!change.has_value()) return true;
-    if (change->kind == OutsideChange::Kind::Changed && change->file.loadFileAsString() == documentText(model_, key)) {
-        folder_watch_->noteOwnWrite(key);                        // it already says what this app would write
+    if (change->kind == OutsideChange::Kind::Changed && sameAsLoaded(model_, key, change->file.loadFileAsString())) {
+        folder_watch_->noteOwnWrite(key);                        // it already says what this app would write (a redo of a load)
         return true;
     }
     noteOutsideChange(std::move(*change));

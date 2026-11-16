@@ -66,6 +66,9 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    // Edit mode, on every page: Ctrl+Z undoes, Ctrl+Y and Ctrl+Shift+Z redo. Show mode: never (nothing there may write the
+    // band folder). A text box being typed in takes its own Ctrl+Z first.
+    bool keyPressed(const juce::KeyPress&) override;
 
 private:
     class Veil;

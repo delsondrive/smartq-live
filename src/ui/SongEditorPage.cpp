@@ -972,11 +972,7 @@ bool SongEditorPage::keyPressed(const juce::KeyPress& key) {
         togglePlay();
         return true;
     }
-    if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)) {
-        if (session_.commands().canUndo()) session_.commands().undo();
-        return true;
-    }
-    return false;
+    return false;                                                // Ctrl+Z and the redo keys: AppShell, for every Edit page
 }
 
 // ---- Gestures ----------------------------------------------------------------------------------------------------------

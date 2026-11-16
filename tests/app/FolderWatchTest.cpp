@@ -477,3 +477,23 @@ TEST_CASE("a song that came in naming audio outside its folder is still offered"
     REQUIRE(s.outsideChanges().size() == 1);
     CHECK(s.outsideChanges()[0].name == "Odd one");
 }
+
+TEST_CASE("redoing the load of a song that came in, written another way, brings no banner", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    auto song = *s.model().song(d.setlist().entries[0].songId);
+    song.id = model::newId();  song.title = "New one";
+    auto songDir = root.getChildFile("songs").getChildFile("New one");
+    // The same document as this app would write it, laid out differently (another version, another tool).
+    writeElsewhere(songDir.getChildFile("song.json"), juce::JSON::toString(juce::JSON::parse(model::toJson(song)), true));
+    copyAudio(s, d.setlist().entries[0].songId, songDir);
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    s.takeOutsideChanges();
+    REQUIRE(s.model().song(song.id) != nullptr);
+    s.commands().undo();  s.flushNow();  s.advanceWithoutDevice(0);
+    REQUIRE(s.model().song(song.id) == nullptr);
+    s.commands().redo();  s.flushNow();  s.advanceWithoutDevice(0);
+    CHECK(s.model().song(song.id) != nullptr);
+    CHECK(s.outsideChanges().empty());
+    CHECK(s.saveState() == SaveState::Saved);
+}
