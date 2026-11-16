@@ -100,3 +100,30 @@ TEST_CASE("importing makes a song with its audio, and tidies up when it can't", 
     ImportPlan nothing; nothing.title = "Empty";
     CHECK(importSong(nothing, folder, commands, [](double) { return true; }).result.failed());
 }
+TEST_CASE("a shared start is taken off only up to a separator", "[import]") {
+    sqlive::test::TempDir t; BandDoc band; band.roles = defaultRoles();
+    auto dir = t.dir().getChildFile("Numbered");
+    writeSine(dir.getChildFile("Track 01 Keys.wav"), 48000.0, 1, 0.1, 440.0, 0.5f);
+    writeSine(dir.getChildFile("Track 02 Bass.wav"), 48000.0, 1, 0.1, 440.0, 0.5f);
+    auto plan = inspectFiles({dir}, band);
+    REQUIRE(plan.files.size() == 2);
+    CHECK(plan.files[0].partName == "01 Keys");                    // "Track 0" is shared, but "0" is no separator
+    CHECK(plan.files[1].partName == "02 Bass");
+}
+TEST_CASE("converted audio has no seams between blocks, up or down", "[import]") {
+    sqlive::test::TempDir t;
+    struct Case { double rate; float tolerance; };
+    for (auto c : {Case{44100.0, 0.01f}, Case{96000.0, 0.01f}}) {
+        CAPTURE(c.rate);
+        auto source = writeSine(t.dir().getChildFile("in " + juce::String(c.rate) + ".wav"), c.rate, 2, 3.5, 1000.0, 0.5f);
+        auto target = t.dir().getChildFile("out " + juce::String(c.rate) + ".wav");
+        REQUIRE(convertToBandWav(source, target, 48000.0, [](double) { return true; }).wasOk());
+        auto audio = readWav(target);
+        REQUIRE(audio.size() == 2);
+        CHECK(std::abs(int(audio[1].size()) - 168000) <= 2);         // 3.5 s, three blocks or more of input
+        float drift = 0;
+        for (size_t i = 4800; i < audio[1].size() - 4800; ++i)
+            drift = std::max(drift, std::abs(audio[1][i] - 0.5f * (float) std::sin(juce::MathConstants<double>::twoPi * 1000.0 * (double) i / 48000.0)));
+        CHECK(drift < c.tolerance);
+    }
+}

@@ -53,7 +53,7 @@ const Role* partRoleNamed(const BandDoc& band, const juce::String& lowerName) {
 bool isMidiFile(const juce::File& f) { return f.hasFileExtension(".mid;.midi"); }
 bool hasAudioExtension(const juce::File& f) { return f.hasFileExtension(".wav;.aif;.aiff;.flac;.mp3;.ogg;.opus"); }
 
-// Characters every name starts with, cut back to end at a non-letter and to leave something of every name.
+// Characters every name starts with, cut back to end at a separator (neither letter nor digit) and to leave something of every name.
 int sharedLeadLength(const juce::StringArray& names) {
     if (names.size() < 2) return 0;
     int shared = names[0].length();
@@ -63,7 +63,7 @@ int sharedLeadLength(const juce::StringArray& names) {
         shared = i;
     }
     for (int len = shared; len > 0; --len) {
-        if (juce::CharacterFunctions::isLetter(names[0][len - 1])) continue;
+        if (juce::CharacterFunctions::isLetterOrDigit(names[0][len - 1])) continue;   // cut only at a separator
         bool leavesEveryName = true;
         for (const auto& n : names) leavesEveryName = leavesEveryName && n.substring(len).trim().isNotEmpty();
         if (leavesEveryName) return len;
@@ -73,6 +73,7 @@ int sharedLeadLength(const juce::StringArray& names) {
 
 // Feeds one channel's WindowedSincInterpolator exactly the input its next outputs need, so the stream has no seams between
 // blocks. Output m is the input at m * speed: the interpolator's 100-sample latency is taken up by a first output thrown away.
+// Downsampling isn't low-pass filtered yet: content above the new Nyquist frequency can alias.
 class Resampler {
 public:
     Resampler(int channels, double speed) : speed_(speed), interpolators_((size_t) channels), pending_((size_t) channels) {}
