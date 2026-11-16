@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -36,9 +37,9 @@ TEST_CASE("the demo band plays", "[e2e]") {
     CHECK(checkRig(model.band(), rig, 2).empty());
     auto& song = *model.song(model.setlist(model.setlistIds()[0])->entries[0].songId);
     CHECK(song.countInBars == 1);
-    std::vector<std::shared_ptr<const engine::PartAudio>> audio;
-    for (auto& part : song.parts) audio.push_back(loadPartAudio(folder.audioFile(song, part), 48000.0, [](double) { return true; }));
-    for (auto& a : audio) REQUIRE(a != nullptr);
+    std::map<juce::String, std::shared_ptr<const engine::PartAudio>> audio;
+    for (auto& part : song.parts) audio[part.id] = loadPartAudio(folder.audioFile(song, part), 48000.0, [](double) { return true; });
+    for (auto& [id, a] : audio) REQUIRE(a != nullptr);
     auto play = [&](const RigDoc& r) {
         engine::Engine e; e.prepare(48000.0, 512); e.setMix(buildMixSetup(model.band(), r, 2));
         auto prepared = std::make_shared<const engine::PreparedSong>(buildPreparedSong(song, model.band(), audio, 48000.0));
@@ -54,7 +55,7 @@ TEST_CASE("the demo band plays", "[e2e]") {
     commands.run("mix.setLevel", params({{"rigId", rig.id}, {"outputId", rig.outputs[0].id}, {"roleId", click}, {"db", juce::var()}}));
     auto quiet = play(*model.rig(rig.id));
     CHECK(quiet[0][100] == 0.0f);                                   // no click in the count-in now
-    audio[0] = nullptr;                                             // one part's file is missing: the song still plays
+    audio.erase(song.parts[0].id);                                  // one part's file is missing: the song still plays
     CHECK_NOTHROW(play(*model.rig(rig.id)));
 }
 

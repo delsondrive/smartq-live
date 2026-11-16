@@ -19,6 +19,7 @@ struct PreparedPart {
     int role = 0;
     float gain = 1.0f;
     bool mute = false;
+    std::string partId;               // the part document this came from, so the control thread can find it again
 };
 
 struct ClickSetup {

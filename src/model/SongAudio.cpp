@@ -67,14 +67,14 @@ std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, do
 }
 
 engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
-                                       const std::vector<std::shared_ptr<const engine::PartAudio>>& audio,
+                                       const std::map<juce::String, std::shared_ptr<const engine::PartAudio>>& audioByPartId,
                                        double sampleRate) {
     std::vector<engine::PreparedPart> parts;
-    for (size_t i = 0; i < song.parts.size() && i < audio.size(); ++i) {
-        const auto& part = song.parts[i];
+    for (const auto& part : song.parts) {
+        const auto found = audioByPartId.find(part.id);
         const int role = roleIndex(band, part.roleId);
-        if (audio[i] == nullptr || role < 0) continue;
-        parts.push_back({audio[i], role, dbToGain(part.gainDb), part.mute});
+        if (found == audioByPartId.end() || found->second == nullptr || role < 0) continue;
+        parts.push_back({found->second, role, dbToGain(part.gainDb), part.mute, part.id.toStdString()});
     }
     engine::ClickSetup click;
     click.enabled = song.click.enabled;

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -18,10 +19,11 @@ namespace sqlive::model {
 std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, double targetRate,
                                                        const std::function<bool(double progress)>& keepGoing);
 
-// The song as the engine plays it. `audio` has one entry per song.parts, in order; nullptr = not loaded. A part whose audio
-// is null or whose role isn't in the band is left out. The song ends where its longest loaded part does.
+// The song as the engine plays it, its parts in song.parts order, each with its part id. Audio is matched to a part by
+// the part's id; a part with no entry, a null one, or a role that isn't in the band is left out, and entries for parts
+// the song doesn't have are ignored. The song ends where its longest loaded part does.
 engine::PreparedSong buildPreparedSong(const SongDoc&, const BandDoc&,
-                                       const std::vector<std::shared_ptr<const engine::PartAudio>>& audio,
+                                       const std::map<juce::String, std::shared_ptr<const engine::PartAudio>>& audioByPartId,
                                        double sampleRate);
 
 // What the song's audio will take in memory once loaded: lengthSeconds × sampleRate × channels × 4 bytes for each part.
