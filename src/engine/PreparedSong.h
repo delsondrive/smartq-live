@@ -23,7 +23,7 @@ struct PreparedPart {
 };
 
 struct ClickSetup {
-    bool enabled = true;              // off still clicks through the count-in
+    bool enabled = true;              // off still clicks through the count-in, but not through pre-roll before it
     float gain = 1.0f;
     Subdivision subdivision = Subdivision::None;
     int sound = 0;
@@ -38,10 +38,11 @@ struct PreparedSong {
     SamplePos audioStartOffset = 0;    // where bar 1 beat 1 falls in every part's audio
     SamplePos start = 0;               // song time playback begins at, never above 0
     SamplePos bodyStart = 0;           // where it begins when the count-in is skipped: -audioStartOffset
+    SamplePos countInStart = 0;        // where the count-in begins: minus its length, 0 when there is none
     SamplePos end = 0;                 // song time one past the last sample
     std::vector<PreparedPart> parts;
     ClickSetup click;
-    std::vector<ClickTick> ticks;      // every tick in [start, end)
+    std::vector<ClickTick> ticks;      // every tick in [start, end); those in [countInStart, 0) sound even with the click off
     ClickSound clickSound;
 };
 

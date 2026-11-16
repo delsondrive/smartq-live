@@ -183,3 +183,20 @@ TEST_CASE("glides give the same samples whatever the block size", "[renderer]") 
     auto reference = run(1, 4096);
     for (auto [block, maxBlock] : {std::pair{64, 4096}, {128, 4096}, {128, 50}}) CHECK(run(block, maxBlock) == reference);
 }
+TEST_CASE("pre-roll before the count-in follows the song's click setting", "[renderer]") {
+    // 8 s of audio before bar 1 and a one-bar count-in: the count-in is the last 2 s of it.
+    auto song = prepareSong("s", TempoMap{}, 1, 384000, {{constantAudio(400000, 0.0f, NAN), 0}}, ClickSetup{.enabled = false}, 48000.0);
+    REQUIRE(song.start == -384000);
+    CHECK(song.countInStart == -96000);
+    CHECK(prepareSong("n", TempoMap{}, 0, 384000, {}, {}, 48000.0).countInStart == 0);
+    auto mix = stereoMix();
+    SongRenderer r; r.prepare(48000.0, 512); r.setSong(&song); r.setMix(mix.get());
+    Out out(2, 384000);
+    for (int at = 0; at < 384000; at += 512) {
+        float* p[2] = {out.data[0].data() + at, out.data[1].data() + at};
+        r.render(song.start + at, 512, p, 2, nullptr);
+    }
+    const auto countIn = out.data[0].begin() + (384000 - 96000);
+    CHECK(std::all_of(out.data[0].begin(), countIn, [](float x) { return x == 0.0f; }));   // the click is off
+    CHECK(countIn[100] != 0.0f);                                                         // but the count-in clicks
+}

@@ -27,7 +27,7 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     song_ = nullptr;
     part_count_ = 0;
     solo_ = -1;
-    count_in_ticks_ = 0;
+    count_in_first_ = count_in_end_ = 0;
     parts_moving_ = false;
     has_mix_ = false;
     bus_count_ = 0;
@@ -68,11 +68,15 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
 
     const float clickGain = song != nullptr ? song->click.gain : 1.0f;
     click_gain_ = {clickGain, clickGain};
-    count_in_ticks_ = 0;
+    count_in_first_ = count_in_end_ = 0;
     if (song != nullptr) {
-        const auto firstAtZero = std::lower_bound(song->ticks.begin(), song->ticks.end(), SamplePos{0},
-                                                  [](const ClickTick& t, SamplePos v) { return t.at < v; });
-        count_in_ticks_ = static_cast<std::size_t>(firstAtZero - song->ticks.begin());
+        const auto firstAt = [&](SamplePos at) {
+            const auto it = std::lower_bound(song->ticks.begin(), song->ticks.end(), at,
+                                             [](const ClickTick& t, SamplePos v) { return t.at < v; });
+            return static_cast<std::size_t>(it - song->ticks.begin());
+        };
+        count_in_first_ = firstAt(std::min<SamplePos>(song->countInStart, 0));
+        count_in_end_ = firstAt(0);
     }
 }
 
@@ -150,15 +154,14 @@ void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int
 void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const float* envelope) noexcept {
     const PreparedSong& song = *song_;
 
-    // The count-in always clicks; the body only when the song's click is on. Rendered at unity: the click gain glides below.
+    // The count-in always clicks; pre-roll before it and the body only when the song's click is on. Rendered at unity: the
+    // click gain glides below.
     const bool clickRouted = click_role_ >= 0 && click_role_ < role_rows_;
     if (clickRouted) {
         std::fill_n(click_.data(), frames, 0.0f);
-        const std::span<const ClickTick> ticks(song.ticks);
-        renderClick(ticks.first(count_in_ticks_), song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f, click_.data());
-        if (song.click.enabled)
-            renderClick(ticks.subspan(count_in_ticks_), song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f,
-                        click_.data());
+        const std::span<const ClickTick> all(song.ticks);
+        const auto ticks = song.click.enabled ? all : all.subspan(count_in_first_, count_in_end_ - count_in_first_);
+        renderClick(ticks, song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f, click_.data());
     }
 
     const SamplePos audioOffset = song.audioStartOffset;

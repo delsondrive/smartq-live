@@ -16,6 +16,7 @@ PreparedSong prepareSong(std::string id, TempoMap tempo, int countInBars, Sample
     const SamplePos countIn = -s.tempo.sampleAt({1 - std::max(0, countInBars), 1.0}, sampleRate);
     s.start = -std::max(countIn, audioStartOffset);
     s.bodyStart = -audioStartOffset;
+    s.countInStart = -countIn;
 
     SamplePos end = explicitEnd;
     if (end < 0) {

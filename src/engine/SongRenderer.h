@@ -54,7 +54,8 @@ private:
     const PreparedSong* song_ = nullptr;
     int part_count_ = 0;
     int solo_ = -1;
-    std::size_t count_in_ticks_ = 0;        // ticks before song time 0, which sound even with the click off
+    std::size_t count_in_first_ = 0;        // song->ticks[count_in_first_, count_in_end_) are the count-in's, which sound
+    std::size_t count_in_end_ = 0;          // even with the click off
     bool parts_moving_ = false;
 
     bool has_mix_ = false;
