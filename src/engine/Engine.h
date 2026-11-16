@@ -52,7 +52,9 @@ public:
     void process(float* const* out, int numChannels, int frames) noexcept;
 
     // Control thread (the message thread).
-    std::uint64_t cue(std::shared_ptr<const PreparedSong>);   // the song that start() or a follow-on will play; returns its serial
+    // The song that start() or a follow-on will play; returns its serial. When the command queue is full the cue is not
+    // queued: it returns 0, and the serial it would have had is used up all the same, so serials only ever go up.
+    std::uint64_t cue(std::shared_ptr<const PreparedSong>);
     void clearCue();
     void start();                         // Stopped and something cued at the engine's rate: play it from its start
     void startAt(SamplePos songTime);     // the same, from a position clamped to the song
@@ -64,7 +66,10 @@ public:
     void setClickGain(std::uint64_t serial, float linear);
     void setSolo(std::uint64_t serial, int part);
     bool popEvent(EngineEvent&);
-    void collectGarbage();                // frees what the audio thread has finished with
+    // Frees what the audio thread has finished with. Call it regularly (the app's timer does): when the garbage queue is
+    // full, the audio thread keeps what it lets go of in a small store of its own, and once that is nearly full it holds
+    // back every command, cues, starts and stops included, until garbage is collected.
+    void collectGarbage();
 
     EngineStatus status() const noexcept; // any thread; all fields from one publish (a block's end)
     double sampleRate() const noexcept;
