@@ -104,7 +104,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[settings]"`. Expected: 2 test c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: remember this computer's band folders, rig and show"
+git add -A && git commit -m "feat: remember this computer's band folders, rig and show" && git push origin main
 ```
 
 ---
@@ -226,7 +226,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[cache]"`. Expected: 4 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: load songs into memory ahead of time, within a budget"
+git add -A && git commit -m "feat: load songs into memory ahead of time, within a budget" && git push origin main
 ```
 
 ---
@@ -420,7 +420,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[session]"`. Expected: 9 test ca
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the session that runs a setlist through the engine"
+git add -A && git commit -m "feat: add the session that runs a setlist through the engine" && git push origin main
 ```
 
 ---
@@ -576,7 +576,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[levels],[session]"`. Expected: 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: keep Show-mode level changes for tonight only, and survive a restart"
+git add -A && git commit -m "feat: keep Show-mode level changes for tonight only, and survive a restart" && git push origin main
 ```
 
 ---
@@ -682,7 +682,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[keys]"`. Expected: 5 test cases
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: handle Show-mode keys so a slip never stops or skips a song"
+git add -A && git commit -m "feat: handle Show-mode keys so a slip never stops or skips a song" && git push origin main
 ```
 
 ---
@@ -800,7 +800,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[audiohost]"`. Expected: 4 test 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: connect the engine to an audio interface and pause when it is lost"
+git add -A && git commit -m "feat: connect the engine to an audio interface and pause when it is lost" && git push origin main
 ```
 
 ---
@@ -891,7 +891,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[preshow]"`. Expected: 3 test ca
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: check a show for stage problems before it starts"
+git add -A && git commit -m "feat: check a show for stage problems before it starts" && git push origin main
 ```
 
 ---
@@ -1006,7 +1006,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[format],[widgets]"`. Expected: 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add Smart Q Live's look and its shared widgets"
+git add -A && git commit -m "feat: add Smart Q Live's look and its shared widgets" && git push origin main
 ```
 
 ---
@@ -1122,7 +1122,7 @@ Run: `powershell -File scripts/build.ps1 -Target SmartQLive`. Expected: builds. 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the window, the top bar and the start-up flow"
+git add -A && git commit -m "feat: add the window, the top bar and the start-up flow" && git push origin main
 ```
 
 ---
@@ -1190,7 +1190,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[welcome]"`. Expected: 2 test ca
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the welcome page and first-time set-up of a computer"
+git add -A && git commit -m "feat: add the welcome page and first-time set-up of a computer" && git push origin main
 ```
 
 ---
@@ -1285,7 +1285,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[setlists]"`. Expected: 2 test c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the Setlists page"
+git add -A && git commit -m "feat: add the Setlists page" && git push origin main
 ```
 
 ---
@@ -1366,7 +1366,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[newsong]"`. Expected: 1 test ca
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the New song dialog"
+git add -A && git commit -m "feat: add the New song dialog" && git push origin main
 ```
 
 ---
@@ -1474,7 +1474,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[editor]"`. Expected: 3 test cas
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the first version of the Song editor"
+git add -A && git commit -m "feat: add the first version of the Song editor" && git push origin main
 ```
 
 ---
@@ -1590,7 +1590,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[mixer]"`. Expected: 3 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the mixer, for a song's levels and for each output's mix"
+git add -A && git commit -m "feat: add the mixer, for a song's levels and for each output's mix" && git push origin main
 ```
 
 ---
@@ -1683,7 +1683,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[routing-ui]"`. Expected: 2 test
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add Setup's audio and routing page with a mix per output"
+git add -A && git commit -m "feat: add Setup's audio and routing page with a mix per output" && git push origin main
 ```
 
 ---
@@ -1824,7 +1824,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[show]"`. Expected: 4 test cases
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the main view for a show"
+git add -A && git commit -m "feat: add the main view for a show" && git push origin main
 ```
 
 ---
@@ -1895,7 +1895,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[stage]"`. Expected: 2 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the stage view for the drum throne"
+git add -A && git commit -m "feat: add the stage view for the drum throne" && git push origin main
 ```
 
 ---
@@ -1985,7 +1985,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[showflow]"`. Expected: 3 test c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: check before a show, ask about tonight's levels after it"
+git add -A && git commit -m "feat: check before a show, ask about tonight's levels after it" && git push origin main
 ```
 
 ---
@@ -2050,7 +2050,7 @@ Open each PNG in `build\screens` with the Read tool and compare it with the matc
 Run: `powershell -File scripts/build.ps1 -Test "~[benchmark]"`. Expected: every test case passes.
 
 ```bash
-git add -A && git commit -m "feat: render every screen to a picture and match the mockups"
+git add -A && git commit -m "feat: render every screen to a picture and match the mockups" && git push origin main
 ```
 
 ---
@@ -2083,7 +2083,7 @@ Status: "Stage 1 done: songs, setlists, a mix per output, and a show from the ke
 - [ ] **Step 3: Commit**
 
 ```bash
-git add -A && git commit -m "docs: add the stage 1 acceptance checklist"
+git add -A && git commit -m "docs: add the stage 1 acceptance checklist" && git push origin main
 ```
 
 Then continue with `2026-11-15-smart-q-live-stage-2.md` without waiting.

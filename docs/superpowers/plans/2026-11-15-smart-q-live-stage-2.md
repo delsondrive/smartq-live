@@ -114,7 +114,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[mididoc],[json]"`. Expected: al
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add MIDI devices, lanes and controls to the documents"
+git add -A && git commit -m "feat: add MIDI devices, lanes and controls to the documents" && git push origin main
 ```
 
 ---
@@ -183,7 +183,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midicmd]"`. Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the commands for MIDI devices, changes and controls"
+git add -A && git commit -m "feat: add the commands for MIDI devices, changes and controls" && git push origin main
 ```
 
 ---
@@ -331,7 +331,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[songmidi],[enginemidi],[engine]
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat: send a song's MIDI changes from the engine, timed to the sample"
+git add -A && git commit -m "feat: send a song's MIDI changes from the engine, timed to the sample" && git push origin main
 ```
 
 ---
@@ -431,7 +431,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[chase],[enginemidi]"`. Expected
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: put every pedalboard on the right patch when a song starts or resumes"
+git add -A && git commit -m "feat: put every pedalboard on the right patch when a song starts or resumes" && git push origin main
 ```
 
 ---
@@ -499,7 +499,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[clock],[chase],[enginemidi]"`. 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: send MIDI clock that follows the song's tempo"
+git add -A && git commit -m "feat: send MIDI clock that follows the song's tempo" && git push origin main
 ```
 
 ---
@@ -587,7 +587,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midisched],[audiohost]"`. Expec
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: send each MIDI message at the moment its beat is heard"
+git add -A && git commit -m "feat: send each MIDI message at the moment its beat is heard" && git push origin main
 ```
 
 ---
@@ -696,7 +696,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[ports],[preshow],[shell]"`. Exp
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: connect MIDI devices to ports, and recover when one is unplugged"
+git add -A && git commit -m "feat: connect MIDI devices to ports, and recover when one is unplugged" && git push origin main
 ```
 
 ---
@@ -816,7 +816,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[controls],[keys]"`. Expected: a
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: let a footswitch or pad do what the keys do"
+git add -A && git commit -m "feat: let a footswitch or pad do what the keys do" && git push origin main
 ```
 
 ---
@@ -928,7 +928,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midifile]"`. Expected: 3 test c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: read tempo, sections and pedal changes from a MIDI file"
+git add -A && git commit -m "feat: read tempo, sections and pedal changes from a MIDI file" && git push origin main
 ```
 
 ---
@@ -1017,7 +1017,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midiimport],[newsong],[import]"
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: bring a MIDI file's tempo, sections and pedal changes into a song"
+git add -A && git commit -m "feat: bring a MIDI file's tempo, sections and pedal changes into a song" && git push origin main
 ```
 
 ---
@@ -1125,7 +1125,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[timeline],[editor]"`. Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: rebuild the Song editor on a zoomable timeline with a Tempo lane"
+git add -A && git commit -m "feat: rebuild the Song editor on a zoomable timeline with a Tempo lane" && git push origin main
 ```
 
 ---
@@ -1223,7 +1223,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midilane],[timeline]"`. Expecte
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: place and edit pedal changes on a lane per device"
+git add -A && git commit -m "feat: place and edit pedal changes on a lane per device" && git push origin main
 ```
 
 ---
@@ -1295,7 +1295,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midisetup],[welcome]"`. Expecte
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add Setup's MIDI devices and controls page"
+git add -A && git commit -m "feat: add Setup's MIDI devices and controls page" && git push origin main
 ```
 
 ---
@@ -1349,7 +1349,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[showmidi],[show],[stage]"`. Exp
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: show the song's pedal changes in the main view"
+git add -A && git commit -m "feat: show the song's pedal changes in the main view" && git push origin main
 ```
 
 ---
@@ -1439,7 +1439,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[snapshots],[folder]"`. Expected
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add snapshots as a safety net for edits made at the venue"
+git add -A && git commit -m "feat: add snapshots as a safety net for edits made at the venue" && git push origin main
 ```
 
 ---
@@ -1482,7 +1482,7 @@ New sections, in the same style:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "docs: add the stage 2 acceptance checklist and screens"
+git add -A && git commit -m "docs: add the stage 2 acceptance checklist and screens" && git push origin main
 ```
 
 Then continue with `2026-11-15-smart-q-live-stage-3.md` without waiting.

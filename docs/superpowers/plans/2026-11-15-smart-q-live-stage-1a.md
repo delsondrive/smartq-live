@@ -84,7 +84,7 @@ Run: `powershell -File scripts/build.ps1 -Target SmartQLive`. Expected: builds `
 `README.md`: what Smart Q Live is (three sentences from the spec's section 1), "Building" (the two commands above), and a "Status" line: "Stage 1a: engine and band folder". `THIRD_PARTY.md`: Smart Q's file adapted: JUCE 9, Catch2, and a line that JUCE bundles Steinberg's ASIO headers, whose licence terms apply.
 
 ```bash
-git add -A && git commit -m "chore: start Smart Q Live with its build, stamp and test support"
+git add -A && git commit -m "chore: start Smart Q Live with its build, stamp and test support" && git push origin main
 ```
 
 ---
@@ -184,7 +184,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[tempo]"`. Expected: 5 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the tempo map that turns bars and beats into samples"
+git add -A && git commit -m "feat: add the tempo map that turns bars and beats into samples" && git push origin main
 ```
 
 ---
@@ -284,7 +284,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[click]"`. Expected: 6 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: generate the click from the tempo map"
+git add -A && git commit -m "feat: generate the click from the tempo map" && git push origin main
 ```
 
 ---
@@ -359,7 +359,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[queue]"`. Expected: 4 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the lock-free queue between the control and audio threads"
+git add -A && git commit -m "feat: add the lock-free queue between the control and audio threads" && git push origin main
 ```
 
 ---
@@ -594,7 +594,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[renderer]"`. Expected: 11 test 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat: render a song's parts and click into per-output mixes"
+git add -A && git commit -m "feat: render a song's parts and click into per-output mixes" && git push origin main
 ```
 
 ---
@@ -766,7 +766,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[engine]"`. Expected: 8 test cas
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the engine that cues, starts and stops a song"
+git add -A && git commit -m "feat: add the engine that cues, starts and stops a song" && git push origin main
 ```
 
 ---
@@ -882,7 +882,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[follow],[engine]"`. Expected: 1
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: let one song follow another, seamlessly or after a gap"
+git add -A && git commit -m "feat: let one song follow another, seamlessly or after a gap" && git push origin main
 ```
 
 ---
@@ -965,7 +965,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[basics]"`. Expected: 4 test cas
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add decibel helpers, safe file names and atomic writes"
+git add -A && git commit -m "feat: add decibel helpers, safe file names and atomic writes" && git push origin main
 ```
 
 ---
@@ -1095,7 +1095,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[json]"`. Expected: 3 test cases
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: define the band folder's documents and read them tolerantly"
+git add -A && git commit -m "feat: define the band folder's documents and read them tolerantly" && git push origin main
 ```
 
 ---
@@ -1273,7 +1273,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[folder]"`. Expected: 5 test cas
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat: keep the band in a folder of small files, one per song"
+git add -A && git commit -m "feat: keep the band in a folder of small files, one per song" && git push origin main
 ```
 
 ---
@@ -1381,7 +1381,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[commands]"`. Expected: 4 test c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: route every edit through one undoable command layer"
+git add -A && git commit -m "feat: route every edit through one undoable command layer" && git push origin main
 ```
 
 ---
@@ -1490,7 +1490,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[routing]"`. Expected: 3 test ca
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: turn a rig into per-output mixes, with the click kept out of the PA"
+git add -A && git commit -m "feat: turn a rig into per-output mixes, with the click kept out of the PA" && git push origin main
 ```
 
 ---
@@ -1597,7 +1597,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[core]"`. Expected: every `[core
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add the commands that edit songs, setlists, rigs and mixes"
+git add -A && git commit -m "feat: add the commands that edit songs, setlists, rigs and mixes" && git push origin main
 ```
 
 ---
@@ -1678,7 +1678,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[autosave]"`. Expected: 2 test c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: save every change by itself, and keep trying when a save fails"
+git add -A && git commit -m "feat: save every change by itself, and keep trying when a save fails" && git push origin main
 ```
 
 ---
@@ -1764,7 +1764,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[cloud]"`. Expected: 4 test case
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: notice files still in the cloud and copies made by sync conflicts"
+git add -A && git commit -m "feat: notice files still in the cloud and copies made by sync conflicts" && git push origin main
 ```
 
 ---
@@ -1899,7 +1899,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[import]"`. Expected: 4 test cas
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: import a song's stems, guessing roles and converting once"
+git add -A && git commit -m "feat: import a song's stems, guessing roles and converting once" && git push origin main
 ```
 
 ---
@@ -2022,7 +2022,7 @@ Run: `powershell -File scripts/build.ps1 -Test "~[benchmark]"`. Expected: every 
 Status line: "Stage 1a done: the engine and the band folder work and are tested. There is no window yet."
 
 ```bash
-git add -A && git commit -m "feat: load songs into the engine and add a demo band that plays"
+git add -A && git commit -m "feat: load songs into the engine and add a demo band that plays" && git push origin main
 ```
 
 ---
