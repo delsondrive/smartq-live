@@ -5,13 +5,15 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "engine/Engine.h"
 #include "engine/MixSetup.h"
 #include "engine/PreparedSong.h"
 #include "engine/TempoMap.h"
 #include "engine/Types.h"
 
-// Songs and mixes the engine tests share.
+// Songs, mixes and engine helpers the engine tests share.
 namespace sqlive::test {
 
 // `frames` samples of `left`, and of `right` unless it is NaN, which makes the audio mono.
@@ -36,6 +38,14 @@ inline std::shared_ptr<const engine::MixSetup> stereoMix() {
 
 inline std::shared_ptr<const engine::PreparedSong> share(engine::PreparedSong song) {
     return std::make_shared<const engine::PreparedSong>(std::move(song));
+}
+
+// Pops every event the engine has reported so far and returns their types, oldest first.
+inline std::vector<engine::EngineEvent::Type> drainEvents(engine::Engine& e) {
+    std::vector<engine::EngineEvent::Type> types;
+    engine::EngineEvent ev;
+    while (e.popEvent(ev)) types.push_back(ev.type);
+    return types;
 }
 
 } // namespace sqlive::test

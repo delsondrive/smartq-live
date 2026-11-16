@@ -6,6 +6,12 @@
 #include <new>
 #include <utility>
 
+// The padding MSVC warns about (C4324) is the point: the two counters sit on cache lines of their own.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
+
 namespace sqlive::engine {
 
 // A bounded queue for exactly one pushing thread and exactly one popping thread. It never locks and
@@ -58,3 +64,7 @@ private:
 };
 
 }  // namespace sqlive::engine
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
