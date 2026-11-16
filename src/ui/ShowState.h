@@ -35,6 +35,7 @@ struct ShowState {
     juce::String nextLabel, nextTitle, nextInfo;                   // "NEXT SONG · ✓ READY", "4 · Long Way Down", "132 BPM · Key A\nafter a 4 s gap"
     // The stage view, between songs.
     juce::String upLabel, upTitle, upBpm, upBpmLabel, upKey, upLength;   // "UP NEXT · 4 OF 7", …, "BPM · 4/4" (its first metre)
+                                                                   // upKey "" when the song has no key
     juce::String action, actionDetail, pill;                       // "Press Space to start", "2 bars of count-in, then bar 1.", "✓ READY"
     Readiness readiness = Readiness::None;
     double loadProgress = 0.0;

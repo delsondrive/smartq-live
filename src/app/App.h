@@ -21,7 +21,7 @@ namespace sqlive::app {
 // but can't be opened is not a reason for that page: the main window opens with the "No audio" pill.
 // Every band folder that opens is noted in the settings, which are saved.
 // With --screenshots <folder> it draws every screen to a PNG there (ui::renderScreens), prints the folder, and opens no
-// window, so wantsWindow() is false and the app quits.
+// window, so wantsWindow() is false and the app quits (with exit code 1 when the pictures couldn't be made).
 class App {
 public:
     App(juce::File settingsFile, const juce::StringArray& commandLine);

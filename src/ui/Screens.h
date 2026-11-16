@@ -9,6 +9,7 @@ namespace sqlive::ui {
 // own (never the user's), a session with no real device, the shell wired as MainWindow wires it (plugInPages), put in
 // the named state. The temp folder is deleted before renderScreen returns. Drawn with the default LookAndFeel, which the
 // caller sets (Main.cpp, or ScopedLook in tests). Message thread only.
+// With no device, every picture but "interrupted" shows the top bar's red "No audio" pill, as the app does without one.
 //
 // The names, and what each shows:
 //   main-view      Show mode's main view: the first demo song 12 s in, the click raised 2 dB tonight

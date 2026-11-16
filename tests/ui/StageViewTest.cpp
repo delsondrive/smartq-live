@@ -99,10 +99,10 @@ TEST_CASE("the stage view's title is 72 px at the mockup's size and scales with 
     CHECK(childrenInside(view));
 
     // A title too long for 72 px but short enough for less is made smaller, not shortened.
-    s.commands().run("song.setInfo", params({{"songId", d.setlist().entries[0].songId}, {"title", "Another Longer Title Here"}}));
+    s.commands().run("song.setInfo", params({{"songId", d.setlist().entries[0].songId}, {"title", "Another Longer Title Here Again"}}));
     d.settle();
     snapshot(view, 1280, 698);
-    CHECK(view.drawnTitle() == "Another Longer Title Here");
+    CHECK(view.drawnTitle() == "Another Longer Title Here Again");
     CHECK(view.drawnTitleSize() < 72.0f);
     CHECK(view.drawnTitleSize() >= 44.0f);
 }
@@ -311,9 +311,46 @@ TEST_CASE("after a song is cut off the stage view says PAUSED and the bar it rea
     s.audioInterrupted();  d.settle();
     REQUIRE(makeShowState(s).interrupted);
     CHECK(view.drawnLabel() == juce::String::fromUTF8("PAUSED · 1 OF 3"));       // the mockup's screen 5, in mint
+    CHECK(view.drawnFigures() == juce::StringArray{juce::String(makeShowState(s).bar), "", "BAR"});
     const auto image = snapshot(view, 1280, 698);
     CHECK(hasColour(image.getClippedImage({0, 0, 640, 60}), theme::mint));        // the label
-    CHECK_FALSE(hasColour(image.getClippedImage({0, 0, 640, 60}), theme::ember));
+    // Nothing can play until the song is started again: no call to action (its mint means ready), no row of songs, no
+    // hints (the shell's WHEN IT COMES BACK box says what the keys do, over the bottom of this view).
+    CHECK(view.drawnCallToAction().isEmpty());
+    CHECK(view.drawnHints().isEmpty());
+    CHECK_FALSE(hasColour(image.getClippedImage({0, 150, 1280, 548}), theme::mint));
+    CHECK_FALSE(hasColour(image, theme::ember));
     s.clearInterrupted();  d.settle();
     CHECK(view.drawnLabel() == juce::String::fromUTF8("UP NEXT · 1 OF 3"));
+    CHECK_FALSE(view.drawnHints().isEmpty());
+    snapshot(view, 1280, 698);
+    CHECK(view.drawnCallToAction().size() == 3);
+}
+TEST_CASE("choosing another song after a cut-off shows that song, never the old song's bar", "[stage]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    sqlive::test::ScopedLook look;
+    ui::StageView view(s, nullptr);  view.setBounds(0, 0, 1280, 698);  view.setVisible(true);
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 8);
+    s.audioInterrupted();  d.settle();
+    REQUIRE(view.drawnFigures().contains("BAR"));
+    s.perform(Action::NextSongLater);  d.settle();                // → : the arrows clear the cut-off
+    CHECK_FALSE(makeShowState(s).interrupted);
+    CHECK(view.drawnLabel() == juce::String::fromUTF8("UP NEXT · 2 OF 3"));
+    CHECK(view.drawnTitle() == "Low Tide");
+    CHECK_FALSE(view.drawnFigures().contains("BAR"));
+    CHECK(view.drawnFigures().contains("LENGTH"));
+}
+TEST_CASE("a song with no key shows no KEY figure", "[stage]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    sqlive::test::ScopedLook look;
+    ui::StageView view(s, nullptr);  view.setBounds(0, 0, 1280, 698);  view.setVisible(true);
+    d.settle();
+    // The demo songs have no key: BPM and length only, as the top bar leaves out its key chip.
+    CHECK(view.drawnFigures() == juce::StringArray{"100", "", juce::String::fromUTF8("BPM · 4/4"), "0:38", "", "LENGTH"});
+    REQUIRE(s.leaveShow());
+    REQUIRE(s.commands().run("song.setInfo", params({{"songId", d.setlist().entries[0].songId}, {"key", "E"}})).ok);
+    s.enterShow();
+    d.settle();
+    CHECK(view.drawnFigures().contains("KEY"));
+    CHECK(view.drawnFigures().contains("E"));
 }

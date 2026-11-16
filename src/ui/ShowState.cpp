@@ -189,7 +189,7 @@ ShowState makeShowState(const app::Session& session) {
             st.upBpm = formatBpm(firstBpm(*nextSong));
             const auto metre = nextSong->tempo.empty() ? model::TempoPointDoc{} : nextSong->tempo.front();
             st.upBpmLabel = "BPM" + kDot + juce::String(metre.numerator) + "/" + juce::String(metre.denominator);
-            st.upKey = nextSong->key.isNotEmpty() ? nextSong->key : utf8("\xe2\x80\x93");
+            st.upKey = nextSong->key;                                   // "" when it has none: no KEY figure
             st.upLength = formatTime(nextSong->lengthSeconds);
         }
         st.pill = readinessPill(next);

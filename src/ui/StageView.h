@@ -18,10 +18,11 @@ namespace sqlive::ui {
 // shortened with "…"), the bar, BPM and time left on the right; the beat lights and the song's progress; the next-song
 // box ("END OF THE SET" while the last song plays); the key hints along the bottom. While Space is held to stop, a ring
 // around the beat lights fills with ShowController::holdProgress() and "Keep holding to stop" takes the progress bar's
-// place. Between songs: "UP NEXT", the title, its BPM, key and length; the call to action (the Space key, what it does
-// and the pill) on a mint panel when the song is ready, a grey one with a progress bar while it loads, a red one when it
-// can't play; the row of songs around it; the hints. After a song was cut off (the device went away), the same, under
-// "PAUSED · 1 OF 3" in mint with the bar it reached in place of the BPM, key and length (the mockup's screen 5).
+// place. Between songs: "UP NEXT", the title, its BPM, key (when it has one) and length; the call to action (the Space
+// key, what it does and the pill) on a mint panel when the song is ready, a grey one with a progress bar while it loads,
+// a red one when it can't play; the row of songs around it; the hints. After a song was cut off (the device went away):
+// "PAUSED · 1 OF 3" in mint, the title and the bar it reached, and nothing else (the mockup's screen 5; the shell's box
+// says what Space does).
 // Once the last song has ended: the setlist's name and "That was the last song." Sections, cues and the pad are later
 // stages' and are left out.
 //
@@ -52,6 +53,10 @@ public:
     // The label over the title: "NOW PLAYING · 1 OF 3" in mint while a song plays, or "PAUSED · 1 OF 3" after one was cut
     // off; otherwise "UP NEXT · 2 OF 3" in ember.
     juce::String drawnLabel() const;
+    // For tests: the figures as laid out, three strings each (the number, its small part, the caption; while a song plays
+    // the digits are 0s, the widths' templates), and the key hints as laid out.
+    juce::StringArray drawnFigures() const { return shape_.figures; }
+    juce::StringArray drawnHints() const { return shape_.hints; }
 
     void paint(juce::Graphics&) override;
     void resized() override;

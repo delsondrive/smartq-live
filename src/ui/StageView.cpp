@@ -154,7 +154,12 @@ bool StageView::shownWithParents() const {
 std::vector<StageView::Figure> StageView::figuresOf(const ShowState& st) const {
     if (st.playing) return {{st.bar, st.beat, "BAR"}, {st.bpm, {}, st.bpmLabel}, {st.left, {}, "LEFT"}};
     if (st.interrupted) return {{st.bar, {}, "BAR"}};               // the mockup's screen 5: where the song was cut off
-    if (st.upTitle.isNotEmpty() || st.upBpm.isNotEmpty()) return {{st.upBpm, {}, st.upBpmLabel}, {st.upKey, {}, "KEY"}, {st.upLength, {}, "LENGTH"}};
+    if (st.upTitle.isNotEmpty() || st.upBpm.isNotEmpty()) {
+        std::vector<Figure> figures{{st.upBpm, {}, st.upBpmLabel}};
+        if (st.upKey.isNotEmpty()) figures.push_back({st.upKey, {}, "KEY"});   // no key: no figure, as the top bar has no chip
+        figures.push_back({st.upLength, {}, "LENGTH"});
+        return figures;
+    }
     return {};
 }
 
@@ -175,7 +180,7 @@ StageView::Shape StageView::shapeOf(const ShowState& st) const {
     shape.beats = st.playing ? st.beatsInBar : 0;
     shape.endOfSet = st.endOfSet;
     shape.noSongs = st.cards.empty();
-    shape.hints = st.hints;
+    if (!st.interrupted) shape.hints = st.hints;                 // cut off: the shell's box over the bottom says the keys
     return shape;
 }
 
@@ -440,6 +445,12 @@ void StageView::paintPlaying(juce::Graphics& g) {
 }
 
 void StageView::paintBetween(juce::Graphics& g) {
+    // A song cut off: nothing can play until it is started again, and the shell's WHEN IT COMES BACK box says how, so
+    // no call to action (its mint means ready) and no row of songs; only the label, the title and the bar it reached.
+    if (state_.interrupted) {
+        drawnCallToAction_.clear();
+        return;
+    }
     const auto clip = g.getClipBounds().toFloat();
 
     // The call to action: mint when Space will start the song, grey while it loads, red when it can't play.

@@ -326,8 +326,8 @@ void SetupPage::resized() {
     const int inner = std::max(0, area.getWidth() - 2 * kBoxPadX);
     const auto captionWidth = [](const juce::String& text) { return ceilToInt(widthOf(captionFont(), text)); };
     int rigW = juce::jlimit(120, 220, rig_.idealWidth());
-    const int typeW = juce::jlimit(90, 160, types_.idealWidth());
-    int deviceW = juce::jlimit(140, 280, devices_.idealWidth());
+    int typeW = juce::jlimit(90, 160, types_.idealWidth());
+    int deviceW = juce::jlimit(140, 230, devices_.idealWidth());   // a longer name is shortened with "…"; the menu has it whole
     const int rateW = std::max(captionWidth("SAMPLE RATE"), rate_.idealWidth());
     const int bufferW = std::max(captionWidth("BUFFER"), buffer_.idealWidth());
     const auto groupsWidth = [&] {
@@ -339,6 +339,16 @@ void SetupPage::resized() {
 
     const int pillW = connection_.idealWidth(), duplicateW = duplicate_.idealWidth(), moreW = more_.idealWidth(), toneW = tone_.idealWidth();
     const int clusterW = pillW + kGroupGap + duplicateW + kButtonGap + moreW + kGroupGap + toneW;
+    // One row rather than two while the interface's names can give up the room: the device down to 140 px, then the driver
+    // type down to 100 (each shortened with "…"; their menus show the names whole).
+    if (const int short_ = groupsWidth() + kGroupGap + clusterW - inner; short_ > 0) {
+        const int fromDevice = std::min(short_, std::max(0, deviceW - 140));
+        const int fromType = std::min(short_ - fromDevice, std::max(0, typeW - 100));
+        if (fromDevice + fromType == short_) {
+            deviceW -= fromDevice;
+            typeW -= fromType;
+        }
+    }
     const bool oneRow = groupsWidth() + kGroupGap + clusterW <= inner;
     const int groupHeight = kCaptionHeight + kCaptionGap + kControlHeight;
     const int boxHeight = kBoxPadY + groupHeight + kBoxPadY + (oneRow ? 0 : kControlHeight + kBoxPadY);

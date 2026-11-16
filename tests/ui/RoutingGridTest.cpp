@@ -381,3 +381,22 @@ TEST_CASE("a role's menu offers colours that mean nothing else, and none for the
     }
     CHECK(colours == 9);
 }
+TEST_CASE("the setup page keeps its controls on one row at 1280 px, shortening a long device name", "[routing-ui]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    ui::SetupPage page(s, nullptr);
+    snapshot(page, 1280, 698);
+    const int oneRow = page.topBounds().getHeight();
+    s.commands().run("rig.setDevice", params({{"rigId", s.rigId()}, {"computerId", s.settings().computerName()}, {"deviceType", "Windows Audio"},
+                                              {"deviceName", "Speakers (Realtek(R) High Definition Audio with a long name)"}}));
+    d.settle();
+    snapshot(page, 1280, 698);
+    CHECK(page.topBounds().getHeight() == oneRow);                // the pill and the buttons still beside the dropdowns
+    s.commands().run("rig.setDevice", params({{"rigId", s.rigId()}, {"computerId", s.settings().computerName()},
+                                              {"deviceType", "Windows Audio (Exclusive Mode, Low Latency)"},
+                                              {"deviceName", "Speakers (Realtek(R) High Definition Audio with a long name)"}}));
+    d.settle();
+    snapshot(page, 1280, 698);
+    CHECK(page.topBounds().getHeight() == oneRow);                // the driver type gives up room too
+    CHECK(childrenInside(page));
+}

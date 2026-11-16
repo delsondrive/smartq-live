@@ -316,11 +316,15 @@ private:
         if (peaks.empty()) return;
         const float loudest = *std::max_element(peaks.begin(), peaks.end());
         if (loudest <= 0.0f) return;
+        // The mockup's canvas.mini: a 1.3 px bar every 2 px at 70 %, each the loudest of the peaks under it.
         g.setColour(theme::mid.withAlpha(0.7f));
-        const float step = area.getWidth() / static_cast<float>(peaks.size());
-        for (std::size_t i = 0; i < peaks.size(); ++i) {
-            const float half = std::max(0.5f, peaks[i] / loudest * area.getHeight() * 0.5f);
-            g.fillRect(area.getX() + step * static_cast<float>(i), area.getCentreY() - half, step * 0.65f, half * 2.0f);
+        const float perPixel = static_cast<float>(peaks.size()) / area.getWidth();
+        for (float x = 0.0f; x + 1.0f <= area.getWidth(); x += 2.0f) {
+            const auto from = static_cast<std::size_t>(x * perPixel);
+            const auto to = std::min(peaks.size(), std::max(from + 1, static_cast<std::size_t>((x + 2.0f) * perPixel)));
+            const float peak = from < to ? *std::max_element(peaks.begin() + static_cast<std::ptrdiff_t>(from), peaks.begin() + static_cast<std::ptrdiff_t>(to)) : 0.0f;
+            const float half = std::max(0.5f, peak / loudest * area.getHeight() * 0.5f);
+            g.fillRect(area.getX() + x, area.getCentreY() - half, 1.3f, half * 2.0f);
         }
     }
 

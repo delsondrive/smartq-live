@@ -68,7 +68,7 @@ TEST_CASE("the show state between songs", "[show]") {
     CHECK(st.cards[1].kind == ShowState::Card::Kind::Later);  CHECK(st.cards[1].note == juce::String::fromUTF8("→ stop"));
     CHECK(st.cards[2].note == "end");
     CHECK(st.upLabel == juce::String::fromUTF8("UP NEXT · 1 OF 3"));  CHECK(st.upTitle == "First Light");
-    CHECK(st.upBpm == "100");  CHECK(st.upLength == "0:38");  CHECK(st.upKey == juce::String::fromUTF8("–"));
+    CHECK(st.upBpm == "100");  CHECK(st.upLength == "0:38");  CHECK(st.upKey.isEmpty());          // no key: no KEY figure
     CHECK(st.action == "Press Space to start");  CHECK(st.actionDetail == "1 bar of count-in, then bar 1.");
     CHECK(st.pill == juce::String::fromUTF8("✓ READY"));  CHECK(st.readiness == Readiness::Ready);
     CHECK(st.after[0].text == "1 First Light");  CHECK(st.after[0].kind == ShowState::After::Kind::Next);

@@ -23,10 +23,13 @@ juce::File folderAfter(const juce::StringArray& commandLine, const juce::String&
 
 // --screenshots <folder>: every screen as a PNG in that folder (ui::renderScreens), then the folder printed, or why it
 // failed. No folder given: "screens" in the working folder. The user's settings and band folders are never written.
+// A failure makes the app's exit code 1.
 void makeScreenshots(juce::File folder) {
     if (folder == juce::File()) folder = juce::File::getCurrentWorkingDirectory().getChildFile("screens");
     const auto result = ui::renderScreens(folder);
     std::cout << (result.wasOk() ? folder.getFullPathName() : result.getErrorMessage()) << std::endl;
+    if (result.failed())
+        if (auto* app = juce::JUCEApplicationBase::getInstance()) app->setApplicationReturnValue(1);   // a script can tell
 }
 
 }  // namespace
