@@ -5,6 +5,7 @@
 
 #include "ui/NewSongDialog.h"
 #include "ui/SetlistsPage.h"
+#include "ui/SongEditorPage.h"
 
 namespace sqlive::ui {
 
@@ -53,27 +54,36 @@ private:
 // Each of Tasks 11-17 adds its page or view here, with AppShell::setPageComponent or setShowComponents.
 void plugInPages(AppShell& shell, app::Session& session, app::AudioHost*, app::ShowController*) {
     auto setlists = std::make_unique<SetlistsPage>(session);
-    setlists->onOpenSong = [](const juce::String&) {};           // Task 13 opens the song in the Song editor
+    auto editor = std::make_unique<SongEditorPage>(session);
+    auto* songEditor = editor.get();                              // both pages live as long as the shell
+    const auto openInEditor = [&shell, songEditor](const juce::String& songId) {
+        songEditor->openSong(songId);
+        shell.showPage(Page::SongEditor);
+    };
+    setlists->onOpenSong = openInEditor;
 
-    // The New song dialog over the shell. The veil lives as long as the Setlists page's callback that holds it, and is
-    // closed after the dialog's callback has returned.
+    // The New song dialog over the shell. The veil lives as long as the pages' callbacks that hold it, and is closed
+    // after the dialog's callback has returned. A new song opens in the Song editor.
     auto veil = std::make_shared<std::unique_ptr<NewSongVeil>>();
     const auto close = [weak = std::weak_ptr<std::unique_ptr<NewSongVeil>>(veil)] {
         juce::MessageManager::callAsync([weak] {
             if (auto open = weak.lock()) open->reset();
         });
     };
-    setlists->onNewSong = [&shell, &session, veil, close](juce::Array<juce::File> files) {
+    const auto newSong = [&shell, &session, veil, close, openInEditor](juce::Array<juce::File> files) {
         if (*veil != nullptr || session.mode() != app::Mode::Edit) return;
         auto dialog = std::make_unique<NewSongDialog>(session, std::move(files));
         dialog->onCancelled = close;
-        dialog->onCreated = [&shell, close](juce::String) {
-            shell.showPage(Page::Setlists);                       // Task 13 opens the new song in the Song editor
+        dialog->onCreated = [openInEditor, close](juce::String songId) {
+            openInEditor(songId);
             close();
         };
         *veil = std::make_unique<NewSongVeil>(shell, std::move(dialog));
     };
+    setlists->onNewSong = newSong;
+    editor->onNewSong = [newSong] { newSong({}); };
     shell.setPageComponent(Page::Setlists, std::move(setlists));
+    shell.setPageComponent(Page::SongEditor, std::move(editor));
 }
 
 }  // namespace sqlive::ui
