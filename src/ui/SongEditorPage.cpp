@@ -179,6 +179,7 @@ SongEditorState makeSongEditorState(const app::Session& session, const juce::Str
     state.progress = state.loading ? session.cache().progress(songId) : 0.0;
     const auto now = session.now();
     state.playing = now.playing && now.playingSongId == songId;
+    state.anyPlaying = now.playing;
 
     state.barOneSeconds = song->audioStartSeconds;
     state.clickOn = song->click.enabled;
@@ -383,9 +384,11 @@ private:
         g.setColour(colour);
         for (std::size_t x = 0; x < c.lo.size(); ++x) {
             if (std::isnan(c.lo[x])) continue;
+            // From the column's top to its bottom, always through the centre line: a column wholly above or below zero
+            // still reaches it.
             const float top = mid - c.hi[x] * scale, bottom = mid - c.lo[x] * scale;
-            g.fillRect(static_cast<float>(lane.getX()) + static_cast<float>(x), std::min(top, mid - 0.5f), 1.0f,
-                       std::max(1.0f, bottom - top));
+            const float y = std::min(top, mid - 0.5f);
+            g.fillRect(static_cast<float>(lane.getX()) + static_cast<float>(x), y, 1.0f, std::max(bottom, mid + 0.5f) - y);
         }
     }
 
@@ -394,7 +397,8 @@ private:
         const bool on = page_.state_.clickOn;
         for (const auto& tick : ticks_) {
             const float h = tick.kind == engine::ClickKind::Downbeat ? 24.0f : tick.kind == engine::ClickKind::Beat ? 12.0f : 6.0f;
-            // Off, the click still sounds through the count-in, so only the ticks from bar 1 on are dimmed.
+            // Off, the click still sounds through the count-in, so only the count-in's ticks stay bright: those before it
+            // (audio before bar 1 that is longer than the count-in) and those from bar 1 on are dimmed.
             g.setColour(on || tick.countIn ? theme::ember : theme::ember.withAlpha(0.35f));
             g.fillRect(static_cast<float>(lane.getX()) + tick.x, mid - h * 0.5f, 1.2f, h);
         }
@@ -478,8 +482,11 @@ private:
         const auto from = static_cast<engine::SamplePos>(std::llround(scale.startSeconds() * kRate));
         const auto to = static_cast<engine::SamplePos>(std::llround(scale.endSeconds() * kRate));
         const auto subdivision = static_cast<engine::Subdivision>(juce::jlimit(0, 3, page_.state_.subdivision));
+        // The count-in is [-its length, 0), as prepareSong's countInStart; it is empty with no count-in.
+        const int countInBars = std::max(0, page_.doc_->countInBars);
+        const auto countInStart = static_cast<engine::SamplePos>(std::llround(scale.tempo().secondsAt({1 - countInBars, 1.0}) * kRate));
         for (const auto& tick : engine::buildClickTicks(scale.tempo(), kRate, from, to, subdivision))
-            ticks_.push_back({scale.xAtSeconds(static_cast<double>(tick.at) / kRate), tick.kind, tick.at < 0});
+            ticks_.push_back({scale.xAtSeconds(static_cast<double>(tick.at) / kRate), tick.kind, tick.at >= countInStart && tick.at < 0});
     }
 
     struct Tick {
@@ -754,8 +761,9 @@ void SongEditorPage::updateControls() {
         chips_[static_cast<std::size_t>(i)]->setEnabled(edit);
     }
     tap_.setEnabled(edit);
-    play_.setButtonText(juce::String::fromUTF8(state_.playing ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
-    play_.setEnabled(session_.mode() == app::Mode::Edit && (state_.playing || !state_.loading));
+    // A press stops whatever plays, this song or another, so the button says Stop whenever anything does.
+    play_.setButtonText(juce::String::fromUTF8(state_.anyPlaying ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
+    play_.setEnabled(session_.mode() == app::Mode::Edit && (state_.anyPlaying || !state_.loading));
 
     if (!barOneEditor_.hasKeyboardFocus(true)) barOneEditor_.setText(secondsText(state_.barOneSeconds), juce::dontSendNotification);
     barOneEditor_.setReadOnly(!edit);
@@ -982,7 +990,9 @@ bool SongEditorPage::keyPressed(const juce::KeyPress& key) {
 
 // ---- Gestures ----------------------------------------------------------------------------------------------------------
 
-bool SongEditorPage::editable() const { return session_.mode() == app::Mode::Edit && songId_.isNotEmpty(); }
+// The open song is looked up every time: an undo can take it away before the page has heard (songId_ is cleared at the
+// next refresh), and then every gesture does nothing.
+bool SongEditorPage::editable() const { return session_.mode() == app::Mode::Edit && session_.model().song(songId_) != nullptr; }
 
 bool SongEditorPage::run(const juce::String& command, const juce::var& params, const juce::String& coalesceKey) {
     if (!editable()) return false;
@@ -1089,7 +1099,7 @@ void SongEditorPage::togglePlay() {
         session_.perform(app::Action::Stop);
         return;
     }
-    if (songId_.isNotEmpty()) session_.playSong(songId_, cursor_);
+    if (session_.model().song(songId_) != nullptr) session_.playSong(songId_, cursor_);
 }
 
 void SongEditorPage::pointerAt(float laneX, juce::ModifierKeys mods) {
@@ -1147,7 +1157,9 @@ void SongEditorPage::showSignatureMenu() {
 
 void SongEditorPage::showKeyMenu() {
     if (!editable()) return;
-    const auto current = session_.model().song(songId_)->key;
+    const auto* song = session_.model().song(songId_);
+    if (song == nullptr) return;
+    const auto current = song->key;
     juce::PopupMenu menu;
     menu.addItem(1, kDash, true, current.isEmpty());
     for (int i = 0; i < kMajorKeys.size(); ++i) menu.addItem(100 + i, kMajorKeys[i], true, current == kMajorKeys[i]);
@@ -1164,7 +1176,9 @@ void SongEditorPage::showKeyMenu() {
 
 void SongEditorPage::showCountInMenu() {
     if (!editable()) return;
-    const int current = session_.model().song(songId_)->countInBars;
+    const auto* song = session_.model().song(songId_);
+    if (song == nullptr) return;
+    const int current = song->countInBars;
     juce::PopupMenu menu;
     for (const int bars : kCountIns)
         menu.addItem(bars + 1, bars == 0 ? juce::String("None") : countInWords(bars), true, bars == current);

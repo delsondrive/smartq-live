@@ -29,6 +29,7 @@ struct SongEditorState {
     juce::StringArray songIds;                                    // the same songs' ids, in the same order
     bool loading = false;  double progress = 0.0;                 // the song's audio is still loading (SongCache)
     bool playing = false;                                         // this song plays, from the editor
+    bool anyPlaying = false;                                      // a song plays (this one or another): Play would stop it
     double barOneSeconds = 0.0;                                   // "Bar 1 starts at": where bar 1 falls in the audio
     bool clickOn = true, accentFirstBeat = true;                  // the CLICK panel
     int clickSound = 0, subdivision = 0;                          // 0..2 Wood block, Beep, Rim; 0..3 None, 8ths, Triplets, 16ths

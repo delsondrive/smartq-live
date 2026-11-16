@@ -8,6 +8,7 @@
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
+#include "tests/support/Signals.h"
 #include "ui/AppShell.h"
 #include "ui/BarScale.h"
 #include "ui/Pages.h"
@@ -210,4 +211,109 @@ TEST_CASE("the setlists page opens a song in the song editor", "[editor]") {
     CHECK(editor->songId() == id);
     CHECK(editor->state().title == "Low Tide");
     CHECK(editor->cursorSeconds() < 0.0);                         // at the start of its count-in
+}
+
+namespace {
+
+// A left-button press on a component at a point, as the mouse would make it.
+void press(juce::Component& component, juce::Point<float> at) {
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent e(juce::Desktop::getInstance().getMainMouseSource(), at, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier),
+                             juce::MouseInputSource::defaultPressure, 0.0f, 0.0f, 0.0f, 0.0f, &component, &component, now, at, now, 1, false);
+    component.mouseDown(e);
+}
+
+// The page's button that says this, or nullptr.
+juce::Button* buttonSaying(juce::Component& page, const juce::String& text) {
+    for (auto* child : page.getChildren())
+        if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->isVisible() && button->getButtonText() == text)
+            return button;
+    return nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("the song editor survives its song being undone away before it refreshes", "[editor]") {
+    DemoSession d; auto& s = *d.session;
+    model::SongDoc song;
+    song.id = "fresh";
+    song.title = "Fresh";
+    model::PartDoc part;
+    part.id = "keys";  part.name = "Keys";  part.file = "audio/Keys.wav";  part.roleId = s.model().band().roles[3].id;
+    song.parts.push_back(part);
+    REQUIRE(s.commands().run("song.add", params({{"song", model::toVar(song)}})).ok);
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong("fresh");
+    snapshot(page, 1280, 698);
+    REQUIRE(page.songId() == "fresh");
+    REQUIRE(s.commands().undo().ok);                              // Ctrl+Z takes the song away; the page hasn't heard yet
+    REQUIRE(s.model().song("fresh") == nullptr);
+    // Every chip, the title and the part headers: each finds the song gone and does nothing.
+    int chips = 0;
+    for (auto* child : page.getChildren())
+        if (auto* chip = dynamic_cast<ui::Chip*>(child); chip != nullptr && chip->isVisible()) {
+            press(*chip, chip->getLocalBounds().getCentre().toFloat());
+            ++chips;
+        }
+    CHECK(chips == 4);
+    auto* lanes = page.lanesViewport().getViewedComponent();
+    REQUIRE(lanes != nullptr);
+    press(*lanes, {40.0f, 10.0f});
+    page.setBpm(130.0);  page.setKey("E");  page.setCountIn(2);  page.setBarOneAtCursor();  page.tap(1.0);
+    page.setClick(true, 0, 0, true);  page.togglePlay();
+    d.settle();                                                    // the refresh: the empty state
+    CHECK(page.songId().isEmpty());
+    CHECK(page.state().songId.isEmpty());
+}
+
+TEST_CASE("the song editor's play button says Stop while another song plays", "[editor]") {
+    DemoSession d; auto& s = *d.session;
+    const auto playing = d.setlist().entries[0].songId, open = d.setlist().entries[1].songId;
+    s.playSong(playing, 0.0);
+    REQUIRE(s.now().playing);
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(open);
+    snapshot(page, 1280, 698);
+    CHECK_FALSE(page.state().playing);                            // the open song isn't the one playing
+    auto* stop = buttonSaying(page, juce::String::fromUTF8("\xe2\x96\xa0 Stop"));
+    REQUIRE(stop != nullptr);                                     // a press stops whatever plays, so it says so
+    CHECK(stop->isEnabled());
+    CHECK(buttonSaying(page, juce::String::fromUTF8("\xe2\x96\xb6 Play")) == nullptr);
+}
+
+TEST_CASE("the song editor dims the click before the count-in when the click is off", "[editor]") {
+    DemoSession d; auto& s = *d.session;
+    auto id = d.setlist().entries[0].songId;                      // 100 BPM: a beat is 0.6 s, a bar 2.4 s; a 1-bar count-in
+    // Two bars of audio before bar 1: the song starts at -4.8 s, the count-in at -2.4 s. 38.4 s across 640 px.
+    REQUIRE(s.commands().run("song.setAudioStart", params({{"songId", id}, {"seconds", 4.8}})).ok);
+    REQUIRE(s.commands().run("song.setClick", params({{"songId", id}, {"enabled", false}})).ok);
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(id);
+    auto image = snapshot(page, 1280, 698);
+    // The Click row is under the 47 px bar, the 26 px ruler and three 44 px parts: 205 to 241.
+    const auto tickAt = [&](double seconds) {
+        const int x = 350 + juce::roundToInt((seconds + 4.8) * 640.0 / 38.4);
+        return image.getClippedImage({x, 215, 1, 16});
+    };
+    CHECK_FALSE(hasColour(tickAt(-4.2), theme::ember));          // before the count-in, the click is off: dimmed
+    CHECK(hasColour(tickAt(-1.8), theme::ember));                 // in the count-in, which always clicks
+    CHECK_FALSE(hasColour(tickAt(1.8), theme::ember));            // after bar 1: off, dimmed
+}
+
+TEST_CASE("the song editor fills a waveform that stays above zero down to the centre line", "[editor]") {
+    DemoSession d; auto& s = *d.session;
+    auto id = d.setlist().entries[0].songId;
+    const auto& song = *s.model().song(id);
+    // A slow rise and fall that stays above zero for the whole song: every column is above the centre line.
+    writeSine(s.folder().audioFile(song, song.parts[0]), 48000.0, 1, 38.4, 0.01, 0.15f);
+    s.cache().forget(id);
+    d.settle();
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(id);
+    auto image = snapshot(page, 1280, 698);
+    // The Keys lane runs from 73 to 117, its centre line at 95; at x 600 the wave reaches about 12 px above it.
+    const auto keys = s.model().band().roles[3].colour;
+    CHECK(hasColour(image.getClippedImage({600, 90, 1, 1}), keys));   // between the wave's top and the centre line
+    CHECK(hasColour(image.getClippedImage({600, 94, 1, 1}), keys));   // down to the centre line, at y 95.0
+    CHECK_FALSE(hasColour(image.getClippedImage({600, 100, 1, 1}), keys));   // nothing below it
 }
