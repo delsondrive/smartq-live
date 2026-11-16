@@ -16,7 +16,7 @@
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/MidiImportDialog.h"
-#include "ui/SongEditorLanes.h"
+#include "ui/PartLanes.h"
 #include "ui/Theme.h"
 #include "ui/Veil.h"
 
@@ -28,16 +28,16 @@ namespace {
 
 const juce::String kDash = juce::String::fromUTF8("\xe2\x80\x93");         // –
 
-// The mockup's CSS: .songs (200 px), .ebar, .tl (a 150 px header column; rows of 26, 44 and 36 px), .insp (290 px), .foot.
+// The mockup's CSS: .songs (200 px), .ebar, .insp (290 px), .foot. The timeline (.tl) is the Timeline's.
 constexpr int kSongsWidth = 200, kSongsPad = 10, kCapsHeight = 14, kCapsGap = 8;
 constexpr int kSongItemHeight = 30, kSongGap = 4, kNewSongGap = 10, kSongPadX = 9;
-constexpr int kBarHeight = 47, kBarPadX = 12, kBarGap = 8, kTitleGap = 6, kChipHeight = 24, kButtonHeight = 30;
+constexpr int kBarHeight = 47, kBarPadX = 12, kBarGap = 8, kTitleGap = 6, kChipHeight = 24, kButtonHeight = 30, kToolsRow = 38;
+constexpr int kMinTitleWidth = 60;                                  // narrower than this, the tools go to a second row
 constexpr int kFooterHeight = 32, kFooterPadX = 12, kFooterGap = 14;
 constexpr int kInspectorWidth = 290, kInspectorPad = 12, kCardGap = 10, kCardPadX = 12, kCardPadY = 10, kCardRow = 30;
 constexpr int kValueWidth = 96, kFieldHeight = 24, kChoiceWidth = 130;
 constexpr int kEmptyCardWidth = 460, kEmptyCardHeight = 150;
 
-const juce::StringArray kSignatures{"2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "9/8", "12/8"};
 const juce::StringArray kMajorKeys{"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
 const juce::StringArray kMinorKeys{"Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"};
 const int kCountIns[] = {0, 1, 2, 4};
@@ -244,42 +244,6 @@ private:
     int hovered_ = -1;
 };
 
-// ---- The lanes ---------------------------------------------------------------------------------------------------------
-
-// One row per part (its header, then its waveform), then the Click row, each header in the 150 px column on the left.
-// ---- The cursor --------------------------------------------------------------------------------------------------------
-
-// The white line, with a soft glow, over the ruler and the lanes. Never takes the mouse.
-class SongEditorPage::CursorLine : public juce::Component {
-public:
-    CursorLine() { setInterceptsMouseClicks(false, false); }
-
-    void setX(std::optional<float> x) {
-        if (x == x_) return;
-        repaintAround(x_);
-        x_ = x;
-        repaintAround(x_);
-    }
-
-    void paint(juce::Graphics& g) override {
-        if (!x_) return;
-        const float h = static_cast<float>(getHeight());
-        g.setColour(juce::Colours::white.withAlpha(0.08f));
-        g.fillRect(*x_ - 5.0f, 0.0f, 10.0f, h);
-        g.setColour(juce::Colours::white.withAlpha(0.18f));
-        g.fillRect(*x_ - 3.0f, 0.0f, 6.0f, h);
-        g.setColour(juce::Colours::white);
-        g.fillRect(*x_ - 1.0f, 0.0f, 2.0f, h);
-    }
-
-private:
-    void repaintAround(std::optional<float> x) {
-        if (x) repaint(juce::roundToInt(*x) - 7, 0, 14, getHeight());
-    }
-
-    std::optional<float> x_;
-};
-
 // ---- The title and the chips -------------------------------------------------------------------------------------------
 
 // The song's title, 18 px semibold, shortened with "…" to its width. A click opens the title menu.
@@ -327,8 +291,7 @@ public:
 SongEditorPage::SongEditorPage(app::Session& session)
     : session_(session),
       songs_(std::make_unique<SongsBody>(*this)),
-      lanes_(std::make_unique<LanesBody>(*this)),
-      cursorLine_(std::make_unique<CursorLine>()),
+      timeline_(session),
       title_(std::make_unique<TitleLabel>()),
       tap_("Tap"),
       play_(juce::String::fromUTF8("\xe2\x96\xb6 Play")),
@@ -337,12 +300,24 @@ SongEditorPage::SongEditorPage(app::Session& session)
     setWantsKeyboardFocus(true);
 
     songsView_.setViewedComponent(songs_.get(), false);
-    lanesView_.setViewedComponent(lanes_.get(), false);
-    for (auto* view : {&songsView_, &lanesView_}) {
-        view->setScrollBarsShown(true, false);
-        view->setScrollBarThickness(10);
-        addAndMakeVisible(*view);
-    }
+    songsView_.setScrollBarsShown(true, false);
+    songsView_.setScrollBarThickness(10);
+    addAndMakeVisible(songsView_);
+
+    timeline_.onPressed = [this] {
+        if (isShowing()) grabKeyboardFocus();
+    };
+    timeline_.onCursorMoved = [this] {
+        if (doc_) footerOf(*doc_, timeline_.cursorSeconds(), state_.footerBar, state_.footerTime);
+        repaint(footer_);
+    };
+    timeline_.onSelectionChanged = [this] {
+        showTempoCard();
+        resized();
+        repaint();
+    };
+    addAndMakeVisible(timeline_);
+    addChildComponent(tempoCard_);
 
     title_->onClick = [this] { showTitleMenu(); };
     addAndMakeVisible(*title_);
@@ -366,9 +341,6 @@ SongEditorPage::SongEditorPage(app::Session& session)
         addAndMakeVisible(*button);
     }
 
-    ruler_.onPointer = [this](float x, juce::ModifierKeys mods) { pointerAt(x, mods); };
-    addAndMakeVisible(ruler_);
-
     for (auto* editor : {&bpmEditor_, &barOneEditor_}) {
         editor->setFont(smallFont());
         editor->setIndents(8, 3);
@@ -391,11 +363,13 @@ SongEditorPage::SongEditorPage(app::Session& session)
     accent_.onChange = [this](bool) { sendClick(); };
     clickSound_.onChange = [this](int) { sendClick(); };
     subdivision_.onChange = [this](int) { sendClick(); };
+    tools_.setItems({"Select", "Draw"}, 0);
+    snapTo_.setItems({"Bar", "Beat", "1/8"}, 1);
+    tools_.onChange = [this](int item) { timeline_.setTool(item == 1 ? EditTool::Draw : EditTool::Select); };
+    snapTo_.onChange = [this](int item) { timeline_.setSnap(item == 0 ? SnapTo::Bar : item == 2 ? SnapTo::Eighth : SnapTo::Beat); };
     for (juce::Component* child : std::initializer_list<juce::Component*>{&songsLabel_, &songLabel_, &clickLabel_, &clickOn_, &accent_,
-                                                                          &clickSound_, &subdivision_})
+                                                                          &clickSound_, &subdivision_, &tools_, &snapTo_})
         addAndMakeVisible(child);
-
-    addAndMakeVisible(*cursorLine_);                              // last: over the ruler and the lanes
 
     session_.changes().addChangeListener(this);
     setVisible(true);                                             // AppShell hides it while another page shows
@@ -404,32 +378,26 @@ SongEditorPage::SongEditorPage(app::Session& session)
 
 SongEditorPage::~SongEditorPage() { session_.changes().removeChangeListener(this); }
 
-const juce::Viewport& SongEditorPage::lanesViewport() const { return lanesView_; }
+const juce::Viewport& SongEditorPage::lanesViewport() const { return timeline_.viewport(); }
 const juce::Viewport& SongEditorPage::songsViewport() const { return songsView_; }
 juce::String SongEditorPage::drawnTitle() const { return title_->drawn; }
 
 juce::String SongEditorPage::songId() const { return songId_; }
-double SongEditorPage::cursorSeconds() const { return cursor_; }
+double SongEditorPage::cursorSeconds() const { return timeline_.cursorSeconds(); }
 
 void SongEditorPage::openSong(const juce::String& songId) {
     const auto* song = session_.model().song(songId);
     songId_ = song != nullptr ? songId : juce::String();
     if (bpmEditor_.isVisible()) bpmEditor_.setVisible(false);
     tapTempo_ = {};
-    cursor_ = song != nullptr ? model::songExtentSeconds(*song, model::tempoMapOf(*song)).first : 0.0;
+    timeline_.setSong(songId_);                                   // the cursor at the song's start
     session_.setEditFocus(songId_);
     refresh(true);
 }
 
 void SongEditorPage::setCursorSeconds(double seconds) {
-    if (!std::isfinite(seconds)) return;
-    if (doc_) {
-        const auto [start, end] = model::songExtentSeconds(*doc_, model::tempoMapOf(*doc_));
-        seconds = juce::jlimit(start, end, seconds);
-    }
-    cursor_ = seconds;
-    if (doc_) footerOf(*doc_, cursor_, state_.footerBar, state_.footerTime);
-    moveCursorLine();
+    timeline_.setCursorSeconds(seconds);                          // kept within the song
+    if (doc_) footerOf(*doc_, timeline_.cursorSeconds(), state_.footerBar, state_.footerTime);
     repaint(footer_);
 }
 
@@ -451,8 +419,7 @@ void SongEditorPage::refresh(bool force) {
     const auto* doc = session_.model().song(songId_);
     if (doc == nullptr) songId_.clear();                          // removed from the band: the empty state
 
-    const auto now = session_.now();
-    if (doc != nullptr && now.playing && now.playingSongId == songId_) cursor_ = now.seconds;   // following the playhead
+    timeline_.followPlayhead();                                   // while this song plays, the cursor is the playhead
     auto loaded = session_.cache().loaded(songId_);
     const bool sameDoc = doc == nullptr ? !doc_.has_value() : doc_.has_value() && *doc_ == *doc;
     // Which audio files are missing is looked for on disk only when the song or its audio changed, never 30 times a second.
@@ -460,7 +427,7 @@ void SongEditorPage::refresh(bool force) {
         missing_ = doc != nullptr ? missingParts(session_, songId_) : std::set<juce::String>();
         missingKnown_ = true;
     }
-    auto next = makeSongEditorState(session_, songId_, cursor_, &missing_);
+    auto next = makeSongEditorState(session_, songId_, timeline_.cursorSeconds(), &missing_);
 
     // While a song plays the session changes 30 times a second, and usually only the cursor has moved.
     const auto withoutCursor = [](SongEditorState s) {
@@ -472,7 +439,6 @@ void SongEditorPage::refresh(bool force) {
     const bool footerChanged = next.footerBar != state_.footerBar || next.footerTime != state_.footerTime;
     state_ = std::move(next);
     if (onlyCursor && !force) {
-        moveCursorLine();
         if (footerChanged) repaint(footer_);
         return;
     }
@@ -480,17 +446,62 @@ void SongEditorPage::refresh(bool force) {
     else doc_.reset();
     loaded_ = std::move(loaded);
     shownEditable_ = editable();
+    buildLanes();
+    timeline_.refresh();
+    showTempoCard();
     updateControls();
     resized();
-    lanes_->invalidate();
     songs_->repaint();
     repaint();
+}
+
+void SongEditorPage::buildLanes() {
+    std::vector<juce::String> parts;
+    for (const auto& part : state_.parts) parts.push_back(part.partId);
+    if (songId_ == laneSong_ && parts == laneParts_) {
+        for (std::size_t i = 0; i < partLanes_.size() && i < state_.parts.size(); ++i) partLanes_[i]->setMissing(state_.parts[i].missing);
+        return;
+    }
+    if (songId_ != laneSong_) timeline_.setSong(songId_);
+    laneSong_ = songId_;
+    laneParts_ = std::move(parts);
+    tempoCard_.show(nullptr, -1, false);                          // before the lane it points at goes
+    tempoLane_ = nullptr;
+    partLanes_.clear();
+    std::vector<std::unique_ptr<Lane>> lanes;
+    if (songId_.isNotEmpty()) {
+        for (const auto& part : state_.parts) {
+            auto lane = std::make_unique<PartLane>(session_, songId_, part.partId);
+            lane->setMissing(part.missing);
+            partLanes_.push_back(lane.get());
+            lanes.push_back(std::move(lane));
+        }
+        lanes.push_back(std::make_unique<ClickLane>(session_, songId_));
+        // The Tempo lane last, for now: the mockup has it first, but the stage 1b editor tests find the parts and the click
+        // at the places they had under the ruler (see the task 11 report).
+        auto tempo = std::make_unique<TempoLane>(session_, songId_);
+        tempoLane_ = tempo.get();
+        lanes.push_back(std::move(tempo));
+    }
+    timeline_.setLanes(std::move(lanes));
+}
+
+void SongEditorPage::showTempoCard() {
+    const auto& picked = timeline_.selection();
+    const bool tempo = picked.kind == EditorSelection::Kind::Tempo && tempoLane_ != nullptr && picked.index >= 0
+                       && picked.index < static_cast<int>(tempoLane_->state().points.size());
+    if (picked.kind == EditorSelection::Kind::Tempo && !tempo) {
+        timeline_.select({});                                     // undone away: nothing is selected (and this runs again)
+        return;
+    }
+    tempoCard_.show(tempo ? tempoLane_ : nullptr, picked.index, editable());
+    tempoCard_.setVisible(tempo && state_.songId.isNotEmpty());
 }
 
 void SongEditorPage::updateControls() {
     const bool open = state_.songId.isNotEmpty();
     const bool edit = editable();
-    for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &ruler_, &lanesView_, cursorLine_.get(),
+    for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_, &snapTo_,
                                                                       &setToCursor_, &barOneEditor_, &songLabel_, &clickLabel_,
                                                                       &clickOn_, &accent_, &clickSound_, &subdivision_})
         c->setVisible(open);
@@ -510,6 +521,7 @@ void SongEditorPage::updateControls() {
         chips_[static_cast<std::size_t>(i)]->setEnabled(edit);
     }
     tap_.setEnabled(edit);
+    tools_.setEnabled(edit);
     // A press stops whatever plays, this song or another, so the button says Stop whenever anything does.
     play_.setButtonText(juce::String::fromUTF8(state_.anyPlaying ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
     play_.setEnabled(session_.mode() == app::Mode::Edit && (state_.anyPlaying || !state_.loading));
@@ -524,28 +536,6 @@ void SongEditorPage::updateControls() {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&clickOn_, &accent_, &clickSound_, &subdivision_}) c->setEnabled(edit);
 }
 
-void SongEditorPage::refreshScale() {
-    if (!doc_ || ruler_.getWidth() <= 0) {
-        scale_.reset();
-        return;
-    }
-    const auto tempo = model::tempoMapOf(*doc_);
-    const auto [start, end] = model::songExtentSeconds(*doc_, tempo);
-    scale_.emplace(tempo, start, end, static_cast<float>(ruler_.getWidth()));
-    ruler_.setScale(*scale_);
-    lanes_->invalidate();
-    moveCursorLine();
-}
-
-void SongEditorPage::moveCursorLine() {
-    if (!scale_ || state_.songId.isEmpty()) {
-        cursorLine_->setX(std::nullopt);
-        return;
-    }
-    const float x = scale_->xAtSeconds(cursor_);
-    cursorLine_->setX(x >= 0.0f && x <= scale_->width() ? std::optional<float>(x) : std::nullopt);
-}
-
 void SongEditorPage::resized() {
     auto area = getLocalBounds();
     songsColumn_ = area.removeFromLeft(std::min(kSongsWidth, area.getWidth()));
@@ -558,33 +548,44 @@ void SongEditorPage::resized() {
 
     rowLabels_.clear();
     if (state_.songId.isEmpty()) {
-        bar_ = timeline_ = barsHead_ = footer_ = inspector_ = songCard_ = clickCard_ = {};
+        bar_ = footer_ = inspector_ = songCard_ = clickCard_ = {};
         // A card in the middle: the sentence, then "+ New song" under it.
         emptyCard_ = area.withSizeKeepingCentre(std::min(kEmptyCardWidth, std::max(0, area.getWidth() - 40)),
                                                 std::min(kEmptyCardHeight, area.getHeight()));
         const int w = std::min(emptyNew_.idealWidth(), emptyCard_.getWidth());
         emptyNew_.setBounds(juce::Rectangle<int>(emptyCard_.getCentreX() - w / 2, emptyCard_.getBottom() - 26 - kButtonHeight, w, kButtonHeight)
                                 .getIntersection(emptyCard_));
-        scale_.reset();
         return;
     }
 
     emptyCard_ = {};
     inspector_ = area.removeFromRight(std::min(kInspectorWidth, area.getWidth()));
     auto edit = area;
-    bar_ = edit.removeFromTop(kBarHeight);
-    footer_ = edit.removeFromBottom(kFooterHeight);
-    timeline_ = edit;
 
-    // The bar under the top bar: the title, the chips (Tap after the BPM), a gap, then ▶ Play on the right.
-    auto bar = bar_.withTrimmedBottom(1).reduced(kBarPadX, 0);
-    // As wide as the wider of its two words, so it doesn't move when it changes (PillButton's font and padding).
+    // The bar under the top bar: the title, the chips (Tap after the BPM), a gap, the tools, then ▶ Play on the right. When
+    // they would leave the title too little room, the tools go to a second row. Play is as wide as the wider of its two
+    // words, so it doesn't move when it changes (PillButton's font and padding).
     const int playWidth = std::max(play_.idealWidth(), ceilToInt(widthOf(boldFont(), juce::String::fromUTF8("\xe2\x96\xa0 Stop")) + 26.0f));
-    const auto placeIn = [&bar](juce::Component& c, juce::Rectangle<int> r) { c.setBounds(r.getIntersection(bar)); };
-    placeIn(play_, juce::Rectangle<int>(bar.getRight() - playWidth, bar.getCentreY() - kButtonHeight / 2, playWidth, kButtonHeight));
-    auto row = bar.withTrimmedRight(playWidth + kBarGap);
     int chipsWidth = tap_.idealWidth();
     for (auto& chip : chips_) chipsWidth += chip->idealWidth() + kBarGap;
+    const int toolsWidth = kBarGap + tools_.idealWidth() + kBarGap + snapTo_.idealWidth();
+    const int rowWidth = edit.getWidth() - 2 * kBarPadX - playWidth - kBarGap;
+    const bool twoRows = rowWidth - chipsWidth - kTitleGap - toolsWidth < kMinTitleWidth;
+    bar_ = edit.removeFromTop(kBarHeight + (twoRows ? kToolsRow : 0));
+    footer_ = edit.removeFromBottom(kFooterHeight);
+    timeline_.setBounds(edit);
+
+    auto bar = bar_.withTrimmedBottom(1).reduced(kBarPadX, 0);
+    auto toolsRow = twoRows ? bar.removeFromBottom(kToolsRow).withTrimmedBottom(8) : juce::Rectangle<int>();
+    const auto placeIn = [this](juce::Component& c, juce::Rectangle<int> r) { c.setBounds(r.getIntersection(bar_)); };
+    placeIn(play_, juce::Rectangle<int>(bar.getRight() - playWidth, bar.getCentreY() - kButtonHeight / 2, playWidth, kButtonHeight));
+    auto row = bar.withTrimmedRight(playWidth + kBarGap);
+    if (!twoRows) toolsRow = row.removeFromRight(std::min(toolsWidth, std::max(0, row.getWidth()))).withTrimmedLeft(kBarGap);
+    for (auto* tools : {&tools_, &snapTo_}) {                     // left to right, in the second row or on the right
+        const int w = std::min(tools->idealWidth(), std::max(0, toolsRow.getWidth()));
+        placeIn(*tools, toolsRow.removeFromLeft(w).withSizeKeepingCentre(w, kChipHeight + 2));
+        toolsRow.removeFromLeft(std::min(kBarGap, toolsRow.getWidth()));
+    }
     const int titleRoom = std::max(0, row.getWidth() - chipsWidth - kTitleGap);
     const int titleWidth = std::min(title_->idealWidth(), titleRoom);
     placeIn(*title_, row.removeFromLeft(titleWidth).withSizeKeepingCentre(titleWidth, 28));
@@ -604,24 +605,15 @@ void SongEditorPage::resized() {
         bpmEditor_.setBounds(chip.withWidth(std::max(chip.getWidth(), 64)).getIntersection(bar));
     }
 
-    // The timeline: the ruler over the lane area, and the rows below it, which scroll.
-    barsHead_ = timeline_.withWidth(std::min(LanesBody::headerColumn, timeline_.getWidth()))
-                    .withHeight(std::min(BarRuler::height, timeline_.getHeight()));
-    const int viewHeight = std::max(0, timeline_.getHeight() - BarRuler::height);
-    const bool scrolls = lanes_->idealHeight() > viewHeight;
-    const int laneWidth = std::max(0, timeline_.getWidth() - LanesBody::headerColumn - (scrolls ? lanesView_.getScrollBarThickness() : 0));
-    ruler_.setBounds(timeline_.getX() + LanesBody::headerColumn, timeline_.getY(), laneWidth, barsHead_.getHeight());
-    lanesView_.setBounds(timeline_.getX(), timeline_.getY() + barsHead_.getHeight(), timeline_.getWidth(), viewHeight);
-    fit(lanesView_, *lanes_, lanes_->idealHeight());
-    cursorLine_->setBounds(ruler_.getX(), ruler_.getY(), laneWidth, barsHead_.getHeight() + viewHeight);
-
-    // The panel on the right: SONG, then CLICK, each a card of labelled rows.
+    // The panel on the right: TEMPO while a tempo point is selected, SONG, then CLICK, each a card of labelled rows.
     auto inspector = inspector_.withTrimmedLeft(1).reduced(kInspectorPad);
-    const auto card = [&](int rows) {
-        auto c = inspector.removeFromTop(std::min(inspector.getHeight(), 2 * kCardPadY + kCapsHeight + 6 + rows * kCardRow));
+    const auto card = [&](int height) {
+        auto c = inspector.removeFromTop(std::min(inspector.getHeight(), height));
         inspector.removeFromTop(std::min(kCardGap, inspector.getHeight()));
         return c;
     };
+    const auto rowsCard = [&](int rows) { return card(2 * kCardPadY + kCapsHeight + 6 + rows * kCardRow); };
+    if (tempoCard_.isVisible()) tempoCard_.setBounds(card(tempoCard_.idealHeight()));
     const auto rowOf = [this](juce::Rectangle<int>& inner, const juce::String& label, juce::Component* control, int width, int height) {
         auto r = inner.removeFromTop(std::min(kCardRow, inner.getHeight()));
         if (control != nullptr) {
@@ -631,13 +623,13 @@ void SongEditorPage::resized() {
         }
         if (label.isNotEmpty()) rowLabels_.push_back({r, label});
     };
-    songCard_ = card(2);
+    songCard_ = rowsCard(2);
     auto songInner = songCard_.reduced(kCardPadX, kCardPadY);
     songLabel_.setBounds(songInner.removeFromTop(kCapsHeight));
     songInner.removeFromTop(6);
     rowOf(songInner, "Bar 1 starts at", &barOneEditor_, kValueWidth, kFieldHeight);
     rowOf(songInner, {}, &setToCursor_, setToCursor_.idealWidth(), 28);
-    clickCard_ = card(4);
+    clickCard_ = rowsCard(4);
     auto clickInner = clickCard_.reduced(kCardPadX, kCardPadY);
     clickLabel_.setBounds(clickInner.removeFromTop(kCapsHeight));
     clickInner.removeFromTop(6);
@@ -645,8 +637,6 @@ void SongEditorPage::resized() {
     rowOf(clickInner, "Sound", &clickSound_, kChoiceWidth, kFieldHeight);
     rowOf(clickInner, "Subdivision", &subdivision_, kChoiceWidth, kFieldHeight);
     rowOf(clickInner, "Accent the first beat", &accent_, 34, 18);
-
-    refreshScale();
 }
 
 void SongEditorPage::paint(juce::Graphics& g) {
@@ -666,21 +656,12 @@ void SongEditorPage::paint(juce::Graphics& g) {
         return;
     }
 
-    // The bar, the BARS head and the footer's border.
+    // The bar's and the footer's borders.
     g.setColour(theme::hairline);
     g.fillRect(bar_.getX(), bar_.getBottom() - 1, bar_.getWidth(), 1);
-    g.setColour(juce::Colours::black.withAlpha(0.3f));
-    g.fillRect(barsHead_);
-    g.setColour(theme::hairline);
-    g.fillRect(barsHead_.getRight() - 1, barsHead_.getY(), 1, barsHead_.getHeight());
-    g.fillRect(barsHead_.getX(), barsHead_.getBottom() - 1, barsHead_.getWidth(), 1);
-    g.setColour(theme::dim);
-    g.setFont(theme::font(theme::sizeTag, true));
-    g.drawText("BARS", barsHead_.reduced(8, 0), juce::Justification::centredLeft, true);
+    g.fillRect(footer_.getX(), footer_.getY(), footer_.getWidth(), 1);
 
     // The footer: where the cursor is, the key hints, and how the save went on the right.
-    g.setColour(theme::hairline);
-    g.fillRect(footer_.getX(), footer_.getY(), footer_.getWidth(), 1);
     {
         juce::Graphics::ScopedSaveState saved(g);
         g.reduceClipRegion(footer_);
@@ -693,26 +674,30 @@ void SongEditorPage::paint(juce::Graphics& g) {
             g.drawText(words, juce::Rectangle<float>(foot.getX(), foot.getY(), w + 1.0f, foot.getHeight()), juce::Justification::centredLeft, false);
             foot.removeFromLeft(w);
         };
+        const auto gap = [&] { foot.removeFromLeft(static_cast<float>(kFooterGap)); };
         text("Bar ", theme::dim, smallFont());
         text(state_.footerBar, theme::mint, smallBoldFont());
-        foot.removeFromLeft(static_cast<float>(kFooterGap));
+        gap();
         text(state_.footerTime, theme::dim, smallFont());
-        foot.removeFromLeft(static_cast<float>(kFooterGap));
+        gap();
         foot.removeFromLeft(drawKey(g, "Space", foot.getX(), cy));
         text(" play from the cursor", theme::dim, smallFont());
-        foot.removeFromLeft(static_cast<float>(kFooterGap));
+        gap();
+        foot.removeFromLeft(drawKey(g, "Del", foot.getX(), cy));
+        text(" delete", theme::dim, smallFont());
+        gap();
         foot.removeFromLeft(drawKey(g, "Ctrl", foot.getX(), cy));
         text("+", theme::dim, smallFont());
         foot.removeFromLeft(drawKey(g, "Z", foot.getX(), cy));
         text(" undo", theme::dim, smallFont());
-        foot.removeFromLeft(static_cast<float>(kFooterGap));
+        gap();
         const auto words = shorten(state_.saved, smallFont(), std::max(0.0f, foot.getWidth()));
         g.setColour(state_.saveFailed ? theme::danger : state_.saved.startsWith("Saved") ? theme::mint : theme::dim);
         g.setFont(smallFont());
         g.drawText(words, foot, juce::Justification::centredRight, false);
     }
 
-    // The panel on the right, its cards and their row labels.
+    // The panel on the right, its cards and their row labels (the TEMPO card draws its own).
     g.setColour(juce::Colours::black.withAlpha(0.15f));
     g.fillRect(inspector_);
     g.setColour(theme::hairline);
@@ -731,6 +716,7 @@ bool SongEditorPage::keyPressed(const juce::KeyPress& key) {
         togglePlay();
         return true;
     }
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) return timeline_.removeSelected();
     return false;                                                // Ctrl+Z and the redo keys: AppShell, for every Edit page
 }
 
@@ -744,36 +730,13 @@ bool SongEditorPage::run(const juce::String& command, const juce::var& params, c
     if (!editable()) return false;
     const auto result = session_.commands().run(command, params, coalesceKey);
     if (!result.ok) {
-        tell(result.message);
+        tellUser(dialog_, *this, result.message);
         // What the controls show goes back to what the band says, once the gesture that changed them has finished.
         juce::MessageManager::callAsync([safe = juce::Component::SafePointer<SongEditorPage>(this)] {
             if (safe != nullptr) safe->refresh(true);
         });
     }
     return result.ok;
-}
-
-void SongEditorPage::tell(const juce::String& message) {
-    dialog_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
-                                                     .withIconType(juce::MessageBoxIconType::NoIcon)
-                                                     .withAssociatedComponent(this)
-                                                     .withTitle(message)
-                                                     .withButton("OK"),
-                                                 nullptr);
-}
-
-void SongEditorPage::askText(const juce::String& title, const juce::String& text, const juce::String& button,
-                             std::function<void(const juce::String&)> then) {
-    auto* window = new juce::AlertWindow(title, {}, juce::MessageBoxIconType::NoIcon, this);
-    window->addTextEditor("text", text);
-    window->addButton(button, 1, juce::KeyPress(juce::KeyPress::returnKey));
-    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    window->enterModalState(true,
-                            juce::ModalCallbackFunction::create(
-                                [safe = juce::Component::SafePointer<SongEditorPage>(this), window, then = std::move(then)](int result) {
-                                    if (safe != nullptr && result == 1) then(window->getTextEditorContents("text").trim());
-                                }),
-                            true);
 }
 
 // The first tempo point with what is given changed (0 = keep), the others sent back as they are.
@@ -821,12 +784,13 @@ void SongEditorPage::setBarOneAtCursor() {
     const auto* song = session_.model().song(songId_);
     if (song == nullptr || !editable()) return;
     const double before = song->audioStartSeconds;
-    const double after = juce::jlimit(0.0, model::kMaxAudioStartSeconds, before + cursor_);
+    const double at = timeline_.cursorSeconds();
+    const double after = juce::jlimit(0.0, model::kMaxAudioStartSeconds, before + at);
     if (after == before) return;
     if (!run("song.setAudioStart", jsonObject({{"songId", songId_}, {"seconds", after}}))) return;
-    cursor_ -= after - before;                                    // the same place in the audio, now counted from the new bar 1
-    if (std::abs(cursor_) < 1e-9) cursor_ = 0.0;
-    moveCursorLine();
+    timeline_.refresh();                                          // the song's new extent, then the same place in the audio,
+    const double moved = at - (after - before);               // now counted from the new bar 1
+    setCursorSeconds(std::abs(moved) < 1e-9 ? 0.0 : moved);
 }
 
 void SongEditorPage::setClick(bool on, int sound, int subdivision, bool accentFirstBeat) {
@@ -845,15 +809,7 @@ void SongEditorPage::togglePlay() {
         session_.perform(app::Action::Stop);
         return;
     }
-    if (session_.model().song(songId_) != nullptr) session_.playSong(songId_, cursor_);
-}
-
-void SongEditorPage::pointerAt(float laneX, juce::ModifierKeys mods) {
-    if (!scale_ || songId_.isEmpty()) return;
-    if (isShowing()) grabKeyboardFocus();
-    if (state_.playing) return;                                   // while it plays, the cursor follows the playhead
-    const float x = juce::jlimit(0.0f, scale_->width(), laneX);
-    setCursorSeconds(mods.isAltDown() ? scale_->secondsAtX(x) : scale_->tempo().secondsAt(scale_->snap(x, 1)));
+    if (session_.model().song(songId_) != nullptr) session_.playSong(songId_, timeline_.cursorSeconds());
 }
 
 void SongEditorPage::showTitleMenu() {
@@ -871,7 +827,7 @@ void SongEditorPage::showTitleMenu() {
 
 void SongEditorPage::renameSong() {
     if (!editable()) return;
-    askText("Rename the song", state_.title, "Rename", [this](const juce::String& title) {
+    askUserText(*this, "Rename the song", state_.title, "Rename", [this](const juce::String& title) {
         if (title.isNotEmpty()) run("song.setInfo", jsonObject({{"songId", songId_}, {"title", title}}));
     });
 }
@@ -931,11 +887,11 @@ void SongEditorPage::finishBarOne(bool keep) {
 void SongEditorPage::showSignatureMenu() {
     if (!editable()) return;
     juce::PopupMenu menu;
-    for (int i = 0; i < kSignatures.size(); ++i) menu.addItem(i + 1, kSignatures[i], true, kSignatures[i] == state_.chips[1]);
+    for (int i = 0; i < kTimeSignatures.size(); ++i) menu.addItem(i + 1, kTimeSignatures[i], true, kTimeSignatures[i] == state_.chips[1]);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(chips_[1].get()),
                        [safe = juce::Component::SafePointer<SongEditorPage>(this)](int result) {
                            if (safe == nullptr || result <= 0) return;
-                           const auto& signature = kSignatures[result - 1];
+                           const auto& signature = kTimeSignatures[result - 1];
                            safe->setSignature(signature.upToFirstOccurrenceOf("/", false, false).getIntValue(),
                                               signature.fromFirstOccurrenceOf("/", false, false).getIntValue());
                        });
@@ -972,51 +928,6 @@ void SongEditorPage::showCountInMenu() {
                        [safe = juce::Component::SafePointer<SongEditorPage>(this)](int result) {
                            if (safe != nullptr && result > 0) safe->setCountIn(result - 1);
                        });
-}
-
-void SongEditorPage::showPartMenu(const juce::String& partId) {
-    const auto* song = session_.model().song(songId_);
-    if (song == nullptr) return;
-    const auto part = std::find_if(song->parts.begin(), song->parts.end(), [&](const auto& p) { return p.id == partId; });
-    if (part == song->parts.end()) return;
-    const bool edit = editable();
-    juce::PopupMenu roles;
-    juce::StringArray roleIds;
-    for (const auto& role : session_.model().band().roles) {
-        if (role.kind != model::RoleKind::Part) continue;
-        roleIds.add(role.id);
-        roles.addItem(100 + roleIds.size() - 1, role.name, edit, role.id == part->roleId);
-    }
-    juce::PopupMenu menu;
-    menu.addItem(1, "Rename" + kEllipsis, edit);
-    menu.addSubMenu("Role", roles, edit);
-    menu.addItem(2, "Remove" + kEllipsis, edit);
-    menu.showMenuAsync(
-        juce::PopupMenu::Options().withTargetComponent(lanes_.get()).withMousePosition(),
-        [safe = juce::Component::SafePointer<SongEditorPage>(this), partId, name = part->name, songTitle = song->title, roleIds](int result) {
-            if (safe == nullptr || !safe->editable()) return;
-            const auto songId = safe->songId_;
-            if (result == 1) {
-                safe->askText("Rename the part", name, "Rename", [safe, songId, partId](const juce::String& newName) {
-                    if (safe != nullptr && newName.isNotEmpty())
-                        safe->run("part.set", jsonObject({{"songId", songId}, {"partId", partId}, {"name", newName}}));
-                });
-            } else if (result == 2) {
-                safe->dialog_ = juce::AlertWindow::showScopedAsync(
-                    juce::MessageBoxOptions()
-                        .withIconType(juce::MessageBoxIconType::NoIcon)
-                        .withAssociatedComponent(safe.getComponent())
-                        .withTitle("Remove " + name + " from " + songTitle + "?")
-                        .withMessage("Undo brings it back.")
-                        .withButton("Remove")
-                        .withButton("Cancel"),
-                    [safe, songId, partId](int answer) {
-                        if (safe != nullptr && answer == 1) safe->run("part.remove", jsonObject({{"songId", songId}, {"partId", partId}}));
-                    });
-            } else if (result >= 100 && result - 100 < roleIds.size()) {
-                safe->run("part.set", jsonObject({{"songId", songId}, {"partId", partId}, {"roleId", roleIds[result - 100]}}));
-            }
-        });
 }
 
 }  // namespace sqlive::ui

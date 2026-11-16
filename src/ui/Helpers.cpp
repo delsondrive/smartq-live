@@ -34,4 +34,27 @@ void drawChevron(juce::Graphics& g, juce::Point<float> centre, juce::Colour colo
     g.strokePath(chevron, juce::PathStrokeType(1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+void tellUser(juce::ScopedMessageBox& box, juce::Component& near, const juce::String& message) {
+    box = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
+                                                 .withIconType(juce::MessageBoxIconType::NoIcon)
+                                                 .withAssociatedComponent(&near)
+                                                 .withTitle(message)
+                                                 .withButton("OK"),
+                                             nullptr);
+}
+
+void askUserText(juce::Component& near, const juce::String& title, const juce::String& text, const juce::String& button,
+                 std::function<void(const juce::String&)> then) {
+    auto* window = new juce::AlertWindow(title, {}, juce::MessageBoxIconType::NoIcon, &near);
+    window->addTextEditor("text", text);
+    window->addButton(button, 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    window->enterModalState(true,
+                            juce::ModalCallbackFunction::create(
+                                [safe = juce::Component::SafePointer<juce::Component>(&near), window, then = std::move(then)](int result) {
+                                    if (safe != nullptr && result == 1) then(window->getTextEditorContents("text").trim());
+                                }),
+                            true);
+}
+
 }  // namespace sqlive::ui

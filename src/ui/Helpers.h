@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace sqlive::ui {
@@ -29,5 +31,13 @@ float toTenth(float db);
 
 // The mockup's .dd::after: a small chevron, centred there, in that colour.
 void drawChevron(juce::Graphics&, juce::Point<float> centre, juce::Colour);
+
+// A plain message with an OK button over that component, kept in box (a later one replaces it).
+void tellUser(juce::ScopedMessageBox& box, juce::Component& near, const juce::String& message);
+
+// Asks for a line of text over that component: a field holding text, the button and Cancel. then(the trimmed text) is
+// called on the button (or Return), and never once the component has gone.
+void askUserText(juce::Component& near, const juce::String& title, const juce::String& text, const juce::String& button,
+                 std::function<void(const juce::String&)> then);
 
 }  // namespace sqlive::ui

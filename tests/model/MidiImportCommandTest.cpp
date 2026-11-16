@@ -1,3 +1,4 @@
+#include <map>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>
@@ -194,4 +195,43 @@ TEST_CASE("the song editor opens the MIDI import dialog over the app", "[midiimp
     CHECK(s.model().song(song)->tempo[0].bpm == Catch::Approx(128.0));
     d.settle();
     CHECK(openDialog() == nullptr);                               // closed once the import went in
+}
+
+TEST_CASE("an import ticks only what the file holds, and a removed device can't refuse it", "[midiimport]") {
+    DemoSession d; auto& s = *d.session; sqlive::test::TempDir files; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    auto g2 = s.commands().run("device.add", params({{"name", "Guitar 2"}})).value.toString();
+    // A file with no tempo event and no markers: only pedal changes, for both guitars.
+    auto bare = writeMidiFile(files.dir().getChildFile("Bare.mid"), 480,
+        {{at(juce::MidiMessage::textMetaEvent(3, "Gtr 1 FX"), 0), at(juce::MidiMessage::programChange(1, 4), 480 * 4)},
+         {at(juce::MidiMessage::textMetaEvent(3, "Guitar 2"), 0), at(juce::MidiMessage::programChange(2, 7), 480 * 8)}});
+    MidiFileContent content;  REQUIRE(readMidiFile(bare, content).wasOk());
+    CHECK_FALSE(content.hasTempo);
+    auto choice = defaultMidiChoice(content, s.model().band());
+    CHECK_FALSE(choice.tempo);  CHECK_FALSE(choice.sections);     // 120 BPM and no sections would only replace the song's
+    CHECK(choice.trackToDevice.at(0) == g1);  CHECK(choice.trackToDevice.at(1) == g2);
+    MidiFileContent back;  REQUIRE(fromVar(toVar(content), back));  CHECK_FALSE(back.hasTempo);
+    // A file with both: both ticked.
+    auto full = writeMidiFile(files.dir().getChildFile("Full.mid"), 480, {{at(juce::MidiMessage::tempoMetaEvent(468750), 0), marker("Intro", 0)}});
+    MidiFileContent fullContent;  REQUIRE(readMidiFile(full, fullContent).wasOk());
+    CHECK(fullContent.hasTempo);
+    CHECK(defaultMidiChoice(fullContent, s.model().band()).tempo);  CHECK(defaultMidiChoice(fullContent, s.model().band()).sections);
+
+    // The song's own tempo and sections stay; Guitar 2, removed while the dialog is open, is left out.
+    MidiFileContent sectioned; sectioned.sections = {{"", "Intro", 1, 5}};
+    MidiImportChoice sectionsOnly; sectionsOnly.tempo = false;
+    REQUIRE(s.commands().run("song.importMidi", params({{"songId", song}, {"content", toVar(sectioned)}, {"choice", toVar(sectionsOnly)}})).ok);
+    REQUIRE(s.model().song(song)->sections.size() == 1);
+    ui::MidiImportDialog dialog(s, song, bare);
+    REQUIRE(s.commands().run("device.remove", params({{"deviceId", g2}})).ok);
+    CHECK(withBandDevices(dialog.choice(), s.model().band()).trackToDevice == std::map<int, juce::String>{{0, g1}});
+    bool closed = false;
+    dialog.onClose = [&] { closed = true; };
+    dialog.import();
+    CHECK(closed);
+    const auto& after = *s.model().song(song);
+    CHECK(after.tempo[0].bpm == 100.0);
+    REQUIRE(after.sections.size() == 1);  CHECK(after.sections[0].name == "Intro");
+    REQUIRE(after.midiLanes.count(g1) == 1);  CHECK(after.midiLanes.at(g1)[0].bar == 2);
+    CHECK(after.midiLanes.count(g2) == 0);
 }

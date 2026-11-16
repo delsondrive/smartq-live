@@ -10,13 +10,14 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
-#include "ui/BarRuler.h"
-#include "ui/BarScale.h"
 #include "ui/TapTempo.h"
+#include "ui/TempoLane.h"
+#include "ui/Timeline.h"
 #include "ui/Widgets.h"
 
 namespace sqlive::ui {
 
+class PartLane;
 class Veil;
 
 // What the Song editor shows (the mockup's screen 9, as far as stage 1 goes), in its words.
@@ -48,17 +49,19 @@ std::set<juce::String> missingParts(const app::Session&, const juce::String& son
 SongEditorState makeSongEditorState(const app::Session&, const juce::String& songId, double cursorSeconds,
                                     const std::set<juce::String>* missing = nullptr);
 
-// The mockup's screen 9, the frame later stages fill in: no arrangement row, no tempo, section, cue or MIDI lanes, no
-// automation. Left (200 px): every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the
-// title (a click: Rename…, Import a MIDI file…), the chips edited in place (BPM typed or tapped, the time signature, the
-// key and the count-in from menus) and "▶ Play" / "■ Stop". The timeline: a 150 px header column and the lanes on a BarScale from the song's
-// start (count-in included) to its end: the BARS ruler, one lane per part with its waveform in its role's colour (a click
-// on the name: Rename, Role, Remove), and the Click lane's ticks. A white cursor line, moved by a click or drag on the
-// ruler or the lanes (snapped to the beat; Alt for no snap), follows the playhead while the song plays. Right (290 px):
-// SONG ("Bar 1 starts at") and CLICK. Footer: where the cursor is, the key hints and how the save went. With no song open:
-// "Choose a song on the left, or add one." and "+ New song".
+// The mockup's screen 9, as far as stage 2 goes: no arrangement row, no section or cue lanes, no automation. Left (200 px):
+// every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the title (a click: Rename…,
+// Import a MIDI file…), the chips edited in place (BPM typed or tapped, the time signature, the key and the count-in from
+// menus), the tools "Select · Draw" and the snap "Bar · Beat · 1/8", and "▶ Play" / "■ Stop" (the tools go to a second
+// row when the window is too narrow for one). The Timeline: one PartLane per part (a click on its name: Rename, Role,
+// Remove), the ClickLane and the Tempo lane, under the BARS ruler, with the white cursor line (moved by a click or drag on
+// the ruler or a lane's empty space, snapped as the snap says; Alt for no snap), which follows the playhead while the song
+// plays. Right (290 px): TEMPO while a tempo point is selected, SONG ("Bar 1 starts at") and CLICK. Footer: where the
+// cursor is, the key hints and how the save went. With no song open: "Choose a song on the left, or add one." and
+// "+ New song".
 //
-// Every edit is a command (Session::commands()), and only in Edit mode. Space (Edit mode) plays from the cursor or stops.
+// Every edit is a command (Session::commands()), and only in Edit mode. Space (Edit mode) plays from the cursor or stops;
+// Delete removes what is selected.
 // The page refreshes on Session::changes() while it is visible, and when it is shown again.
 class SongEditorPage : public juce::Component, private juce::ChangeListener {
 public:
@@ -85,7 +88,8 @@ public:
     void togglePlay();                                            // plays this song from the cursor, or stops
 
     const SongEditorState& state() const { return state_; }
-    const juce::Viewport& lanesViewport() const;                  // for tests: the scrolling lanes
+    const juce::Viewport& lanesViewport() const;                  // for tests: the timeline's scrolling lanes
+    Timeline& timeline() { return timeline_; }                    // for tests
     const juce::Viewport& songsViewport() const;                  // for tests: the scrolling list of songs
     juce::String drawnTitle() const;                              // for tests: the title as laid out, shortened with "…" to fit
 
@@ -96,26 +100,20 @@ public:
 
 private:
     class SongsBody;
-    class LanesBody;
-    class CursorLine;
     class EditChip;
     class TitleLabel;
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void refresh(bool force = false);
     void updateControls();
-    void moveCursorLine();
-    void refreshScale();
+    void buildLanes();                                            // the open song's lanes, when it or its parts changed
+    void showTempoCard();
 
     bool editable() const;                                        // Edit mode, with a song open
     bool run(const juce::String& command, const juce::var& params, const juce::String& coalesceKey = {});
-    void tell(const juce::String& message);
-    void askText(const juce::String& title, const juce::String& text, const juce::String& button,
-                 std::function<void(const juce::String&)> then);
     void setFirstTempoPoint(std::optional<double> bpm, int numerator, int denominator, const juce::String& coalesceKey = {});
 
     // From the controls.
-    void pointerAt(float laneX, juce::ModifierKeys);              // a press or drag on the ruler or a lane
     void showTitleMenu();                                         // "Rename…" and "Import a MIDI file…"
     void renameSong();
     void chooseMidiFile();
@@ -125,38 +123,39 @@ private:
     void showSignatureMenu();
     void showKeyMenu();
     void showCountInMenu();
-    void showPartMenu(const juce::String& partId);
     void sendClick();
 
     app::Session& session_;
     SongEditorState state_;
     juce::String songId_;
-    double cursor_ = 0.0;
     std::optional<model::SongDoc> doc_;                           // the open song as last shown
     std::shared_ptr<const app::LoadedSong> loaded_;               // its audio, as last shown
     std::set<juce::String> missing_;                              // missingParts for doc_ and loaded_, so a refresh
                                                                   // looks at the disk only when either changes
     bool missingKnown_ = false;
-    std::optional<BarScale> scale_;                               // across the lane area
     bool fresh_ = false, shownEditable_ = true;
     TapTempo tapTempo_;
     int tapRun_ = 0;                                              // one undo step for each run of taps
 
     std::unique_ptr<SongsBody> songs_;
-    juce::Viewport songsView_, lanesView_;
-    std::unique_ptr<LanesBody> lanes_;
-    std::unique_ptr<CursorLine> cursorLine_;
+    juce::Viewport songsView_;
+    Timeline timeline_;
+    juce::String laneSong_;                                       // the song and parts the lanes were built for
+    std::vector<juce::String> laneParts_;
+    TempoLane* tempoLane_ = nullptr;                              // the timeline's, while it has them
+    std::vector<PartLane*> partLanes_;
+    TempoCard tempoCard_;
     std::unique_ptr<TitleLabel> title_;
     std::array<std::unique_ptr<EditChip>, 4> chips_;             // BPM, signature, key, count-in
-    BarRuler ruler_;
     PillButton tap_, play_, setToCursor_, emptyNew_;
     juce::TextEditor bpmEditor_, barOneEditor_;
     CapsLabel songsLabel_{"ALL SONGS"}, songLabel_{"SONG"}, clickLabel_{"CLICK"};
     Switch clickOn_, accent_;
     Choice clickSound_, subdivision_;
+    Segmented tools_, snapTo_;                                    // "Select · Draw", "Bar · Beat · 1/8"
 
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<int> songsColumn_, bar_, timeline_, barsHead_, footer_, inspector_, songCard_, clickCard_, emptyCard_;
+    juce::Rectangle<int> songsColumn_, bar_, footer_, inspector_, songCard_, clickCard_, emptyCard_;
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> rowLabels_;   // the cards' row labels
     juce::ScopedMessageBox dialog_;
     std::unique_ptr<juce::FileChooser> chooser_;

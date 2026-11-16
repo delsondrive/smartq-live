@@ -36,6 +36,8 @@ MidiImportDialog::MidiImportDialog(app::Session& session, juce::String songId, j
     const auto read = model::readMidiFile(file_, content);
     if (read.wasOk()) {
         choice_ = model::defaultMidiChoice(content, session_.model().band());
+        tempo_ = choice_.tempo;                                   // off when the file has no tempo, or no markers
+        sections_ = choice_.sections;
         content_ = std::move(content);
     } else {
         problem_ = read.getErrorMessage();
@@ -65,7 +67,7 @@ void MidiImportDialog::setTicks(bool tempo, bool sections, bool pedalChanges) {
 
 void MidiImportDialog::import() {
     if (!content_ || session_.mode() != app::Mode::Edit) return;
-    auto choice = choice_;
+    auto choice = model::withBandDevices(choice_, session_.model().band());   // a device removed meanwhile: left out
     choice.tempo = tempo_;
     choice.sections = sections_;
     if (!pedalChanges_) choice.trackToDevice.clear();

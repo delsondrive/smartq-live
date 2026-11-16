@@ -294,6 +294,7 @@ juce::Result readMidiFile(const juce::File& file, MidiFileContent& content) {
         }
     }
     content.tempo = points;
+    content.hasTempo = ! tempos.empty();
 
     // Tracks.
     for (int t = 0; t < midi.getNumTracks(); ++t) summarise(*midi.getTrack(t), t + 1, ppq, grid, content);
@@ -370,10 +371,19 @@ juce::String suggestDeviceId(const MidiFileTrack& track, const BandDoc& band) {
 
 MidiImportChoice defaultMidiChoice(const MidiFileContent& content, const BandDoc& band) {
     MidiImportChoice choice;
+    choice.tempo = content.hasTempo;
+    choice.sections = ! content.sections.empty();
     for (size_t i = 0; i < content.tracks.size(); ++i) {
         const auto id = suggestDeviceId(content.tracks[i], band);
         if (id.isNotEmpty()) choice.trackToDevice[(int) i] = id;
     }
+    return choice;
+}
+
+MidiImportChoice withBandDevices(MidiImportChoice choice, const BandDoc& band) {
+    std::erase_if(choice.trackToDevice, [&](const auto& entry) {
+        return std::none_of(band.midiDevices.begin(), band.midiDevices.end(), [&](const auto& d) { return d.id == entry.second; });
+    });
     return choice;
 }
 
@@ -408,6 +418,7 @@ juce::var toVar(const MidiFileContent& content) {
     auto* o = v.getDynamicObject();
     SongDoc song; song.tempo = content.tempo;
     o->setProperty("tempo", toVar(song).getProperty("tempo", juce::var()));
+    o->setProperty("hasTempo", content.hasTempo);
     o->setProperty("sections", listOf(content.sections, [](const SectionDoc& s) { return toVar(s); }));
     o->setProperty("tracks", listOf(content.tracks, [](const MidiFileTrack& t) {
         auto tv = object();
@@ -439,6 +450,8 @@ bool fromVar(const juce::var& v, MidiFileContent& content) {
         if (fromVar(holder, song, ignored)) content.tempo = song.tempo;
         if (content.tempo.empty()) content.tempo = {TempoPointDoc{}};
     }
+    const auto hasTempo = v.getProperty("hasTempo", true);
+    content.hasTempo = ! hasTempo.isBool() || (bool) hasTempo;          // only a plain false says the file has none
     forEachIn(v.getProperty("sections", {}), [&](const juce::var& item) {
         SectionDoc s;
         if (fromVar(item, s, ignored)) content.sections.push_back(s);

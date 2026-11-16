@@ -535,7 +535,9 @@ void NewSongDialog::finish() {
         refresh();
         return;
     }
-    const auto result = session_.commitImport(std::move(converted), midi_ ? &midiChoice_ : nullptr);
+    // A device removed while the song was converting: its tracks are left out rather than refusing the whole import.
+    const auto choice = model::withBandDevices(midiChoice_, session_.model().band());
+    const auto result = session_.commitImport(std::move(converted), midi_ ? &choice : nullptr);
     if (result.result.failed()) {
         problem_ = result.result.getErrorMessage();
         refresh();

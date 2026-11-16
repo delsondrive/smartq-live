@@ -19,6 +19,7 @@ struct MidiFileTrack {
 
 struct MidiFileContent {
     std::vector<TempoPointDoc> tempo;                      // from bar 1 beat 1; never empty after a successful read
+    bool hasTempo = true;                                  // false: the file has no tempo event, so tempo is 120 BPM
     std::vector<SectionDoc> sections;                      // from the file's markers
     std::vector<MidiFileTrack> tracks;                     // only tracks with a program change, control change or note
     int bars = 0;                                          // the file's length in whole bars; 0 for an empty file
@@ -41,8 +42,13 @@ struct MidiImportChoice {
     bool operator==(const MidiImportChoice&) const = default;
 };
 
-// Tempo and sections, and each track whose suggestDeviceId isn't "" sent to that device.
+// Tempo when the file has a tempo event, sections when it has markers (so an import never puts 120 BPM in place of a
+// song's tempo, or clears its sections, for nothing), and each track whose suggestDeviceId isn't "" sent to that device.
 MidiImportChoice defaultMidiChoice(const MidiFileContent&, const BandDoc&);
+
+// The choice without the devices the band no longer has (removed while the choice was being made): their tracks are left
+// out, so one removed device can't refuse the whole import.
+MidiImportChoice withBandDevices(MidiImportChoice, const BandDoc&);
 
 // The var forms the "song.importMidi" command takes. fromVar returns false when the var isn't an object; anything in it is
 // limited the way the documents limit it (a content's tempo is never empty).
