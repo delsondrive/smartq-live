@@ -20,12 +20,21 @@ struct WantedSong {
     std::map<juce::String, juce::File> files;                      // each part's audio file by part id, resolved on the message thread
 };
 
+// A part's waveform in short, for drawing it at any scale: the lowest and highest sample (of either channel) in each block of
+// blockFrames frames, and the loudest. The loader makes it, so nothing is worked out from the audio while a page paints.
+struct WaveSummary {
+    static constexpr int blockFrames = 256;
+    std::vector<float> lo, hi;                                     // one point a block
+    float peak = 0.0f;
+};
+
 // A song's audio in memory at one sample rate. Never changed once the cache hands it out.
 struct LoadedSong {
     juce::String songId;
     double sampleRate = 48000.0;
     std::map<juce::String, std::shared_ptr<const engine::PartAudio>> audio;   // by part id; absent = couldn't be loaded
     std::vector<float> overviewMin, overviewMax;                   // 1200 points each, over the longest part, every loaded part summed
+    std::map<juce::String, WaveSummary> waves;                     // by part id, for each part in audio
     juce::StringArray problems;                                    // "Keys: the audio file is missing."
     std::int64_t bytes = 0;                                        // bytesInMemory of the parts that were loaded
 };

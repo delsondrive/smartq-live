@@ -1,6 +1,8 @@
 #include "app/SongCache.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <set>
 #include <utility>
 
@@ -45,6 +47,32 @@ void makeOverview(LoadedSong& song, const model::SongDoc& doc) {
         song.overviewMin[(std::size_t) k] = *lo;
         song.overviewMax[(std::size_t) k] = *hi;
     }
+}
+
+WaveSummary summarise(const engine::PartAudio& audio) {
+    constexpr auto block = static_cast<std::size_t>(WaveSummary::blockFrames);
+    WaveSummary s;
+    const auto frames = audio.left.size();
+    const bool stereo = audio.right.size() == frames;
+    const auto blocks = (frames + block - 1) / block;
+    s.lo.assign(blocks, 0.0f);
+    s.hi.assign(blocks, 0.0f);
+    for (std::size_t b = 0; b < blocks; ++b) {
+        float lo = std::numeric_limits<float>::max(), hi = std::numeric_limits<float>::lowest();
+        const auto end = std::min(frames, (b + 1) * block);
+        for (std::size_t f = b * block; f < end; ++f) {
+            lo = std::min(lo, audio.left[f]);
+            hi = std::max(hi, audio.left[f]);
+            if (stereo) {
+                lo = std::min(lo, audio.right[f]);
+                hi = std::max(hi, audio.right[f]);
+            }
+        }
+        s.lo[b] = lo;
+        s.hi[b] = hi;
+        s.peak = std::max({s.peak, std::abs(lo), std::abs(hi)});
+    }
+    return s;
 }
 
 }  // namespace
@@ -242,6 +270,7 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
             song->problems.add(part.name + ": the audio file couldn't be read.");
             continue;
         }
+        song->waves[part.id] = summarise(*audio);
         song->audio[part.id] = std::move(audio);
         loadedParts.parts.push_back(part);
     }

@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -37,8 +38,13 @@ struct SongEditorState {
     bool operator==(const SongEditorState&) const = default;
 };
 
-// An unknown song id gives the empty state: no songId, no parts, the list with nothing selected.
-SongEditorState makeSongEditorState(const app::Session&, const juce::String& songId, double cursorSeconds);
+// The song's parts whose audio file is missing (app::partFileProblems, which looks at the disk): by part id.
+std::set<juce::String> missingParts(const app::Session&, const juce::String& songId);
+
+// An unknown song id gives the empty state: no songId, no parts, the list with nothing selected. The parts' missing files are
+// looked for on disk unless missing is given (what missingParts said, kept while the song and its audio stay the same).
+SongEditorState makeSongEditorState(const app::Session&, const juce::String& songId, double cursorSeconds,
+                                    const std::set<juce::String>* missing = nullptr);
 
 // The mockup's screen 9, the frame later stages fill in: no arrangement row, no tempo, section, cue or MIDI lanes, no
 // automation. Left (200 px): every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the
@@ -122,6 +128,9 @@ private:
     double cursor_ = 0.0;
     std::optional<model::SongDoc> doc_;                           // the open song as last shown
     std::shared_ptr<const app::LoadedSong> loaded_;               // its audio, as last shown
+    std::set<juce::String> missing_;                              // missingParts for doc_ and loaded_, so a refresh
+                                                                  // looks at the disk only when either changes
+    bool missingKnown_ = false;
     std::optional<BarScale> scale_;                               // across the lane area
     bool fresh_ = false, shownEditable_ = true;
     TapTempo tapTempo_;

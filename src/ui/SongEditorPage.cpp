@@ -11,26 +11,29 @@
 #include "app/PartFiles.h"
 #include "engine/Click.h"
 #include "model/DocumentsJson.h"
+#include "model/JsonObject.h"
+#include "model/SongAudio.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
+#include "ui/SongEditorLanes.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
 
+using model::jsonObject;
+
 namespace {
 
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");     // …
 const juce::String kDash = juce::String::fromUTF8("\xe2\x80\x93");         // –
 
 // The mockup's CSS: .songs (200 px), .ebar, .tl (a 150 px header column; rows of 26, 44 and 36 px), .insp (290 px), .foot.
 constexpr int kSongsWidth = 200, kSongsPad = 10, kCapsHeight = 14, kCapsGap = 8;
 constexpr int kSongItemHeight = 30, kSongGap = 4, kNewSongGap = 10, kSongPadX = 9;
 constexpr int kBarHeight = 47, kBarPadX = 12, kBarGap = 8, kTitleGap = 6, kChipHeight = 24, kButtonHeight = 30;
-constexpr int kHeaderColumn = 150, kPartRow = 44, kClickRow = 36, kWaveInset = 4;
 constexpr int kFooterHeight = 32, kFooterPadX = 12, kFooterGap = 14;
 constexpr int kInspectorWidth = 290, kInspectorPad = 12, kCardGap = 10, kCardPadX = 12, kCardPadY = 10, kCardRow = 30;
 constexpr int kValueWidth = 96, kFieldHeight = 24, kChoiceWidth = 130;
 constexpr int kEmptyCardWidth = 460, kEmptyCardHeight = 150;
-constexpr int kSummaryBlock = 256;                                // frames a point of a part's waveform summary covers
 
 const juce::StringArray kSignatures{"2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "9/8", "12/8"};
 const juce::StringArray kMajorKeys{"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
@@ -45,29 +48,7 @@ juce::Font boldFont() { return theme::font(theme::sizeBody, true); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
 juce::Font smallBoldFont() { return theme::font(theme::sizeSmall, true); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
-
-juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items) {
-    auto* o = new juce::DynamicObject();
-    for (const auto& [key, value] : items) o->setProperty(juce::Identifier(key), value);
-    return juce::var(o);
-}
-
-engine::TempoMap tempoOf(const model::SongDoc& song) {
-    std::vector<engine::TempoPoint> points;
-    for (const auto& p : song.tempo) points.push_back({p.bar, p.beat, p.bpm, p.numerator, p.denominator});
-    return engine::TempoMap(std::move(points));
-}
-
-// Where the song begins and ends in song time, as the engine plays it: from the count-in or the audio before bar 1,
-// whichever is longer, to where the audio ends (at least to bar 2, so a song with no audio still has a scale).
-std::pair<double, double> extentOf(const model::SongDoc& song, const engine::TempoMap& tempo) {
-    const double countIn = -tempo.secondsAt({1 - std::max(0, song.countInBars), 1.0});
-    const double start = -std::max(countIn, song.audioStartSeconds);
-    const double end = std::max(song.lengthSeconds - song.audioStartSeconds, tempo.secondsAt({2, 1.0}));
-    return {start, std::max(end, start + 1.0)};
-}
 
 juce::String countInWords(int bars) {
     if (bars <= 0) return "none";
@@ -92,7 +73,7 @@ std::optional<double> typedNumber(juce::String text) {
 
 // "33.1" and "2:14": where the cursor is.
 void footerOf(const model::SongDoc& song, double cursorSeconds, juce::String& bar, juce::String& time) {
-    const auto at = tempoOf(song).barBeatAt(cursorSeconds);
+    const auto at = model::tempoMapOf(song).barBeatAt(cursorSeconds);
     bar = juce::String(at.bar) + "." + juce::String(static_cast<int>(std::floor(at.beat + 1e-9)));
     time = formatTime(cursorSeconds);
 }
@@ -119,7 +100,15 @@ void fit(juce::Viewport& view, juce::Component& body, int idealHeight) {
 
 // ---- The state ---------------------------------------------------------------------------------------------------------
 
-SongEditorState makeSongEditorState(const app::Session& session, const juce::String& songId, double cursorSeconds) {
+std::set<juce::String> missingParts(const app::Session& session, const juce::String& songId) {
+    std::set<juce::String> missing;
+    for (const auto& problem : app::partFileProblems(session, songId))
+        if (!problem.inCloud) missing.insert(problem.partId);
+    return missing;
+}
+
+SongEditorState makeSongEditorState(const app::Session& session, const juce::String& songId, double cursorSeconds,
+                                    const std::set<juce::String>* missing) {
     SongEditorState state;
     const auto& model = session.model();
     for (const auto& id : model.songIds()) {
@@ -148,13 +137,12 @@ SongEditorState makeSongEditorState(const app::Session& session, const juce::Str
     state.chips.add("Key " + (song->key.isEmpty() ? kDash : song->key));
     state.chips.add("Count-in " + countInWords(song->countInBars));
 
-    std::set<juce::String> missing;
-    for (const auto& problem : app::partFileProblems(session, songId))
-        if (!problem.inCloud) missing.insert(problem.partId);
+    const auto looked = missing != nullptr ? std::set<juce::String>() : missingParts(session, songId);
+    const auto& missingNow = missing != nullptr ? *missing : looked;
     for (const auto& part : song->parts) {
         const auto* role = model.role(part.roleId);
         state.parts.push_back({part.id, part.name, role != nullptr ? role->name : juce::String(),
-                               role != nullptr ? role->colour : theme::dim, missing.count(part.id) > 0});
+                               role != nullptr ? role->colour : theme::dim, missingNow.count(part.id) > 0});
     }
 
     footerOf(*song, cursorSeconds, state.footerBar, state.footerTime);
@@ -257,243 +245,6 @@ private:
 // ---- The lanes ---------------------------------------------------------------------------------------------------------
 
 // One row per part (its header, then its waveform), then the Click row, each header in the 150 px column on the left.
-// The waveforms are worked out from the loaded audio once per scale: a summary of each part (the min and max of every 256
-// frames, both channels) is made once per part's audio, and each pixel's column is the min and max of the summary's points
-// under it, drawn to the part's own peak so a quiet part still shows its shape, as a bar every 2 px.
-class SongEditorPage::LanesBody : public juce::Component {
-public:
-    explicit LanesBody(SongEditorPage& page) : page_(page) {}
-
-    int idealHeight() const { return static_cast<int>(page_.state_.parts.size()) * kPartRow + kClickRow; }
-
-    void invalidate() {
-        built_ = false;
-        repaint();
-    }
-
-    void paint(juce::Graphics& g) override {
-        if (!page_.scale_ || !page_.doc_) return;
-        if (!built_) build();
-        const auto clip = g.getClipBounds();
-        const auto& parts = page_.state_.parts;
-        for (std::size_t i = 0; i < parts.size(); ++i) {
-            const juce::Rectangle<int> row(0, static_cast<int>(i) * kPartRow, getWidth(), kPartRow);
-            if (!row.intersects(clip)) continue;
-            const auto& part = parts[i];
-            paintHeader(g, row, part.colour, part.name);
-            const auto lane = row.withTrimmedLeft(kHeaderColumn);
-            paintLaneBackground(g, lane);
-            const auto words = lane.reduced(10, 0);
-            if (part.missing) {
-                g.setColour(theme::caution);
-                g.setFont(smallFont());
-                g.drawText("The audio file is missing", words, juce::Justification::centredLeft, true);
-            } else if (page_.state_.loading) {
-                g.setColour(theme::dim);
-                g.setFont(smallFont());
-                g.drawText("Loading" + kEllipsis + " " + juce::String(juce::roundToInt(page_.state_.progress * 100.0)) + "%", words,
-                           juce::Justification::centredLeft, true);
-            } else if (const auto found = columns_.find(part.partId); found != columns_.end()) {
-                paintWave(g, lane, found->second, part.colour);
-            } else {
-                g.setColour(theme::caution);
-                g.setFont(smallFont());
-                g.drawText("The audio file couldn't be read", words, juce::Justification::centredLeft, true);
-            }
-        }
-        const juce::Rectangle<int> click(0, static_cast<int>(parts.size()) * kPartRow, getWidth(), kClickRow);
-        if (click.intersects(clip)) {
-            paintHeader(g, click, theme::ember, "Click");
-            const auto lane = click.withTrimmedLeft(kHeaderColumn);
-            paintLaneBackground(g, lane);
-            paintTicks(g, lane);
-        }
-    }
-
-    void mouseDown(const juce::MouseEvent& e) override {
-        pressedLane_ = e.x >= kHeaderColumn;
-        if (e.mods.isPopupMenu()) return;
-        if (!pressedLane_) {
-            const int row = e.y / kPartRow;
-            if (e.y >= 0 && row < static_cast<int>(page_.state_.parts.size()))
-                page_.showPartMenu(page_.state_.parts[static_cast<std::size_t>(row)].partId);
-            return;
-        }
-        page_.pointerAt(e.position.x - static_cast<float>(kHeaderColumn), e.mods);
-    }
-
-    void mouseDrag(const juce::MouseEvent& e) override {
-        if (pressedLane_ && !e.mods.isPopupMenu()) page_.pointerAt(e.position.x - static_cast<float>(kHeaderColumn), e.mods);
-    }
-
-private:
-    struct Summary {
-        std::shared_ptr<const engine::PartAudio> audio;
-        std::vector<float> lo, hi;                                // one point a block
-        float peak = 0.0f;
-    };
-    struct Columns {
-        std::vector<float> lo, hi;                                // one a pixel; NaN where there is no audio
-        float peak = 0.0f;
-    };
-
-    static void paintHeader(juce::Graphics& g, juce::Rectangle<int> row, juce::Colour dot, const juce::String& name) {
-        const auto head = row.withWidth(kHeaderColumn);
-        g.setColour(juce::Colours::black.withAlpha(0.18f));
-        g.fillRect(head);
-        g.setColour(theme::hairline);
-        g.fillRect(head.getRight() - 1, head.getY(), 1, head.getHeight());
-        g.fillRect(head.getX(), head.getBottom() - 1, head.getWidth(), 1);
-        const float cy = static_cast<float>(head.getCentreY());
-        g.setColour(dot);
-        g.fillEllipse(8.0f, cy - 4.0f, 8.0f, 8.0f);
-        const auto text = juce::Rectangle<float>(22.0f, static_cast<float>(head.getY()), static_cast<float>(kHeaderColumn - 22 - 8),
-                                                 static_cast<float>(head.getHeight()));
-        g.setColour(theme::mid);
-        g.setFont(smallBoldFont());
-        g.drawText(shorten(name, smallBoldFont(), text.getWidth()), text, juce::Justification::centredLeft, false);
-    }
-
-    void paintLaneBackground(juce::Graphics& g, juce::Rectangle<int> lane) const {
-        g.setColour(juce::Colours::white.withAlpha(0.05f));
-        for (const float x : barLines_) g.fillRect(static_cast<float>(lane.getX()) + x, static_cast<float>(lane.getY()), 1.0f,
-                                                   static_cast<float>(lane.getHeight() - 1));
-        g.setColour(theme::hairline);
-        g.fillRect(lane.getX(), lane.getBottom() - 1, lane.getWidth(), 1);
-    }
-
-    static void paintWave(juce::Graphics& g, juce::Rectangle<int> lane, const Columns& c, juce::Colour colour) {
-        const float mid = static_cast<float>(lane.getCentreY());
-        const float half = static_cast<float>(kPartRow - 2 * kWaveInset) * 0.5f;
-        const float scale = c.peak > 1.0e-6f ? 0.9f * half / c.peak : 0.0f;
-        // The mockup's canvas.wf: a 1.3 px bar every 2 px, at 75 % opacity, so a dense part keeps its texture.
-        g.setColour(colour.withMultipliedAlpha(0.75f));
-        for (std::size_t x = 0; x < c.lo.size(); x += 2) {
-            float lo = c.lo[x], hi = c.hi[x];
-            if (x + 1 < c.lo.size() && !std::isnan(c.lo[x + 1])) {          // the bar covers both pixels' columns
-                lo = std::isnan(lo) ? c.lo[x + 1] : std::min(lo, c.lo[x + 1]);
-                hi = std::isnan(hi) ? c.hi[x + 1] : std::max(hi, c.hi[x + 1]);
-            }
-            if (std::isnan(lo)) continue;
-            // From the bar's top to its bottom, always through the centre line: a bar wholly above or below zero still
-            // reaches it.
-            const float top = mid - hi * scale, bottom = mid - lo * scale;
-            const float y = std::min(top, mid - 0.5f);
-            g.fillRect(static_cast<float>(lane.getX()) + static_cast<float>(x), y, 1.3f, std::max(bottom, mid + 0.5f) - y);
-        }
-    }
-
-    void paintTicks(juce::Graphics& g, juce::Rectangle<int> lane) const {
-        const float mid = static_cast<float>(lane.getCentreY());
-        const bool on = page_.state_.clickOn;
-        for (const auto& tick : ticks_) {
-            const float h = tick.kind == engine::ClickKind::Downbeat ? 24.0f : tick.kind == engine::ClickKind::Beat ? 12.0f : 6.0f;
-            // Off, the click still sounds through the count-in, so only the count-in's ticks stay bright: those before it
-            // (audio before bar 1 that is longer than the count-in) and those from bar 1 on are dimmed.
-            g.setColour(on || tick.countIn ? theme::ember : theme::ember.withAlpha(0.35f));
-            g.fillRect(static_cast<float>(lane.getX()) + tick.x, mid - h * 0.5f, 1.2f, h);
-        }
-    }
-
-    const Summary& summaryOf(const std::shared_ptr<const engine::PartAudio>& audio) {
-        if (const auto found = summaries_.find(audio.get()); found != summaries_.end()) return found->second;
-        Summary s;
-        s.audio = audio;
-        const auto frames = audio->left.size();
-        const bool stereo = audio->right.size() == frames;
-        const auto blocks = (frames + kSummaryBlock - 1) / kSummaryBlock;
-        s.lo.assign(blocks, 0.0f);
-        s.hi.assign(blocks, 0.0f);
-        for (std::size_t b = 0; b < blocks; ++b) {
-            float lo = std::numeric_limits<float>::max(), hi = std::numeric_limits<float>::lowest();
-            const auto end = std::min(frames, (b + 1) * kSummaryBlock);
-            for (std::size_t f = b * kSummaryBlock; f < end; ++f) {
-                lo = std::min(lo, audio->left[f]);
-                hi = std::max(hi, audio->left[f]);
-                if (stereo) {
-                    lo = std::min(lo, audio->right[f]);
-                    hi = std::max(hi, audio->right[f]);
-                }
-            }
-            s.lo[b] = lo;
-            s.hi[b] = hi;
-            s.peak = std::max({s.peak, std::abs(lo), std::abs(hi)});
-        }
-        return summaries_.emplace(audio.get(), std::move(s)).first->second;
-    }
-
-    void build() {
-        built_ = true;
-        columns_.clear();
-        ticks_.clear();
-        barLines_.clear();
-        const auto& scale = *page_.scale_;
-        const int width = static_cast<int>(scale.width());
-        for (const int bar : scale.labelledBars(8.0f)) barLines_.push_back(std::round(scale.xAtBar(bar)));
-
-        // The parts' columns, from the summaries of the audio that is loaded now (those of audio no longer loaded go).
-        const auto& loaded = page_.loaded_;
-        std::set<const engine::PartAudio*> inUse;
-        if (loaded != nullptr) {
-            const double rate = loaded->sampleRate;
-            const double barOne = page_.doc_->audioStartSeconds;
-            for (const auto& part : page_.state_.parts) {
-                const auto found = loaded->audio.find(part.partId);
-                if (found == loaded->audio.end() || found->second == nullptr) continue;
-                inUse.insert(found->second.get());
-                const auto& summary = summaryOf(found->second);
-                const auto blocks = static_cast<std::int64_t>(summary.lo.size());
-                Columns c;
-                c.peak = summary.peak;
-                c.lo.assign(static_cast<std::size_t>(std::max(0, width)), std::numeric_limits<float>::quiet_NaN());
-                c.hi = c.lo;
-                for (int x = 0; x < width; ++x) {
-                    const auto frameAt = [&](float px) { return (scale.secondsAtX(px) + barOne) * rate; };
-                    const auto b0 = static_cast<std::int64_t>(std::floor(frameAt(static_cast<float>(x)) / kSummaryBlock));
-                    auto b1 = static_cast<std::int64_t>(std::ceil(frameAt(static_cast<float>(x + 1)) / kSummaryBlock));
-                    b1 = std::max(b1, b0 + 1);
-                    float lo = std::numeric_limits<float>::max(), hi = std::numeric_limits<float>::lowest();
-                    for (auto b = std::max<std::int64_t>(0, b0); b < std::min(b1, blocks); ++b) {
-                        lo = std::min(lo, summary.lo[static_cast<std::size_t>(b)]);
-                        hi = std::max(hi, summary.hi[static_cast<std::size_t>(b)]);
-                    }
-                    if (lo <= hi) {
-                        c.lo[static_cast<std::size_t>(x)] = lo;
-                        c.hi[static_cast<std::size_t>(x)] = hi;
-                    }
-                }
-                columns_.emplace(part.partId, std::move(c));
-            }
-        }
-        for (auto it = summaries_.begin(); it != summaries_.end();)
-            it = inUse.count(it->first) > 0 ? std::next(it) : summaries_.erase(it);
-
-        // The click's ticks, at a millisecond's precision, which is far finer than a pixel.
-        constexpr double kRate = 1000.0;
-        const auto from = static_cast<engine::SamplePos>(std::llround(scale.startSeconds() * kRate));
-        const auto to = static_cast<engine::SamplePos>(std::llround(scale.endSeconds() * kRate));
-        const auto subdivision = static_cast<engine::Subdivision>(juce::jlimit(0, 3, page_.state_.subdivision));
-        // The count-in is [-its length, 0), as prepareSong's countInStart; it is empty with no count-in.
-        const int countInBars = std::max(0, page_.doc_->countInBars);
-        const auto countInStart = static_cast<engine::SamplePos>(std::llround(scale.tempo().secondsAt({1 - countInBars, 1.0}) * kRate));
-        for (const auto& tick : engine::buildClickTicks(scale.tempo(), kRate, from, to, subdivision))
-            ticks_.push_back({scale.xAtSeconds(static_cast<double>(tick.at) / kRate), tick.kind, tick.at >= countInStart && tick.at < 0});
-    }
-
-    struct Tick {
-        float x = 0.0f;
-        engine::ClickKind kind = engine::ClickKind::Beat;
-        bool countIn = false;
-    };
-
-    SongEditorPage& page_;
-    bool built_ = false, pressedLane_ = false;
-    std::map<const engine::PartAudio*, Summary> summaries_;
-    std::map<juce::String, Columns> columns_;                     // by part id
-    std::vector<Tick> ticks_;
-    std::vector<float> barLines_;
-};
-
 // ---- The cursor --------------------------------------------------------------------------------------------------------
 
 // The white line, with a soft glow, over the ruler and the lanes. Never takes the mouse.
@@ -663,7 +414,7 @@ void SongEditorPage::openSong(const juce::String& songId) {
     songId_ = song != nullptr ? songId : juce::String();
     if (bpmEditor_.isVisible()) bpmEditor_.setVisible(false);
     tapTempo_ = {};
-    cursor_ = song != nullptr ? extentOf(*song, tempoOf(*song)).first : 0.0;
+    cursor_ = song != nullptr ? model::songExtentSeconds(*song, model::tempoMapOf(*song)).first : 0.0;
     session_.setEditFocus(songId_);
     refresh(true);
 }
@@ -671,7 +422,7 @@ void SongEditorPage::openSong(const juce::String& songId) {
 void SongEditorPage::setCursorSeconds(double seconds) {
     if (!std::isfinite(seconds)) return;
     if (doc_) {
-        const auto [start, end] = extentOf(*doc_, tempoOf(*doc_));
+        const auto [start, end] = model::songExtentSeconds(*doc_, model::tempoMapOf(*doc_));
         seconds = juce::jlimit(start, end, seconds);
     }
     cursor_ = seconds;
@@ -700,8 +451,14 @@ void SongEditorPage::refresh(bool force) {
 
     const auto now = session_.now();
     if (doc != nullptr && now.playing && now.playingSongId == songId_) cursor_ = now.seconds;   // following the playhead
-    auto next = makeSongEditorState(session_, songId_, cursor_);
     auto loaded = session_.cache().loaded(songId_);
+    const bool sameDoc = doc == nullptr ? !doc_.has_value() : doc_.has_value() && *doc_ == *doc;
+    // Which audio files are missing is looked for on disk only when the song or its audio changed, never 30 times a second.
+    if (!sameDoc || loaded != loaded_ || force || !missingKnown_) {
+        missing_ = doc != nullptr ? missingParts(session_, songId_) : std::set<juce::String>();
+        missingKnown_ = true;
+    }
+    auto next = makeSongEditorState(session_, songId_, cursor_, &missing_);
 
     // While a song plays the session changes 30 times a second, and usually only the cursor has moved.
     const auto withoutCursor = [](SongEditorState s) {
@@ -709,7 +466,6 @@ void SongEditorPage::refresh(bool force) {
         s.footerTime.clear();
         return s;
     };
-    const bool sameDoc = doc == nullptr ? !doc_.has_value() : doc_.has_value() && *doc_ == *doc;
     const bool onlyCursor = sameDoc && loaded == loaded_ && editable() == shownEditable_ && withoutCursor(next) == withoutCursor(state_);
     const bool footerChanged = next.footerBar != state_.footerBar || next.footerTime != state_.footerTime;
     state_ = std::move(next);
@@ -771,8 +527,8 @@ void SongEditorPage::refreshScale() {
         scale_.reset();
         return;
     }
-    const auto tempo = tempoOf(*doc_);
-    const auto [start, end] = extentOf(*doc_, tempo);
+    const auto tempo = model::tempoMapOf(*doc_);
+    const auto [start, end] = model::songExtentSeconds(*doc_, tempo);
     scale_.emplace(tempo, start, end, static_cast<float>(ruler_.getWidth()));
     ruler_.setScale(*scale_);
     lanes_->invalidate();
@@ -847,11 +603,12 @@ void SongEditorPage::resized() {
     }
 
     // The timeline: the ruler over the lane area, and the rows below it, which scroll.
-    barsHead_ = timeline_.withWidth(std::min(kHeaderColumn, timeline_.getWidth())).withHeight(std::min(BarRuler::height, timeline_.getHeight()));
+    barsHead_ = timeline_.withWidth(std::min(LanesBody::headerColumn, timeline_.getWidth()))
+                    .withHeight(std::min(BarRuler::height, timeline_.getHeight()));
     const int viewHeight = std::max(0, timeline_.getHeight() - BarRuler::height);
     const bool scrolls = lanes_->idealHeight() > viewHeight;
-    const int laneWidth = std::max(0, timeline_.getWidth() - kHeaderColumn - (scrolls ? lanesView_.getScrollBarThickness() : 0));
-    ruler_.setBounds(timeline_.getX() + kHeaderColumn, timeline_.getY(), laneWidth, barsHead_.getHeight());
+    const int laneWidth = std::max(0, timeline_.getWidth() - LanesBody::headerColumn - (scrolls ? lanesView_.getScrollBarThickness() : 0));
+    ruler_.setBounds(timeline_.getX() + LanesBody::headerColumn, timeline_.getY(), laneWidth, barsHead_.getHeight());
     lanesView_.setBounds(timeline_.getX(), timeline_.getY() + barsHead_.getHeight(), timeline_.getWidth(), viewHeight);
     fit(lanesView_, *lanes_, lanes_->idealHeight());
     cursorLine_->setBounds(ruler_.getX(), ruler_.getY(), laneWidth, barsHead_.getHeight() + viewHeight);
@@ -1029,7 +786,7 @@ void SongEditorPage::setFirstTempoPoint(std::optional<double> bpm, int numerator
     if (bpm) first->setProperty("bpm", *bpm);
     if (numerator > 0) first->setProperty("numerator", numerator);
     if (denominator > 0) first->setProperty("denominator", denominator);
-    run("song.setTempo", object({{"songId", songId_}, {"tempo", tempo}}), coalesceKey);
+    run("song.setTempo", jsonObject({{"songId", songId_}, {"tempo", tempo}}), coalesceKey);
 }
 
 void SongEditorPage::setBpm(double bpm) {
@@ -1040,9 +797,9 @@ void SongEditorPage::setSignature(int numerator, int denominator) {
     if (numerator > 0 && denominator > 0) setFirstTempoPoint(std::nullopt, numerator, denominator);
 }
 
-void SongEditorPage::setKey(const juce::String& key) { run("song.setInfo", object({{"songId", songId_}, {"key", key}})); }
+void SongEditorPage::setKey(const juce::String& key) { run("song.setInfo", jsonObject({{"songId", songId_}, {"key", key}})); }
 
-void SongEditorPage::setCountIn(int bars) { run("song.setInfo", object({{"songId", songId_}, {"countInBars", bars}})); }
+void SongEditorPage::setCountIn(int bars) { run("song.setInfo", jsonObject({{"songId", songId_}, {"countInBars", bars}})); }
 
 void SongEditorPage::tap(double nowSeconds) {
     if (!editable()) return;
@@ -1055,7 +812,7 @@ void SongEditorPage::tap(double nowSeconds) {
 }
 
 void SongEditorPage::setBarOneSeconds(double seconds) {
-    if (std::isfinite(seconds)) run("song.setAudioStart", object({{"songId", songId_}, {"seconds", seconds}}));
+    if (std::isfinite(seconds)) run("song.setAudioStart", jsonObject({{"songId", songId_}, {"seconds", seconds}}));
 }
 
 void SongEditorPage::setBarOneAtCursor() {
@@ -1064,14 +821,14 @@ void SongEditorPage::setBarOneAtCursor() {
     const double before = song->audioStartSeconds;
     const double after = juce::jlimit(0.0, model::kMaxAudioStartSeconds, before + cursor_);
     if (after == before) return;
-    if (!run("song.setAudioStart", object({{"songId", songId_}, {"seconds", after}}))) return;
+    if (!run("song.setAudioStart", jsonObject({{"songId", songId_}, {"seconds", after}}))) return;
     cursor_ -= after - before;                                    // the same place in the audio, now counted from the new bar 1
     if (std::abs(cursor_) < 1e-9) cursor_ = 0.0;
     moveCursorLine();
 }
 
 void SongEditorPage::setClick(bool on, int sound, int subdivision, bool accentFirstBeat) {
-    run("song.setClick", object({{"songId", songId_},
+    run("song.setClick", jsonObject({{"songId", songId_},
                                  {"enabled", on},
                                  {"sound", kSoundNames[juce::jlimit(0, kSoundNames.size() - 1, sound)]},
                                  {"subdivision", kSubdivisionNames[juce::jlimit(0, kSubdivisionNames.size() - 1, subdivision)]},
@@ -1100,7 +857,7 @@ void SongEditorPage::pointerAt(float laneX, juce::ModifierKeys mods) {
 void SongEditorPage::renameSong() {
     if (!editable()) return;
     askText("Rename the song", state_.title, "Rename", [this](const juce::String& title) {
-        if (title.isNotEmpty()) run("song.setInfo", object({{"songId", songId_}, {"title", title}}));
+        if (title.isNotEmpty()) run("song.setInfo", jsonObject({{"songId", songId_}, {"title", title}}));
     });
 }
 
@@ -1200,7 +957,7 @@ void SongEditorPage::showPartMenu(const juce::String& partId) {
             if (result == 1) {
                 safe->askText("Rename the part", name, "Rename", [safe, songId, partId](const juce::String& newName) {
                     if (safe != nullptr && newName.isNotEmpty())
-                        safe->run("part.set", object({{"songId", songId}, {"partId", partId}, {"name", newName}}));
+                        safe->run("part.set", jsonObject({{"songId", songId}, {"partId", partId}, {"name", newName}}));
                 });
             } else if (result == 2) {
                 safe->dialog_ = juce::AlertWindow::showScopedAsync(
@@ -1212,10 +969,10 @@ void SongEditorPage::showPartMenu(const juce::String& partId) {
                         .withButton("Remove")
                         .withButton("Cancel"),
                     [safe, songId, partId](int answer) {
-                        if (safe != nullptr && answer == 1) safe->run("part.remove", object({{"songId", songId}, {"partId", partId}}));
+                        if (safe != nullptr && answer == 1) safe->run("part.remove", jsonObject({{"songId", songId}, {"partId", partId}}));
                     });
             } else if (result >= 100 && result - 100 < roleIds.size()) {
-                safe->run("part.set", object({{"songId", songId}, {"partId", partId}, {"roleId", roleIds[result - 100]}}));
+                safe->run("part.set", jsonObject({{"songId", songId}, {"partId", partId}, {"roleId", roleIds[result - 100]}}));
             }
         });
 }
