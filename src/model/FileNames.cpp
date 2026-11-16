@@ -39,7 +39,13 @@ bool isPathInsideFolder(const juce::String& path) {
     if (path.isEmpty() || path.startsWithChar('/') || path.startsWithChar('\\') || path.containsChar(':')) return false;
     juce::StringArray steps;
     steps.addTokens(path, "/\\", "");
-    return ! steps.contains("..");
+    if (steps.contains("..")) return false;
+    // "CON", "con.wav" and "Prn.tar.gz" all name a device: the stem is what comes before the first dot.
+    for (const auto& step : steps) {
+        const int dot = step.indexOfChar('.');
+        if (isReservedWindowsName(dot < 0 ? step : step.substring(0, dot))) return false;
+    }
+    return true;
 }
 
 juce::File uniqueChild(const juce::File& folder, const juce::String& name, const juce::String& extension) {

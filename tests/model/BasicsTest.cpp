@@ -55,6 +55,17 @@ TEST_CASE("a reserved name stays within 60 characters", "[basics]") {
     CHECK(name.length() <= 60);
     CHECK(name.startsWith("CON_."));
 }
+TEST_CASE("a path through a Windows device name is not inside the folder", "[basics]") {
+    CHECK_FALSE(isPathInsideFolder("audio/CON.wav"));
+    CHECK_FALSE(isPathInsideFolder("nul"));
+    CHECK_FALSE(isPathInsideFolder("aux/Keys.wav"));
+    CHECK_FALSE(isPathInsideFolder("audio/com1"));
+    CHECK_FALSE(isPathInsideFolder("audio/Lpt9.txt"));
+    CHECK_FALSE(isPathInsideFolder("audio/prn.tar.gz"));
+    CHECK(isPathInsideFolder("audio/Console.wav"));
+    CHECK(isPathInsideFolder("audio/COM10.wav"));
+    CHECK(isPathInsideFolder("audio/Keys.wav"));
+}
 TEST_CASE("a stale temporary file doesn't corrupt the saved text", "[basics]") {
     sqlive::test::TempDir t;
     auto file = t.dir().getChildFile("doc.json");
