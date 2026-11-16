@@ -8,6 +8,10 @@
 #include "model/Units.h"
 #include "tests/support/TempDir.h"
 
+#if JUCE_WINDOWS
+ #include <windows.h>
+#endif
+
 using namespace sqlive::model;
 
 TEST_CASE("decibels and gains convert", "[basics]") {
@@ -48,3 +52,44 @@ TEST_CASE("an atomic write replaces the file whole and leaves nothing behind", "
     auto failed = writeFileAtomically(folder, "x");
     CHECK(failed.failed());  CHECK(failed.getErrorMessage().isNotEmpty());  CHECK(folder.isDirectory());
 }
+
+TEST_CASE("a reserved name stays within 60 characters", "[basics]") {
+    auto name = safeFileName("CON." + juce::String::repeatedString("a", 80));
+    CHECK(name.length() <= 60);
+    CHECK(name.startsWith("CON_."));
+}
+TEST_CASE("a stale temporary file doesn't corrupt the saved text", "[basics]") {
+    sqlive::test::TempDir t;
+    auto file = t.dir().getChildFile("doc.json");
+    juce::File(file.getFullPathName() + ".tmp").replaceWithText("STALE TEXT THAT IS LONGER THAN THE NEW TEXT");
+    CHECK(writeFileAtomically(file, "new").wasOk());
+    CHECK(file.loadFileAsString() == "new");
+    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1);
+}
+TEST_CASE("an undeletable stale temporary file fails plainly", "[basics]") {
+    sqlive::test::TempDir t;
+    auto file = t.dir().getChildFile("doc.json");
+    auto blocker = juce::File(file.getFullPathName() + ".tmp");
+    blocker.createDirectory();
+    blocker.getChildFile("inside").create();   // a non-empty folder can't be deleted as a file
+    auto r = writeFileAtomically(file, "x");
+    CHECK(r.failed());  CHECK(r.getErrorMessage().isNotEmpty());
+    CHECK_FALSE(file.exists());
+}
+#if JUCE_WINDOWS
+TEST_CASE("a failed swap leaves no temporary file", "[basics]") {
+    sqlive::test::TempDir t;
+    auto file = t.dir().getChildFile("doc.json");
+    REQUIRE(writeFileAtomically(file, "old").wasOk());
+    {
+        HANDLE holder = CreateFileW(file.getFullPathName().toWideCharPointer(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        REQUIRE(holder != INVALID_HANDLE_VALUE);   // no sharing at all, so the swap is refused
+        auto r = writeFileAtomically(file, "new");
+        CHECK(r.failed());
+        CHECK(r.getErrorMessage().isNotEmpty());
+        CloseHandle(holder);
+    }
+    CHECK(file.loadFileAsString() == "old");
+    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1);
+}
+#endif

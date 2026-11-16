@@ -15,17 +15,22 @@ juce::Result writeFileAtomically(const juce::File& target, const juce::String& t
     }
 
     const juce::File tmp(target.getFullPathName() + ".tmp");
-    tmp.deleteFile();
+    // A stale temp file must go: the stream appends, and old text would end up inside the saved file.
+    if (tmp.exists() && !tmp.deleteFile()) return fail("an old temporary file (" + tmp.getFileName() + ") is in the way and couldn't be removed.");
+
+    juce::String writeProblem;
     {
         juce::FileOutputStream out(tmp);
         if (out.failedToOpen()) return fail("the temporary file couldn't be created (" + out.getStatus().getErrorMessage() + ").");
         if (!out.write(text.toRawUTF8(), text.getNumBytesAsUTF8()) || (out.flush(), out.getStatus().failed())) {
             auto why = out.getStatus().getErrorMessage();
-            tmp.deleteFile();
-            return fail("it couldn't be written (" + (why.isEmpty() ? juce::String("the disk may be full") : why) + ").");
+            writeProblem = "it couldn't be written (" + (why.isEmpty() ? juce::String("the disk may be full") : why) + ").";
         }
-    }  // closed before the swap
-
+    }  // closed here: Windows won't delete a file that is still open, and the swap needs it closed too
+    if (writeProblem.isNotEmpty()) {
+        tmp.deleteFile();
+        return fail(writeProblem);
+    }
     const bool swapped = target.exists() ? tmp.replaceFileIn(target) : tmp.moveFileTo(target);
     if (!swapped) {
         tmp.deleteFile();
