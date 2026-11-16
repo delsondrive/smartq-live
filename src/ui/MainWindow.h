@@ -1,0 +1,49 @@
+#pragma once
+
+#include <functional>
+
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include "app/Session.h"
+#include "app/ShowController.h"
+#include "ui/AppShell.h"
+
+namespace sqlive::app {
+class AudioHost;
+}
+
+namespace sqlive::ui {
+
+// The app's window: a native title bar, resizable down to 1100 x 680, opening at 1280 x 800 in the middle of the screen,
+// with an AppShell as its content. It owns the ShowController and wires it and every page in (plugInPages).
+//
+// In Show mode the ShowController listens to the keys, the window takes kiosk mode (when allowed) and the screen saver is
+// off; leaving Show mode undoes all three. Whenever the window stops being active the controller forgets every held key,
+// so a key held while the keyboard goes elsewhere can never stop a song; in Show mode the shell then says so.
+class MainWindow : public juce::DocumentWindow, private juce::ChangeListener {
+public:
+    MainWindow(app::Session&, app::AudioHost*);
+    ~MainWindow() override;
+
+    void setKioskAllowed(bool);                                   // allowed unless told otherwise
+    AppShell& shell() { return shell_; }
+    app::ShowController& showController() { return controller_; }
+
+    std::function<void()> onClose;                                // the close button
+    std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
+
+    void closeButtonPressed() override;
+    void activeWindowStatusChanged() override;
+
+private:
+    void changeListenerCallback(juce::ChangeBroadcaster*) override;
+    void followMode();                                            // takes or gives up Show mode's hold on keys and screen
+
+    app::Session& session_;
+    app::ShowController controller_;
+    AppShell shell_;
+    juce::TooltipWindow tooltips_;
+    bool inShow_ = false, kioskAllowed_ = true, kiosk_ = false;
+};
+
+}  // namespace sqlive::ui
