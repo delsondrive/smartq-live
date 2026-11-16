@@ -31,6 +31,10 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     // carries on: it never goes backwards, so times from before and after a device restart stay comparable.
     playing_ = {};
     if (cued_.song != nullptr && !fitsRate(*cued_.song)) retire(cued_);
+    // Commands sent before the device stopped were meant for a device that no longer runs: a start among them would go off
+    // by itself on the first block. They are dropped, and whatever they carry goes back through the garbage queue. With
+    // process not running this is the queue's only consumer. The control thread sends what it still wants again.
+    for (Command command; commands_.pop(command);) retire(command.object);
     state_ = PlayState::Stopped;
     in_gap_ = false;
     gap_left_ = 0;

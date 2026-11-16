@@ -122,9 +122,11 @@ void Session::setDevice(double sampleRate, int outputChannels) {
         cache_.setSampleRate(sample_rate_);                      // loads everything again at the new rate
         prepared_.clear();
     }
-    // A new device may have been prepared at another rate, which drops the engine's cue: cue the next entry again.
+    // The device has just prepared the engine, which dropped every command it hadn't taken (and, at another rate, its cue):
+    // send again the follow-on, the mix and the cue for the next entry.
     if (cue_.serial != 0) engine_.clearCue();
     cue_ = {};
+    engine_.setFollowOn(follow_on_);
     refreshMix(true);
     refresh();
 }

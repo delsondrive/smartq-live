@@ -168,3 +168,23 @@ TEST_CASE("a cue made at another rate is dropped by prepare and never started", 
     e.start();
     CHECK(renderOffline(e, 2, 10, 256)[0][5] == 0.75f);
 }
+TEST_CASE("commands queued before prepare are dropped by it, and what they carry is freed through the garbage queue", "[engine]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    const auto serial = e.cue(share(testSong("a", 1000, 0.25f)));
+    renderOffline(e, 2, 10, 512);                    // the cue is taken
+    auto later = share(testSong("b", 1000, 0.5f));
+    std::weak_ptr<const PreparedSong> watch = later;
+    e.start();  e.stop();  e.cue(std::move(later));  // asked for while the device was going away
+    e.prepare(48000.0, 512);                         // the device comes back
+    CHECK(e.status().cuedSerial == serial);          // the cue it had taken stays
+    CHECK_FALSE(watch.expired());
+    e.collectGarbage();
+    CHECK(watch.expired());
+    auto out = renderOffline(e, 2, 4800, 512);
+    CHECK(std::all_of(out[0].begin(), out[0].end(), [](float x) { return x == 0.0f; }));
+    CHECK(e.status().state == PlayState::Stopped);
+    CHECK(e.status().cuedSerial == serial);
+    CHECK(drainEvents(e).empty());
+    e.start();                                       // a start sent after prepare plays as ever
+    CHECK(renderOffline(e, 2, 10, 512)[0][5] != 0.0f);
+}

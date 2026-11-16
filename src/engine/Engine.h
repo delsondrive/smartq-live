@@ -46,7 +46,9 @@ public:
 
     // Must only be called while process cannot run: for a device, from audioDeviceAboutToStart, before its first callback.
     // It stops whatever was playing, at once and without an event, keeps the mix, keeps the cue unless it was made at
-    // another sample rate (that one is dropped, through the garbage queue), and keeps stream time running.
+    // another sample rate (that one is dropped, through the garbage queue), and keeps stream time running. Every command
+    // not yet taken is dropped, a start included, and what it carries goes through the garbage queue: the control thread
+    // sends again what it still wants (the mix, the follow-on, the cue) once the device has started.
     void prepare(double sampleRate, int maxBlockFrames);
     // Audio thread: clears out, then renders into the first min(numChannels, kMaxDeviceChannels) of it.
     void process(float* const* out, int numChannels, int frames) noexcept;

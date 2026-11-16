@@ -59,7 +59,10 @@ juce::AudioIODeviceType* AudioHost::findType(const juce::String& type) {
 
 juce::Result AudioHost::open(const DeviceChoice& choice) {
     auto* type = findType(choice.type);
-    if (type == nullptr) return juce::Result::fail("This computer has no " + choice.type + " devices.");
+    if (type == nullptr) {
+        if (!running_) session_.setDeviceRunning(false);
+        return juce::Result::fail("This computer has no " + choice.type + " devices.");
+    }
     const bool wasRunning = running_;
     if (running_) session_.audioInterrupted();                   // the old device stops now
     running_ = false;

@@ -97,7 +97,13 @@ TEST_CASE("with no device running nothing starts, and a lost device leaves nothi
         CHECK_FALSE(s.now().playing);  CHECK_FALSE(s.now().stopping);  CHECK(s.now().interrupted);
         CHECK(s.now().nextIndex == 0);
         host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);
-        for (int i = 0; i < 4; ++i) {                             // the start and stop queued before the loss come to nothing
+        std::vector<float> l(512, 9.0f), r(512, 9.0f); float* out[2] = {l.data(), r.data()};
+        for (int i = 0; i < 8; ++i) {                             // not a sample of the start queued before the loss is heard
+            host.renderBlock(out, 2, 512);
+            CHECK(std::all_of(l.begin(), l.end(), [](float x) { return x == 0.0f; }));
+            CHECK(std::all_of(r.begin(), r.end(), [](float x) { return x == 0.0f; }));
+        }
+        for (int i = 0; i < 4; ++i) {                             // and the session takes no notice of it
             s.advanceWithoutDevice(4800);
             CHECK_FALSE(s.now().playing);  CHECK_FALSE(s.now().stopping);
         }
@@ -105,6 +111,13 @@ TEST_CASE("with no device running nothing starts, and a lost device leaves nothi
         s.perform(Action::Start);  s.advanceWithoutDevice(4800);
         CHECK(s.now().playing);  CHECK(s.now().playingIndex == 0);  CHECK_FALSE(s.now().interrupted);
     }
+}
+TEST_CASE("a device that can't be opened leaves nothing able to start", "[audiohost]") {
+    DemoSession d; app::AudioHost host(*d.session);
+    CHECK(host.open({"NoSuchType", "x"}).failed());
+    CHECK_FALSE(host.isOpen());
+    d.session->perform(Action::Start);
+    CHECK_FALSE(d.session->now().playing);
 }
 TEST_CASE("a lost device with nothing playing is not an interruption", "[audiohost]") {
     DemoSession d; app::AudioHost host(*d.session);

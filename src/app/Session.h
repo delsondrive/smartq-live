@@ -61,8 +61,9 @@ public:
 
     juce::String rigId() const;        void chooseRig(const juce::String& rigId);       // remembered in Settings
     juce::String setlistId() const;    void chooseSetlist(const juce::String& setlistId);
-    // From AudioHost (or tests), once the device has prepared the engine: loads songs again at a new rate, rebuilds the
-    // mix and cues the next entry again. Never prepares the engine. 0 channels = no device.
+    // From AudioHost (or tests), once the device has prepared the engine: loads songs again at a new rate, and sends the
+    // follow-on, the mix and the next entry's cue again, as prepare dropped what was queued. Never prepares the engine.
+    // 0 channels = no device.
     void setDevice(double sampleRate, int outputChannels);
     double sampleRate() const;  int outputChannels() const;
     // AudioHost: true while a real device is open, false when none is. While it is false nothing starts, as no block would
