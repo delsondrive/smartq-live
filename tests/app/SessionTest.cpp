@@ -114,3 +114,35 @@ TEST_CASE("Edit mode can play one song from a place, and edits are saved", "[ses
     CHECK(s.saveState() == SaveState::Saved);  CHECK(s.saveError().isEmpty());
     CHECK(s.folder().root().getChildFile("band.json").loadFileAsString().contains("Renamed"));
 }
+TEST_CASE("a song made for another rate than the engine's is not started", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    s.setDevice(44100.0, 2);  d.settle();                                        // the songs load at 44.1 kHz; the engine is still at 48
+    REQUIRE(s.now().nextReadiness == Readiness::Ready);
+    s.perform(Action::Start);
+    CHECK_FALSE(s.now().playing);
+    s.playSong(d.setlist().entries[1].songId, 0.0);
+    CHECK_FALSE(s.now().playing);
+    s.advanceWithoutDevice(4800);
+    CHECK_FALSE(s.now().playing);  CHECK(s.now().nextIndex == 0);
+}
+TEST_CASE("a start the engine never takes, or a stop it never reports, doesn't leave the session playing", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    for (int i = 0; i < 1100; ++i) s.engine().setFollowOn({});                  // the engine's command queue is full
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);                     // so the start is dropped
+    CHECK_FALSE(s.now().playing);  CHECK(s.now().nextIndex == 0);
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().playing);  CHECK(s.now().playingIndex == 0);
+    s.engine().prepare(48000.0, 512);                                            // as a device restart does: it stops without an event
+    s.perform(Action::Stop);  s.advanceWithoutDevice(4800);                      // the engine ignores this stop
+    CHECK_FALSE(s.now().playing);  CHECK_FALSE(s.now().stopping);  CHECK(s.now().nextIndex == 0);
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    CHECK(s.now().playing);  CHECK(s.now().playingIndex == 0);
+}
+TEST_CASE("cues that can no longer start don't keep songs in memory", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    std::vector<std::weak_ptr<const LoadedSong>> before;
+    for (auto& entry : d.setlist().entries) before.push_back(s.cache().loaded(entry.songId));
+    s.perform(Action::NextSongLater);  s.perform(Action::NextSongLater);          // each next song was cued in turn
+    s.setDevice(44100.0, 2);  s.advanceWithoutDevice(512);  d.settle();          // the cache lets go of the 48 kHz audio
+    for (auto& song : before) CHECK(song.expired());
+}

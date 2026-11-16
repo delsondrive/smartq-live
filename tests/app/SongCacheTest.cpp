@@ -96,3 +96,17 @@ TEST_CASE_METHOD(CacheFixture, "a new sample rate or a forgotten song loads agai
     cache.setPaused(false);  REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.state(a.id) == SongCache::State::Ready);
 }
+TEST_CASE_METHOD(CacheFixture, "a failed song says why", "[cache]") {
+    for (auto& part : b.parts) folder.audioFile(b, part).deleteFile();
+    model::SongDoc empty = c;  empty.parts.clear();
+    SongCache cache(SongCache::defaultBudgetBytes());
+    cache.setWanted({wanted(a), wanted(b), wanted(empty)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.problems(a.id).isEmpty());
+    REQUIRE(cache.state(b.id) == SongCache::State::Failed);
+    REQUIRE(cache.problems(b.id).size() == (int) b.parts.size());
+    CHECK(cache.problems(b.id)[0] == b.parts[0].name + ": the audio file is missing.");
+    REQUIRE(cache.state(empty.id) == SongCache::State::Failed);
+    CHECK(cache.problems(empty.id) == juce::StringArray("The song has no audio parts."));
+    CHECK(cache.problems("unknown").isEmpty());
+}

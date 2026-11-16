@@ -60,6 +60,9 @@ public:
     State state(const juce::String& songId) const;               // Loading also while waiting its turn
     double progress(const juce::String& songId) const;            // 0..1 while Loading
     std::shared_ptr<const LoadedSong> loaded(const juce::String& songId) const;   // nullptr unless Ready
+    // Why a song lacks audio: the loaded song's problems when Ready, and for a Failed one why nothing could be loaded
+    // ("Keys: the audio file is missing.", or "The song has no audio parts."). Empty otherwise.
+    juce::StringArray problems(const juce::String& songId) const;
     void forget(const juce::String& songId);                      // its files changed: load it again (nothing if it isn't kept)
 
     std::function<void(const juce::String& songId)> onChanged;    // message thread; once per song whose state or progress changed
@@ -71,6 +74,7 @@ private:
         State state = State::Loading;
         double progress = 0.0;
         std::shared_ptr<const LoadedSong> loaded;
+        juce::StringArray problems;                                // kept for a Failed song too, which has no LoadedSong
         std::uint64_t token = 0;                                   // new for every fresh entry, so a stale load can tell
     };
     struct Job {

@@ -90,6 +90,10 @@ private:
         std::shared_ptr<const Prepared> prepared;
         std::uint64_t serial = 0;                                // 0 = nothing plays
         engine::SamplePos songTime = 0;                          // the last place the engine reported, or where it was asked to start
+        bool started = false;                                    // its Started event has come
+        std::int64_t askedAt = 0;                                // the engine's stream time just after the start was pushed
+        std::int64_t firstSeen = -1;                             // the first stream time seen beyond askedAt; -1 = none yet
+        std::int64_t startedAt = 0;                              // the Started event's stream time
         bool active() const { return serial != 0; }
     };
 
@@ -101,7 +105,6 @@ private:
     juce::String songIdOf(const juce::String& entryId) const;
     void setNext(const juce::String& entryId);
     Readiness readinessOf(const juce::String& songId) const;
-    juce::StringArray problemsOf(const juce::String& songId) const;
 
     void refresh();                                              // after anything changed: works everything out again
     bool ensureChoices();                                        // a rig and a setlist that exist; true when either changed
@@ -113,8 +116,10 @@ private:
     void refreshMix(bool force);
     void refreshTransport();                                     // the follow-on and the cue
     engine::FollowOn followOn() const;
-    bool handleEngineEvents();                                   // true when there was any
+    bool handleEngineEvents();                                   // true when anything changed
     void handleEvent(const engine::EngineEvent&);
+    bool engineLetGo(const engine::EngineStatus&);               // the playing song isn't playing, and no event will say so
+    void forgetDeadCues(const engine::EngineStatus&);
     void noteSaveState();
     void changed();
 
@@ -138,7 +143,9 @@ private:
     Playing playing_;
     bool stop_requested_ = false;
     Cue cue_;                                                    // what the engine has cued, as far as the session knows
-    std::map<std::uint64_t, Cue> recent_cues_;                   // by serial, so a follow-on's Started can be matched
+    std::map<std::uint64_t, Cue> recent_cues_;                   // by serial, so a follow-on's Started can be matched; only
+                                                                 // those that could still start, as they hold songs' audio
+    std::uint64_t last_started_serial_ = 0;
     engine::FollowOn follow_on_;                                 // the last one sent
 
     std::map<juce::String, std::shared_ptr<const Prepared>> prepared_;   // by song id

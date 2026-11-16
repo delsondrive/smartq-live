@@ -118,6 +118,12 @@ std::shared_ptr<const LoadedSong> SongCache::loaded(const juce::String& songId) 
     return found == entries_.end() ? nullptr : found->second.loaded;
 }
 
+juce::StringArray SongCache::problems(const juce::String& songId) const {
+    const juce::ScopedLock sl(lock_);
+    const auto found = entries_.find(songId);
+    return found == entries_.end() ? juce::StringArray() : found->second.problems;
+}
+
 void SongCache::forget(const juce::String& songId) {
     {
         const juce::ScopedLock sl(lock_);
@@ -220,6 +226,7 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
     song->sampleRate = job.sampleRate;
     model::SongDoc loadedParts = doc;                              // for bytes: the parts that made it into memory
     loadedParts.parts.clear();
+    if (doc.parts.empty()) song->problems.add("The song has no audio parts.");   // so a Failed state says why
     const auto count = (double) std::max<std::size_t>(1, doc.parts.size());
     for (std::size_t i = 0; i < doc.parts.size(); ++i) {
         const auto& part = doc.parts[i];
@@ -250,6 +257,7 @@ void SongCache::finish(const Job& job, std::shared_ptr<LoadedSong> song) {
         const auto found = entries_.find(job.song.doc.id);
         if (song != nullptr && found != entries_.end() && found->second.token == job.token) {
             auto& entry = found->second;
+            entry.problems = song->problems;
             if (song->audio.empty()) {
                 entry.state = State::Failed;
                 entry.progress = 0.0;
