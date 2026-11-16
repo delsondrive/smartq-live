@@ -125,11 +125,18 @@ public:
         if (! isNumber(*v)) { wrong(key, "a number", juce::String(def)); return def; }
         return limited(key, (double) *v, lo, hi);
     }
-    int whole(const char* key, int def, int lo, int hi) {
+    bool has(const char* key) const { return obj->hasProperty(juce::Identifier(key)); }
+    // With defaultWhenOutside, a value outside lo..hi is replaced by def (with a note) instead of being limited.
+    int whole(const char* key, int def, int lo, int hi, bool defaultWhenOutside = false) {
         auto* v = find(key);
         if (v == nullptr) return def;
         if (! isNumber(*v)) { wrong(key, "a number", juce::String(def)); return def; }
-        return (int) limited(key, std::round((double) *v), (double) lo, (double) hi);
+        auto x = std::round((double) *v);
+        if (defaultWhenOutside && (x < lo || x > hi)) {
+            notes.notes.add(place(key) + " is " + juce::String(x) + ", outside " + juce::String(lo) + " to " + juce::String(hi) + ", so " + juce::String(def) + " is used.");
+            return def;
+        }
+        return (int) limited(key, x, (double) lo, (double) hi);
     }
     float db(const char* key, float def) {
         auto* v = find(key);
@@ -211,6 +218,7 @@ public:
         for (auto& p : o->getProperties()) each(p.name.toString(), p.value, place(key) + "." + p.name.toString());
     }
     void note(const juce::String& s) { notes.notes.add(s); }
+    juce::String where(const char* key) const { return place(key); }
 
     // Everything that was not asked for.
     juce::NamedValueSet rest() const {
@@ -250,9 +258,9 @@ void read(Reader& r, Role& out, std::set<juce::String>& seen) {
     out.extra = r.rest();
 }
 void read(Reader& r, TempoPointDoc& out) {
-    out.bar = r.whole("bar", 1, 1, 99999); out.beat = r.number("beat", 1.0, 1.0, 64.0); out.bpm = r.number("bpm", 120.0, 20.0, 400.0);
-    out.numerator = r.whole("numerator", 4, 1, 64);
-    const double dens[] = {1, 2, 4, 8, 16, 32};
+    out.bar = r.whole("bar", 1, 1, 99999); out.beat = r.number("beat", 1.0, 1.0, 32.0); out.bpm = r.number("bpm", 120.0, 20.0, 400.0);
+    out.numerator = r.whole("numerator", 4, 1, 32, true);
+    const double dens[] = {1, 2, 4, 8, 16};
     out.denominator = (int) r.oneOf("denominator", 4.0, dens);
     out.extra = r.rest();
 }
@@ -277,6 +285,7 @@ void read(Reader& r, SetlistEntry& out, std::set<juce::String>& seen) {
 }
 void read(Reader& r, OutputDoc& out, std::set<juce::String>& seen) {
     out.id = r.id(seen); out.name = r.text("name"); out.firstChannel = r.whole("firstChannel", 1, 1, 1024); out.stereo = r.flag("stereo", true);
+    if (! r.has("label")) r.note(r.where("label") + " is missing, so the output is marked as not used.");
     out.label = r.choice("label", OutputLabel::Unused, kLabels);
     out.trimDb = r.db("trimDb", 0.0f);
     r.members("mix", [&](const juce::String& role, const juce::var& v, const juce::String& at) {

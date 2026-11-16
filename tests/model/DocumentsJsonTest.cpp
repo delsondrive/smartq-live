@@ -64,3 +64,19 @@ TEST_CASE("wrong or missing values fall back and are noted", "[json]") {
     CHECK(rig.outputs[0].mix.count("r") == 0);
     CHECK(rig.outputs[0].mix.at("q") == -60.0f);
 }
+TEST_CASE("a time signature the engine can't play is replaced and noted", "[json]") {
+    SongDoc song; ParseNotes notes;
+    REQUIRE(fromJson(R"({"version":1,"tempo":[{"numerator":7,"denominator":32},{"bar":3,"numerator":40,"denominator":4}]})", song, notes));
+    REQUIRE(song.tempo.size() == 2);
+    CHECK(song.tempo[0].numerator == 7);  CHECK(song.tempo[0].denominator == 4);
+    CHECK(song.tempo[1].numerator == 4);  CHECK(song.tempo[1].denominator == 4);
+    auto all = notes.notes.joinIntoString(" ");
+    CHECK(all.contains("tempo[0].denominator"));
+    CHECK(all.contains("tempo[1].numerator"));
+}
+TEST_CASE("a missing output label is noted", "[json]") {
+    RigDoc rig; ParseNotes notes;
+    REQUIRE(fromJson(R"({"version":1,"outputs":[{"id":"o"}]})", rig, notes));
+    CHECK(rig.outputs[0].label == OutputLabel::Unused);
+    CHECK(notes.notes.joinIntoString(" ").contains("outputs[0].label is missing"));
+}
