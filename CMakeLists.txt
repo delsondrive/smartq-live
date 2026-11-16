@@ -97,6 +97,8 @@ file(GLOB SQLIVE_ENGINE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/engin
 add_library(sqlive_engine STATIC ${SQLIVE_ENGINE_SOURCES})
 target_compile_features(sqlive_engine PUBLIC cxx_std_20)
 target_include_directories(sqlive_engine PUBLIC "${CMAKE_SOURCE_DIR}/src")
+# An interface target: it adds JUCE's recommended warning flags and nothing else, so the engine stays JUCE-free.
+target_link_libraries(sqlive_engine PRIVATE juce::juce_recommended_warning_flags)
 
 # Tests
 file(GLOB_RECURSE SQLIVE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
