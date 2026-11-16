@@ -31,21 +31,26 @@ TEST_CASE("seamless: the next song starts on the very next sample", "[follow]") 
     }
 }
 TEST_CASE("seamless skips the next song's count-in; a gap keeps it", "[follow]") {
+    for (int block : {1, 64, 512})
     for (auto kind : {FollowKind::Seamless, FollowKind::Gap}) {
+        CAPTURE(block);
         Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
         e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({kind, 0.0});
-        auto out = renderOffline(e, 2, 1000 + 96000 + 100, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 200000, 0.5f, 1))); }}});
+        auto out = renderOffline(e, 2, 1000 + 96000 + 100, block, {{10, [](Engine& en) { en.cue(share(testSong("b", 200000, 0.5f, 1))); }}});
         if (kind == FollowKind::Seamless) CHECK(out[0][1000] == 0.5f);               // straight into bar 1
         else { CHECK(out[0][1000 + 50000] == 0.0f); CHECK(out[0][1000 + 96000] == 0.5f); }   // a gap of 0 s, then one bar of count-in
     }
 }
 TEST_CASE("gap: silence for the gap, then the next song", "[follow]") {
-    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
-    e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.5});
-    auto out = renderOffline(e, 2, 30000, 512, {
-        {10, [](Engine& en) { en.cue(share(testSong("b", 1000, 0.5f))); }},
-        {5000, [](Engine& en) { CHECK(en.status().inGap); CHECK(en.status().state == PlayState::Playing); }}});
-    CHECK(out[0][1000] == 0.0f);  CHECK(out[0][24999] == 0.0f);  CHECK(out[0][25000] == 0.5f);
+    for (int block : {1, 64, 512}) {
+        CAPTURE(block);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.5});
+        auto out = renderOffline(e, 2, 30000, block, {
+            {10, [](Engine& en) { en.cue(share(testSong("b", 1000, 0.5f))); }},
+            {5000, [](Engine& en) { CHECK(en.status().inGap); CHECK(en.status().state == PlayState::Playing); }}});
+        CHECK(out[0][999] == 0.25f);  CHECK(out[0][1000] == 0.0f);  CHECK(out[0][24999] == 0.0f);  CHECK(out[0][25000] == 0.5f);
+    }
 }
 TEST_CASE("with nothing cued, or with follow-on set to stop, the engine stops and keeps the cue", "[follow]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
@@ -62,29 +67,34 @@ TEST_CASE("with nothing cued, or with follow-on set to stop, the engine stops an
     CHECK(renderOffline(e, 2, 10, 512)[0][0] == 0.5f);
 }
 TEST_CASE("awkward moments leave the engine in a defined state", "[follow]") {
-    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
-    e.cue(share(testSong("a", 48000, 1.0f))); e.start(); e.setFollowOn({FollowKind::Gap, 1.0});
-    std::uint64_t b = 0, c = 0;
-    auto out = renderOffline(e, 2, 200000, 512, {
-        {100, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }},
-        {1000, [](Engine& en) { en.stop(); en.stop(); }},            // twice
-        {1500, [](Engine& en) { en.start(); }},                       // during the fade: ignored
-        {10000, [](Engine& en) { CHECK(en.status().state == PlayState::Stopped); }}});
-    CHECK(out[0][1000 + 2400] == 0.0f);
-    CHECK(out[0][9000] == 0.0f);                                      // b did not start by itself
-    CHECK(e.status().cuedSerial == b);
+    for (int block : {1, 64, 512}) {
+        CAPTURE(block);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.cue(share(testSong("a", 48000, 1.0f))); e.start(); e.setFollowOn({FollowKind::Gap, 1.0});
+        std::uint64_t b = 0, c = 0;
+        auto out = renderOffline(e, 2, 200000, block, {
+            {100, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }},
+            {1000, [](Engine& en) { en.stop(); en.stop(); }},            // twice
+            {1500, [](Engine& en) { en.start(); }},                       // during the fade: ignored
+            {10000, [](Engine& en) { CHECK(en.status().state == PlayState::Stopped); }}});
+        CHECK(out[0][1000 + 2400] == 0.0f);
+        CHECK(out[0][9000] == 0.0f);                                      // b did not start by itself
+        CHECK(e.status().cuedSerial == b);
 
-    // a new cue during a gap replaces the old one; stop during a gap is immediate and keeps the cue
-    e.cue(share(testSong("a", 1000, 1.0f))); e.start();
-    renderOffline(e, 2, 100000, 512, {
-        {10, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }},
-        {2000, [&](Engine& en) { CHECK(en.status().inGap); c = en.cue(share(testSong("c", 1000, 0.75f))); }},
-        {3000, [](Engine& en) { en.stop(); }},
-        {3600, [&](Engine& en) { CHECK(en.status().state == PlayState::Stopped); CHECK_FALSE(en.status().inGap); CHECK(en.status().cuedSerial == c); }}});
-    e.clearCue();
-    renderOffline(e, 2, 600, 512);
-    CHECK(e.status().cuedSerial == 0);
-    e.collectGarbage();
+        // a new cue during a gap replaces the old one; stop during a gap is immediate and keeps the cue
+        e.cue(share(testSong("a", 1000, 1.0f))); e.start();
+        renderOffline(e, 2, 100000, block, {
+            {10, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }},
+            {2000, [&](Engine& en) { CHECK(en.status().inGap); c = en.cue(share(testSong("c", 1000, 0.75f))); }},
+            {3000, [](Engine& en) { en.stop(); }},
+            {3600, [&](Engine& en) {
+                CHECK(en.status().state == PlayState::Stopped); CHECK_FALSE(en.status().inGap); CHECK(en.status().cuedSerial == c);
+            }}});
+        e.clearCue();
+        renderOffline(e, 2, 600, block);
+        CHECK(e.status().cuedSerial == 0);
+        e.collectGarbage();
+    }
 }
 TEST_CASE("levels change on the playing song only", "[follow]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
@@ -104,30 +114,33 @@ TEST_CASE("levels change on the playing song only", "[follow]") {
     CHECK(next[0][50] == 0.5f);  CHECK(next[1][50] == 0.0f);
 }
 TEST_CASE("a gap reports what ended, what started and a stop inside it; a gap running out empty reports nothing", "[follow]") {
-    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
-    auto a = e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.1});   // 4800 samples
-    std::uint64_t b = 0, c = 0;
-    renderOffline(e, 2, 16000, 512, {
-        {10, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }},         // a 0..1000, gap, b 5800..6800
-        {6000, [&](Engine& en) { c = en.cue(share(testSong("c", 1000, 0.75f))); }},
-        {7000, [](Engine& en) { en.stop(); }},                                            // inside b's gap: at once
-        {8000, [](Engine& en) { en.start(); }},                                           // c 8000..9000
-        {8100, [](Engine& en) { en.cue(share(testSong("d", 1000, 1.0f))); }},
-        {9500, [](Engine& en) { en.clearCue(); }},                                        // inside c's gap, 9000..13800
-        {13700, [](Engine& en) { CHECK(en.status().inGap); CHECK(en.status().state == PlayState::Playing); }},
-        {13900, [](Engine& en) { CHECK_FALSE(en.status().inGap); CHECK(en.status().state == PlayState::Stopped); }}});
-    using T = EngineEvent::Type;
-    struct Seen { T type; std::uint64_t serial; std::int64_t streamTime; bool inGap = false; };
-    std::vector<Seen> seen;
-    EngineEvent ev;
-    while (e.popEvent(ev)) seen.push_back({ev.type, ev.serial, ev.streamTime, ev.inGap});
-    const std::vector<Seen> expected{{T::Started, a, 0}, {T::Ended, a, 1000}, {T::Started, b, 5800}, {T::Ended, b, 6800},
-                                     {T::Stopped, b, 7000, true}, {T::Started, c, 8000}, {T::Ended, c, 9000}};
-    REQUIRE(seen.size() == expected.size());
-    for (std::size_t i = 0; i < seen.size(); ++i) {
-        CHECK(seen[i].type == expected[i].type);  CHECK(seen[i].serial == expected[i].serial);
-        CHECK(seen[i].streamTime == expected[i].streamTime);
-        CHECK(seen[i].inGap == expected[i].inGap);              // only the stop inside the gap says so
+    for (int block : {1, 64, 512}) {
+        CAPTURE(block);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        auto a = e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.1});   // 4800 samples
+        std::uint64_t b = 0, c = 0;
+        renderOffline(e, 2, 16000, block, {
+            {10, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }},         // a 0..1000, gap, b 5800..6800
+            {6000, [&](Engine& en) { c = en.cue(share(testSong("c", 1000, 0.75f))); }},
+            {7000, [](Engine& en) { en.stop(); }},                                            // inside b's gap: at once
+            {8000, [](Engine& en) { en.start(); }},                                           // c 8000..9000
+            {8100, [](Engine& en) { en.cue(share(testSong("d", 1000, 1.0f))); }},
+            {9500, [](Engine& en) { en.clearCue(); }},                                        // inside c's gap, 9000..13800
+            {13700, [](Engine& en) { CHECK(en.status().inGap); CHECK(en.status().state == PlayState::Playing); }},
+            {13900, [](Engine& en) { CHECK_FALSE(en.status().inGap); CHECK(en.status().state == PlayState::Stopped); }}});
+        using T = EngineEvent::Type;
+        struct Seen { T type; std::uint64_t serial; std::int64_t streamTime; bool inGap = false; };
+        std::vector<Seen> seen;
+        EngineEvent ev;
+        while (e.popEvent(ev)) seen.push_back({ev.type, ev.serial, ev.streamTime, ev.inGap});
+        const std::vector<Seen> expected{{T::Started, a, 0}, {T::Ended, a, 1000}, {T::Started, b, 5800}, {T::Ended, b, 6800},
+                                         {T::Stopped, b, 7000, true}, {T::Started, c, 8000}, {T::Ended, c, 9000}};
+        REQUIRE(seen.size() == expected.size());
+        for (std::size_t i = 0; i < seen.size(); ++i) {
+            CHECK(seen[i].type == expected[i].type);  CHECK(seen[i].serial == expected[i].serial);
+            CHECK(seen[i].streamTime == expected[i].streamTime);
+            CHECK(seen[i].inGap == expected[i].inGap);              // only the stop inside the gap says so
+        }
     }
 }
 TEST_CASE("following on allocates and frees nothing on the audio thread", "[follow]") {
@@ -136,10 +149,11 @@ TEST_CASE("following on allocates and frees nothing on the audio thread", "[foll
     for (int i = 0; i < 6; ++i) songs.push_back(share(testSong("s", 1000, 0.5f, i == 2 ? 1 : 0)));
     std::vector<std::weak_ptr<const PreparedSong>> watch(songs.begin(), songs.end());
     std::vector<float> l(512), r(512); float* out[2] = {l.data(), r.data()};
-    std::size_t allocations = 0;
+    std::size_t allocations = 0, frees = 0;
     auto audio = [&](int blocks) {                  // the control calls in between are not counted
         { AllocGuard guard; for (int i = 0; i < blocks; ++i) e.process(out, 2, 512); }
         allocations += allocationCount();
+        frees += deallocationCount();
     };
     e.cue(songs[0]); e.setFollowOn({FollowKind::Seamless, 0.0}); e.start(); audio(1);
     e.cue(songs[1]); audio(2);                                       // the hand-over, at 1000
@@ -155,6 +169,7 @@ TEST_CASE("following on allocates and frees nothing on the audio thread", "[foll
     e.clearCue(); audio(6);                                          // songs[5] ends with nothing cued
     REQUIRE(e.status().state == PlayState::Stopped);
     CHECK(allocations == 0);
+    CHECK(frees == 0);
     songs.clear();
     for (auto& w : watch) CHECK_FALSE(w.expired());                 // the audio thread never frees
     e.collectGarbage();
@@ -173,6 +188,7 @@ TEST_CASE("status is one snapshot: its fields never come from different moments"
 
     std::atomic<bool> done{false};
     std::atomic<std::int64_t> reads{0}, playingReads{0}, torn{0};
+    std::atomic<bool> sawPlaying{false};
     std::thread reader([&] {
         std::int64_t lastStream = 0, n = 0, playing = 0, bad = 0;
         while (!done.load(std::memory_order_acquire)) {
@@ -182,6 +198,7 @@ TEST_CASE("status is one snapshot: its fields never come from different moments"
             lastStream = s.streamTime;
             if (s.playingSerial == 0) continue;
             ++playing;
+            sawPlaying.store(true, std::memory_order_release);
             if (s.state != PlayState::Playing || s.inGap
                 || s.streamTime - s.songTime != kLength * (static_cast<std::int64_t>(s.playingSerial) - 1))
                 ++bad;
@@ -193,6 +210,10 @@ TEST_CASE("status is one snapshot: its fields never come from different moments"
     std::uint64_t lastCued = e.cue(song);
     int cued = 1;
     e.setFollowOn({FollowKind::Seamless, 0.0}); e.start();
+    // The start handshake: the first song plays, and nothing moves on until the reader has seen it playing, so the reader
+    // reads a playing song at least once however late a loaded machine starts it.
+    e.process(out, 2, kBlock);
+    while (!sawPlaying.load(std::memory_order_acquire)) std::this_thread::yield();
     for (int i = 0; i < 1'000'000; ++i) {
         e.process(out, 2, kBlock);
         e.collectGarbage();
