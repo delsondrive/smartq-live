@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -21,25 +20,25 @@ namespace sqlive::app {
 // Pedals and pads: this computer's MIDI inputs, listened to for the band's learned controls, and for the next control to
 // learn.
 //
-// Presses and releases. A controller is pressed when it reaches 64 or more and released when it falls to 31 or less (in
-// between, nothing changes), so an expression pedal about halfway is one press. A note-on is a press and a note-off a
-// release. Within 50 ms of a control's last press or release, a press is a bounce and is ignored. A controller that sends
-// the same value of 64 or more again after more than 50 ms with no release (a switch that only ever sends 127), or a note
-// pressed again without its note-off, is pressed again. A program change is always a press.
+// Presses. A controller is pressed when it reaches 64 or more and let go when it falls to 31 or less (in between, nothing
+// changes), so an expression pedal about halfway is one press. A note-on is a press and a note-off lets go. A program change
+// is a press. Within 50 ms of a control's last press or release, a press is a bounce (or a duplicate, from a merger or a
+// device seen on two inputs) and is ignored. A controller that sends the same value of 64 or more again after more than
+// 50 ms with nothing between (a switch that only ever sends 127), or a note pressed again without its note-off, is pressed
+// again.
 //
-// What they do. Notes are held pedals (ShowController PedalKind::Held): pressed until let go, so a note can be held to
-// stop. Controllers and program changes are taps (PedalKind::Tap): their release can't be trusted (a latching switch
-// sends 127 and 0 on alternate taps), so nothing they do depends on it. Presses act in Show mode only (in Edit mode
-// controls do nothing, except while learning); a note's release goes to buttonUp when its press did. MIDI doesn't need the
-// keyboard, so pedals work whichever window has it.
+// What they do. Every press is a tap (ShowController PedalKind::Tap): no MIDI release is trusted (a pad may send no
+// note-off; a toggling pad or a latching switch sends its "release" on the next tap), so a pedal can never hold a song to
+// stop: Start only starts, and Stop needs two taps. Presses act in Show mode only; in Edit mode controls do nothing, except
+// while learning. MIDI doesn't need the keyboard, so pedals work whichever window has it.
 //
 // Threads. JUCE's MIDI threads call receive: it works out the press or release under a spin lock (the threads take turns)
-// and queues only those, with their time, for the message thread (AsyncUpdater); a stream of values that crosses nothing
-// queues nothing. If the queue overflows anyway, the message thread lets go of everything held, as a release may be lost.
+// and queues only presses and releases, with their time, for the message thread (AsyncUpdater); a stream of values that
+// crosses nothing queues nothing. If the queue is full anyway, the press is dropped: nothing is held, so nothing is stuck.
 //
 // Inputs are open only while the band has a MIDI control, or one is being learned; a band that uses no pedals holds no
-// input. Every 2 s the list is looked at: a new input is opened, a vanished one closed (what was held is let go), and one
-// that couldn't be opened is tried again.
+// input. Every 2 s the list is looked at: a new input is opened, a vanished one closed, and one that couldn't be opened is
+// tried again.
 class ControlInput : private juce::MidiInputCallback, private juce::AsyncUpdater, private juce::Timer {
 public:
     using InputLister = std::function<juce::StringArray()>;
@@ -53,15 +52,16 @@ public:
 
     void handle(const juce::MidiMessage&, double nowSeconds);           // message thread; public for tests
     void receive(const juce::MidiMessage&);                             // a MIDI thread, as the inputs call it; public for tests
-    // The next control that goes down (see ControlMap::bindingFromMidi; one already down teaches nothing) goes to the
-    // callback instead of acting: the action's binding as it is now, its key kept, with that control as its MIDI, ready for
-    // controls.set. Opens the inputs at once. Learning another action instead forgets the first.
+    // The next press (see ControlMap::bindingFromMidi) goes to the callback instead of acting: the action's binding as it is
+    // now, its key kept, with that control as its MIDI, ready for controls.set. A pedal on the move teaches nothing, nor does
+    // a note pressed again while still down; a switch that only sends 127 is learned on its next press. Opens the inputs at
+    // once. Learning another action instead forgets the first.
     void learn(Action, std::function<void(model::ControlBinding)> onLearned);
     void cancelLearning();
     std::optional<Action> learning() const;                             // the action being learned, so its Setup row can pulse
 
 private:
-    enum class Edge : std::uint8_t { None, Press, Repress, Release };   // Repress: pressed again, never let go
+    enum class Edge : std::uint8_t { None, Press, Repress, Release };   // Repress: pressed again, with no release between
     struct ControlState {
         bool down = false;
         int lastValue = -1;
@@ -77,7 +77,6 @@ private:
     void act(const juce::MidiMessage&, Edge, double now);
     bool wantsInputs();
     void lookForInputs();
-    void releaseAll(double now);                   // an input went away, or the queue overflowed: releases may be lost
     const ControlMap& controls();
 
     Session& session_;
@@ -86,18 +85,16 @@ private:
     InputOpener opener_;
     BandControls controls_;
 
-    // Message thread. Each note held down, by channel and number: the action its press went to, or none (pressed in Edit
-    // mode, or the press that was learned), so its release goes where its press went.
-    std::map<int, std::optional<Action>> pressed_;
+    // Message thread.
     std::optional<Action> learning_;
     std::function<void(model::ControlBinding)> on_learned_;
 
-    // Under writers_: each controller's and note's state (2 kinds x 16 channels x 128), and the queue's writing end.
+    // Under writers_: each controller's, note's and program change's state (3 kinds x 16 channels x 128), and the queue's
+    // writing end.
     juce::SpinLock writers_;
     std::vector<ControlState> states_;
     juce::AbstractFifo fifo_{kQueueSize};
     std::array<Queued, kQueueSize> queue_{};
-    std::atomic<bool> overflowed_{false};
 
     // Last: closed first, so no callback comes once the rest is gone.
     std::map<juce::String, std::unique_ptr<juce::MidiInput>> open_;

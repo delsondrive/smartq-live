@@ -83,3 +83,11 @@ TEST_CASE("losing the keyboard forgets what was held", "[keys]") {
     r.c.keyDown(ShowKey::Space, 20.0);  r.c.tick(21.01);                         // a fresh hold still works
     CHECK(r.seen.back() == Action::Stop);
 }
+TEST_CASE("two Esc presses closer than 150 ms are one press (a bounce)", "[keys]") {
+    Rig r;
+    r.c.keyDown(ShowKey::Space, 0.0);  r.c.keyUp(ShowKey::Space, 0.1);
+    r.c.keyDown(ShowKey::Escape, 1.0);  r.c.keyUp(ShowKey::Escape, 1.04);  r.c.keyDown(ShowKey::Escape, 1.08);  r.c.keyUp(ShowKey::Escape, 1.1);
+    CHECK(r.seen.size() == 1);
+    r.c.keyDown(ShowKey::Escape, 1.5);
+    CHECK(r.seen.back() == Action::Stop);
+}

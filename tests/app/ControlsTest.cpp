@@ -35,6 +35,8 @@ struct Pedals {
     void cc(int channel, int number, int value, double t) { input->handle(juce::MidiMessage::controllerEvent(channel, number, value), t); }
     void noteOn(int channel, int note, double t) { input->handle(juce::MidiMessage::noteOn(channel, note, 0.8f), t); }
     void noteOff(int channel, int note, double t) { input->handle(juce::MidiMessage::noteOff(channel, note), t); }
+    void program(int channel, int number, double t) { input->handle(juce::MidiMessage::programChange(channel, number), t); }
+    void space(double down, double up) { show->keyDown(ShowKey::Space, down);  show->keyUp(ShowKey::Space, up); }
     void drain() { juce::MessageManager::getInstance()->runDispatchLoopUntil(50); }
 };
 }  // namespace
@@ -72,7 +74,7 @@ TEST_CASE("every action's name comes back to it", "[controls]") {
     CHECK_FALSE(actionFromName("dance").has_value());
 }
 TEST_CASE("a pedal acts once per press, even when it sends a stream", "[controls]") {
-    // An expression pedal on CC 11, and Start on note 36 too (a note says when it is let go, so it can be held to stop).
+    // An expression pedal on CC 11, and Start on note 36 too.
     Pedals p({{"nextSongLater", binding(0, 1, 1, 11)}, {"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
     double t = 0.0;
     for (int v : {10, 40, 70, 90, 127, 100, 66, 64, 80}) p.cc(1, 11, v, t += 0.1);       // up through 64 once
@@ -81,10 +83,10 @@ TEST_CASE("a pedal acts once per press, even when it sends a stream", "[controls
     CHECK(p.seen.size() == 2);
     p.noteOn(10, 36, 10.0);  p.noteOff(10, 36, 10.1);
     CHECK(p.seen.back() == Action::Start);
-    p.noteOn(10, 36, 15.0);  p.show->tick(16.01);                                         // the Start pedal, held: stop
-    CHECK(p.seen.back() == Action::Stop);
+    p.noteOn(10, 36, 15.0);  p.show->tick(16.01);                                         // held during the song: a pad only taps
     p.noteOff(10, 36, 16.5);
-    CHECK(p.seen.size() == 4);
+    CHECK(p.seen.size() == 3);
+    CHECK(p.s.now().playing);
 }
 TEST_CASE("a controller that wavers about halfway, or bounces, is one press", "[controls]") {
     Pedals p({{"nextSongLater", binding(0, 1, 1, 11)}});
@@ -114,18 +116,58 @@ TEST_CASE("a controller on Start never stops the song, however it is tapped", "[
     CHECK(p.s.now().playing);
     CHECK_FALSE(p.show->isWatching());
 }
-TEST_CASE("Stop on a controller needs two presses within a second; on a key or a note, a one-second hold", "[controls]") {
+TEST_CASE("a pad that sends only note-ons, or toggles, never stops a song on one tap", "[controls]") {
+    SECTION("note-ons only, on Start") {
+        Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
+        p.noteOn(10, 36, 1.0);  p.noteOn(10, 36, 3.0);  p.show->tick(4.5);  p.show->tick(6.0);
+        CHECK(p.seen == std::vector{Action::Start});
+    }
+    SECTION("toggling, on Start") {
+        Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
+        p.noteOn(10, 36, 1.0);  p.noteOff(10, 36, 2.0);  p.noteOn(10, 36, 3.0);  p.show->tick(4.5);  p.show->tick(6.0);
+        CHECK(p.seen == std::vector{Action::Start});
+    }
+    SECTION("note-ons only, on Stop") {
+        Pedals p({{"stop", binding(0, 2, 10, 40)}});
+        p.space(1.0, 1.1);
+        p.noteOn(10, 40, 2.0);  p.show->tick(3.5);  p.noteOn(10, 40, 5.0);  p.show->tick(6.5);
+        CHECK(p.seen == std::vector{Action::Start});
+    }
+    SECTION("toggling, on Stop") {
+        Pedals p({{"stop", binding(0, 2, 10, 40)}});
+        p.space(1.0, 1.1);
+        p.noteOn(10, 40, 2.0);  p.show->tick(3.5);  p.noteOff(10, 40, 5.0);  p.show->tick(6.5);
+        CHECK(p.seen == std::vector{Action::Start});
+    }
+}
+TEST_CASE("Stop on a pedal needs two taps within a second, at least 150 ms apart; on a key, a one-second hold", "[controls]") {
     SECTION("a controller") {
         Pedals p({{"stop", binding(0, 1, 10, 65)}});
-        p.show->keyDown(juce::KeyPress::spaceKey, 0, 1.0);  p.show->keyUp(juce::KeyPress::spaceKey, 1.1);
+        p.space(1.0, 1.1);
         p.cc(10, 65, 127, 2.0);  p.cc(10, 65, 0, 2.1);
         CHECK(p.seen == std::vector{Action::Start});
         p.cc(10, 65, 127, 4.0);  p.cc(10, 65, 0, 4.1);  p.cc(10, 65, 127, 4.6);         // 2 s after the first: a first press again
         CHECK(p.seen == std::vector{Action::Start, Action::Stop});
     }
+    SECTION("a note") {
+        Pedals p({{"stop", binding(0, 2, 10, 40)}});
+        p.space(1.0, 1.1);
+        p.noteOn(10, 40, 2.0);  p.noteOff(10, 40, 2.06);  p.noteOn(10, 40, 2.12);  p.noteOff(10, 40, 2.18);   // too quick
+        CHECK(p.seen == std::vector{Action::Start});
+        p.noteOn(10, 40, 2.4);
+        CHECK(p.seen == std::vector{Action::Start, Action::Stop});
+    }
+    SECTION("a program change") {
+        Pedals p({{"stop", binding(0, 3, 10, 7)}});
+        p.space(1.0, 1.1);
+        p.program(10, 7, 2.0);  p.program(10, 7, 2.004);                                  // sent twice, by a merger
+        CHECK(p.seen == std::vector{Action::Start});
+        p.program(10, 7, 4.0);  p.program(10, 7, 4.5);
+        CHECK(p.seen == std::vector{Action::Start, Action::Stop});
+    }
     SECTION("a key") {
         Pedals p({{"stop", binding('S')}});
-        p.show->keyDown(juce::KeyPress::spaceKey, 0, 1.0);  p.show->keyUp(juce::KeyPress::spaceKey, 1.1);
+        p.space(1.0, 1.1);
         p.show->keyDown('S', 0, 2.0);  p.show->keyUp('S', 2.2);                          // a tap
         CHECK(p.seen == std::vector{Action::Start});
         p.show->keyDown('s', 0, 3.0);  p.show->tick(3.5);
@@ -133,14 +175,15 @@ TEST_CASE("Stop on a controller needs two presses within a second; on a key or a
         p.show->tick(4.01);
         CHECK(p.seen == std::vector{Action::Start, Action::Stop});
     }
-    SECTION("a note") {
-        Pedals p({{"stop", binding(0, 2, 10, 40)}});
-        p.show->keyDown(juce::KeyPress::spaceKey, 0, 1.0);  p.show->keyUp(juce::KeyPress::spaceKey, 1.1);
-        p.noteOn(10, 40, 2.0);  p.noteOff(10, 40, 2.2);
-        CHECK(p.seen == std::vector{Action::Start});
-        p.noteOn(10, 40, 3.0);  p.show->tick(4.01);
-        CHECK(p.seen == std::vector{Action::Start, Action::Stop});
-    }
+}
+TEST_CASE("a Stop tap before the song starts doesn't count toward stopping it", "[controls]") {
+    Pedals p({{"stop", binding(0, 1, 10, 65)}});
+    p.cc(10, 65, 127, 1.0);  p.cc(10, 65, 0, 1.1);                                       // nothing plays yet
+    p.space(1.2, 1.3);
+    p.cc(10, 65, 127, 1.6);                                                               // one tap during the song
+    CHECK(p.seen == std::vector{Action::Start});
+    p.cc(10, 65, 0, 1.7);  p.cc(10, 65, 127, 2.0);                                       // and a second: stop
+    CHECK(p.seen == std::vector{Action::Start, Action::Stop});
 }
 TEST_CASE("a pedal stuck down never blocks the keyboard's Start or its hold to stop", "[controls]") {
     Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
@@ -148,17 +191,11 @@ TEST_CASE("a pedal stuck down never blocks the keyboard's Start or its hold to s
     REQUIRE(p.seen == std::vector{Action::Start});
     p.show->keyDown(ShowKey::Escape, 2.0);  p.show->keyUp(ShowKey::Escape, 2.1);  p.show->keyDown(ShowKey::Escape, 2.3);
     p.show->keyUp(ShowKey::Escape, 2.4);
-    p.show->keyDown(ShowKey::Space, 5.0);  p.show->keyUp(ShowKey::Space, 5.1);
+    p.space(5.0, 5.1);
     CHECK(p.seen == std::vector{Action::Start, Action::Stop, Action::Start});
     p.show->keyDown(ShowKey::Space, 8.0);  p.show->tick(9.01);
     CHECK(p.seen.back() == Action::Stop);
-    p.show->keyUp(ShowKey::Space, 9.1);
-    p.show->keyDown(ShowKey::Space, 10.0);  p.show->keyUp(ShowKey::Space, 10.1);
-    p.noteOff(10, 36, 11.0);  p.noteOn(10, 36, 12.0);                                     // a held pedal outlives the keyboard
-    p.show->keyboardLost();
-    p.show->tick(13.01);
-    CHECK(p.seen.back() == Action::Stop);
-    CHECK(p.seen.size() == 6);
+    CHECK(p.seen.size() == 4);
 }
 TEST_CASE("learning takes the next press instead of acting on it", "[controls]") {
     DemoSession d; auto& s = *d.session;
@@ -174,37 +211,39 @@ TEST_CASE("learning takes the next press instead of acting on it", "[controls]")
     CHECK(learned->midiKind == 2);  CHECK(learned->midiChannel == 10);  CHECK(learned->midiNumber == 40);
     CHECK_FALSE(input.learning().has_value());  CHECK(actions == 0);
 }
-TEST_CASE("learning takes only a control going down, never one already down", "[controls]") {
+TEST_CASE("learning never takes a pedal on the move, or a note pressed again while down", "[controls]") {
     Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
     p.cc(1, 11, 100, 1.0);                                                                // an expression pedal, already up
-    p.noteOn(10, 36, 1.5);                                                                // the Start pedal, held
+    p.noteOn(10, 36, 1.5);                                                                // the Start pad, never let go
     REQUIRE(p.seen == std::vector{Action::Start});
     std::optional<model::ControlBinding> learned;
     p.input->learn(Action::NextSongLater, [&](model::ControlBinding b) { learned = b; });
     p.cc(1, 11, 110, 2.0);  p.cc(1, 11, 120, 2.1);
-    p.noteOn(10, 36, 3.0);                                                                // pressed again, never let go
+    p.noteOn(10, 36, 3.0);                                                                // pressed again, still down
     CHECK_FALSE(learned.has_value());
     CHECK(p.input->learning() == Action::NextSongLater);
-    p.noteOff(10, 36, 3.5);                                                               // its release still reaches the show
-    CHECK_FALSE(p.show->isWatching());
     p.cc(1, 11, 0, 4.0);  p.cc(1, 11, 90, 4.5);
     REQUIRE(learned.has_value());
     CHECK(learned->midiKind == 1);  CHECK(learned->midiChannel == 1);  CHECK(learned->midiNumber == 11);
     CHECK(p.seen.size() == 1);
 }
-TEST_CASE("only what crosses is queued, and a queue that overflows lets go of what is held", "[controls]") {
-    Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
-    p.input->receive(juce::MidiMessage::noteOn(10, 36, 0.8f));  p.drain();
-    REQUIRE(p.seen == std::vector{Action::Start});
-    CHECK(p.show->isWatching());                                                          // the pedal is held
+TEST_CASE("a switch that only ever sends 127 can be learned again", "[controls]") {
+    Pedals p({{"nextSongLater", binding(0, 1, 1, 20)}});
+    p.cc(1, 20, 127, 1.0);
+    REQUIRE(p.seen == std::vector{Action::NextSongLater});
+    std::optional<model::ControlBinding> learned;
+    p.input->learn(Action::NextSongEarlier, [&](model::ControlBinding b) { learned = b; });
+    p.cc(1, 20, 127, 2.0);                                                                // its next press, with no release between
+    REQUIRE(learned.has_value());
+    CHECK(learned->midiKind == 1);  CHECK(learned->midiNumber == 20);
+    CHECK(p.seen.size() == 1);
+}
+TEST_CASE("only what crosses is queued, so a stream never crowds out a press", "[controls]") {
+    Pedals p({{"nextSongLater", binding(0, 1, 1, 20)}});
     for (int i = 0; i < 5000; ++i) p.input->receive(juce::MidiMessage::controllerEvent(1, 11, 40 + i % 20));   // never crosses
+    p.input->receive(juce::MidiMessage::controllerEvent(1, 20, 127));
     p.drain();
-    CHECK(p.show->isWatching());                                                          // nothing was lost
-    for (int channel = 1; channel <= 16; ++channel)
-        for (int number = 0; number < 128; ++number) p.input->receive(juce::MidiMessage::controllerEvent(channel, number, 127));
-    p.drain();
-    CHECK_FALSE(p.show->isWatching());                                                    // its release may have been lost
-    CHECK(p.seen == std::vector{Action::Start});
+    CHECK(p.seen == std::vector{Action::NextSongLater});
 }
 TEST_CASE("MIDI inputs are opened only while the band uses a pedal, or one is being learned", "[controls]") {
     DemoSession d; auto& s = *d.session;
@@ -222,7 +261,7 @@ TEST_CASE("MIDI inputs are opened only while the band uses a pedal, or one is be
     ControlInput input(s, show, lister, opener);
     CHECK(opened == 2);
 }
-TEST_CASE("a learned key works, and a held pedal is watched like a held key", "[controls]") {
+TEST_CASE("a learned key works, and a held button is watched like a held key", "[controls]") {
     DemoSession d; auto& s = *d.session;
     s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('q')}}));
     s.enterShow();
@@ -231,8 +270,10 @@ TEST_CASE("a learned key works, and a held pedal is watched like a held key", "[
     CHECK(seen.empty());                                            // Space no longer starts
     show.keyDown('q', 0, 1.0);  show.keyUp('q', 1.1);
     REQUIRE(seen == std::vector{Action::Start});
-    show.buttonDown(Action::Start, 5.0);                            // the Start pedal, held while the song plays
-    CHECK(show.isWatching());                                       // the 30 Hz timer runs for a held pedal too
+    show.buttonDown(Action::Start, 5.0, PedalKind::Held);           // held while the song plays
+    CHECK(show.isWatching());                                       // the 30 Hz timer runs for a held button too
     show.buttonUp(Action::Start, 5.2);
+    CHECK_FALSE(show.isWatching());
+    show.buttonDown(Action::Start, 6.0, PedalKind::Tap);            // a tap is never held
     CHECK_FALSE(show.isWatching());
 }

@@ -22,16 +22,13 @@ std::unique_ptr<juce::MidiInput> openInput(const juce::String& identifier, juce:
     return juce::MidiInput::openDevice(identifier, callback);
 }
 
-// A note's place in the state table and in pressed_.
-int noteIndex(const juce::MidiMessage& m) { return kControlsPerKind + (m.getChannel() - 1) * 128 + m.getNoteNumber(); }
-
 }  // namespace
 
 ControlInput::ControlInput(Session& session, ShowController& show) : ControlInput(session, show, listInputs, openInput) {}
 
 ControlInput::ControlInput(Session& session, ShowController& show, InputLister lister, InputOpener opener)
     : session_(session), show_(show), lister_(std::move(lister)), opener_(std::move(opener)),
-      states_(2 * kControlsPerKind) {
+      states_(3 * kControlsPerKind) {
     lookForInputs();
     startTimer(kLookMs);
 }
@@ -59,14 +56,16 @@ void ControlInput::cancelLearning() {
 std::optional<Action> ControlInput::learning() const { return learning_; }
 
 ControlInput::Edge ControlInput::edgeOf(const juce::MidiMessage& m, double now) {
-    if (m.isProgramChange()) return Edge::Press;
-    const bool cc = m.isController();
-    if (!cc && !m.isNoteOnOrOff()) return Edge::None;
-    auto& s = states_[(std::size_t) (cc ? (m.getChannel() - 1) * 128 + m.getControllerNumber() : noteIndex(m))];
+    const bool cc = m.isController(), note = m.isNoteOnOrOff(), program = m.isProgramChange();
+    if (!cc && !note && !program) return Edge::None;
+    const int kind = cc ? 0 : note ? 1 : 2;
+    const int number = cc ? m.getControllerNumber() : note ? m.getNoteNumber() : m.getProgramChangeNumber();
+    auto& s = states_[(std::size_t) (kind * kControlsPerKind + (m.getChannel() - 1) * 128 + number)];
 
-    const int value = cc ? m.getControllerValue() : (m.isNoteOn() ? 127 : 0);
-    const bool high = cc ? value >= 64 : m.isNoteOn();
-    const bool low = cc ? value <= 31 : !m.isNoteOn();
+    // A program change is always "down": each one after the first is a press again, unless it comes within 50 ms.
+    const int value = cc ? m.getControllerValue() : (note && !m.isNoteOn() ? 0 : 127);
+    const bool high = cc ? value >= 64 : (program || m.isNoteOn());
+    const bool low = cc ? value <= 31 : (note && !m.isNoteOn());
     Edge edge = Edge::None;
     if (high && !s.down) {
         s.down = true;                             // a bounce goes down too, so the rest of it is no press either
@@ -94,47 +93,24 @@ void ControlInput::handle(const juce::MidiMessage& m, double now) {
 }
 
 void ControlInput::act(const juce::MidiMessage& m, Edge edge, double now) {
-    if (edge == Edge::None) return;
-    const bool note = m.isNoteOnOrOff();
-    const int id = note ? noteIndex(m) : -1;
-    auto letGo = [&] {                             // a note's earlier press, if it went anywhere
-        const auto found = pressed_.find(id);
-        if (found == pressed_.end()) return;
-        const auto action = found->second;
-        pressed_.erase(found);
-        if (action) show_.buttonUp(*action, now);
-    };
-
-    if (edge == Edge::Release) {
-        if (note) letGo();                         // a controller is a tap: nothing was held
-        return;
-    }
+    if (edge != Edge::Press && edge != Edge::Repress) return;   // a release: nothing is held, so nothing to let go
 
     if (learning_) {
-        if (edge == Edge::Repress) return;         // only a control going down: one already down teaches nothing
+        if (edge == Edge::Repress && m.isNoteOnOrOff()) return;  // a note pressed again while still down teaches nothing
         const auto learned = ControlMap::bindingFromMidi(m);
         if (!learned) return;
         auto binding = controls().bindingFor(*learning_);
         binding.midiKind = learned->midiKind;
         binding.midiChannel = learned->midiChannel;
         binding.midiNumber = learned->midiNumber;
-        if (note) pressed_.emplace(id, std::nullopt);   // its release acts on nothing; a held action is never overwritten
         auto done = std::move(on_learned_);
         cancelLearning();
         if (done) done(binding);
         return;
     }
 
-    if (note) letGo();                             // pressed again without its note-off: the first press is over
-    const auto hit = controls().actionForMidi(m);
-    if (!hit) return;                              // not a control the band uses
-    const bool acts = session_.mode() == Mode::Show;
-    if (note) {
-        pressed_[id] = acts ? std::optional<Action>(hit->action) : std::nullopt;
-        if (acts) show_.buttonDown(hit->action, now, PedalKind::Held);
-    } else if (acts) {
-        show_.buttonDown(hit->action, now, PedalKind::Tap);
-    }
+    if (session_.mode() != Mode::Show) return;
+    if (const auto hit = controls().actionForMidi(m)) show_.buttonDown(hit->action, now, PedalKind::Tap);
 }
 
 void ControlInput::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& m) { receive(m); }
@@ -149,16 +125,15 @@ void ControlInput::receive(const juce::MidiMessage& m) {
     item.size = size;
     for (int i = 0; i < size; ++i) item.bytes[(std::size_t) i] = m.getRawData()[i];
     item.at = clockSeconds();
+    bool queued = false;
     {
         const juce::SpinLock::ScopedLockType turn(writers_);
         item.edge = edgeOf(m, item.at);
-        if (item.edge == Edge::None) return;       // nothing crossed: nothing to queue
-        bool queued = false;
+        if (item.edge != Edge::Press && item.edge != Edge::Repress) return;   // only presses are queued
         const auto write = fifo_.write(1);
         write.forEach([&](int index) { queue_[(std::size_t) index] = item;  queued = true; });
-        if (!queued) overflowed_ = true;
     }
-    triggerAsyncUpdate();
+    if (queued) triggerAsyncUpdate();              // when the queue is full, the press is dropped
 }
 
 void ControlInput::handleAsyncUpdate() {
@@ -172,7 +147,6 @@ void ControlInput::handleAsyncUpdate() {
         if (item.size == 0) break;
         act(juce::MidiMessage(item.bytes.data(), item.size), item.edge, item.at);
     }
-    if (overflowed_.exchange(false)) releaseAll(clockSeconds());
 }
 
 void ControlInput::timerCallback() { lookForInputs(); }
@@ -187,13 +161,10 @@ bool ControlInput::wantsInputs() {
 
 void ControlInput::lookForInputs() {
     const auto listed = lister_ && wantsInputs() ? lister_() : juce::StringArray();
-    bool closed = false;
     for (auto it = open_.begin(); it != open_.end();) {
-        if (listed.contains(it->first)) { ++it;  continue; }
-        it = open_.erase(it);
-        closed = true;
+        if (listed.contains(it->first)) ++it;
+        else it = open_.erase(it);
     }
-    if (closed) releaseAll(clockSeconds());
     if (!opener_) return;
     for (const auto& name : listed) {
         if (open_.count(name) > 0) continue;
@@ -202,14 +173,6 @@ void ControlInput::lookForInputs() {
             open_[name] = std::move(input);
         }
     }
-}
-
-void ControlInput::releaseAll(double now) {
-    std::vector<Action> held;
-    for (auto& entry : pressed_)
-        if (entry.second) held.push_back(*entry.second);
-    pressed_.clear();
-    for (auto a : held) show_.buttonUp(a, now);
 }
 
 }  // namespace sqlive::app

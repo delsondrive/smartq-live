@@ -22,6 +22,7 @@ int codeOf(ShowKey key) {
 }  // namespace
 
 bool ShowController::DoublePress::press(double now) {
+    if (armed && now - at < doubleMinSeconds) return false;   // a bounce or a duplicate: the first press still counts
     if (armed && now - at <= doubleEscSeconds) { armed = false;  return true; }
     armed = true;
     at = now;
@@ -35,6 +36,7 @@ ShowController::ShowController(Session& s) : session_(s) {
 ShowController::~ShowController() { stopTimer(); }
 
 void ShowController::act(Action a) {
+    if (a == Action::Start) tapped_stop_.reset();   // a Stop tap from before this song never counts toward stopping it
     if (onAction) onAction(a);
 }
 
@@ -60,15 +62,17 @@ void ShowController::release(Source source, Action a, double now) {
     stop_holds_.erase({source, a});
 }
 
-// A pedal whose release can't be trusted: nothing is held, so a tap never stops a song by being "held".
+// A button whose release can't be trusted: nothing is held, so a tap never stops a song by being "held".
 void ShowController::tap(Action a, double now) {
     last_time_ = now;
+    const bool playing = session_.now().playing;
     switch (a) {
         case Action::Start:
-            if (!session_.now().playing) act(Action::Start);
+            if (!playing) act(Action::Start);
             break;
         case Action::Stop:
-            if (tapped_stop_.press(now)) act(Action::Stop);
+            if (!playing) tapped_stop_.reset();    // only taps during a song count
+            else if (tapped_stop_.press(now)) act(Action::Stop);
             break;
         default: act(a); break;
     }
@@ -76,12 +80,12 @@ void ShowController::tap(Action a, double now) {
 
 void ShowController::buttonDown(Action a, double now, PedalKind kind) {
     if (kind == PedalKind::Tap) tap(a, now);
-    else press(Source::Pedals, a, now);
+    else press(Source::Buttons, a, now);
     updateTimer();
 }
 
 void ShowController::buttonUp(Action a, double now) {
-    release(Source::Pedals, a, now);
+    release(Source::Buttons, a, now);
     updateTimer();
 }
 
@@ -126,7 +130,7 @@ void ShowController::keyboardLost() {
             held_.erase({Source::Keys, *action});
             stop_holds_.erase({Source::Keys, *action});
         }
-    keys_.clear();                                 // a held pedal stays held: it doesn't need the keyboard
+    keys_.clear();                                 // a held button stays held: it doesn't need the keyboard
 }
 
 double ShowController::holdProgress() const {
@@ -148,7 +152,7 @@ bool ShowController::keyStateChanged(bool, juce::Component*) {
 }
 
 // A key the system no longer reports as down was let go (or the keyboard was taken away): treat it as released. Only keys:
-// a pedal held down has no key to look at, and is let go by its own release.
+// a button held down has no key to look at, and is let go by its own buttonUp.
 void ShowController::releaseVanishedKeys(double now) {
     std::vector<int> held;
     for (auto& entry : keys_) held.push_back(entry.first);
