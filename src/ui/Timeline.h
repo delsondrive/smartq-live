@@ -38,6 +38,7 @@ public:
     virtual juce::String title() const = 0;
     virtual juce::String subtitle() const { return {}; }
     virtual juce::Colour dot() const { return {}; }               // transparent = no dot
+    virtual bool dimmed() const { return false; }                 // its header's dot and words drawn at 55%
     virtual int laneHeight() const = 0;
     virtual bool removeSelected() { return false; }               // Delete: removes this lane's selected item, if it has it
     virtual void refresh() {}                                     // the band, the song or its audio changed: read again
@@ -62,8 +63,10 @@ protected:
     virtual void scaleChanged() {}                                // the scale is a different one (before contextChanged)
 
     void pointer(const juce::MouseEvent&, bool press);            // hands the press or drag to the Timeline
-    // Runs the command in Edit mode only; a refusal is said in a message over the lane.
-    bool run(app::Session&, const juce::String& command, const juce::var& params, const juce::String& coalesceKey = {});
+    // Runs the command in Edit mode only; a refusal is said in a message over the lane. value, when given, gets the
+    // command's CommandResult::value (a new thing's id).
+    bool run(app::Session&, const juce::String& command, const juce::var& params, const juce::String& coalesceKey = {},
+             juce::var* value = nullptr);
     juce::ScopedMessageBox message_;
 
 private:

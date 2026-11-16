@@ -10,6 +10,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
+#include "ui/MarkerInspector.h"
 #include "ui/TapTempo.h"
 #include "ui/TempoLane.h"
 #include "ui/Timeline.h"
@@ -53,10 +54,12 @@ SongEditorState makeSongEditorState(const app::Session&, const juce::String& son
 // every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the title (a click: Rename…,
 // Import a MIDI file…), the chips edited in place (BPM typed or tapped, the time signature, the key and the count-in from
 // menus), the tools "Select · Draw" and the snap "Bar · Beat · 1/8", and "▶ Play" / "■ Stop" (the tools go to a second
-// row when the window is too narrow for one). The Timeline: the Tempo lane, one PartLane per part (a click on its name:
-// Rename, Role, Remove) and the ClickLane, under the BARS ruler, with the white cursor line (moved by a click or drag on
-// the ruler or a lane's empty space, snapped as the snap says; Alt for no snap), which follows the playhead while the song
-// plays. Right (290 px): TEMPO while a tempo point is selected, SONG ("Bar 1 starts at") and CLICK. Footer: where the
+// row when the window is too narrow for one). The Timeline: the Tempo lane, a MidiLane per device (midiLaneDevices: the
+// band's, then any the song still has changes for), one PartLane per part (a click on its name: Rename, Role, Remove) and
+// the ClickLane, under the BARS ruler, with the white cursor line (moved by a click or drag on the ruler or a lane's empty
+// space, snapped as the snap says; Alt for no snap), which follows the playhead while the song plays. Right (290 px): the
+// MarkerInspector alone while a change is selected; else TEMPO while a tempo point is selected, SONG ("Bar 1 starts at")
+// and CLICK. Footer: where the
 // cursor is, the key hints and how the save went. With no song open: "Choose a song on the left, or add one." and
 // "+ New song".
 //
@@ -107,7 +110,8 @@ private:
     void refresh(bool force = false);
     void updateControls();
     void buildLanes();                                            // the open song's lanes, when it or its parts changed
-    void showTempoCard();
+    void showInspector();                                         // the TEMPO card, or the change inspector, for the selection
+    bool changeShown() const;                                     // the change inspector fills the right-hand column
 
     bool editable() const;                                        // Edit mode, with a song open
     bool run(const juce::String& command, const juce::var& params, const juce::String& coalesceKey = {});
@@ -141,10 +145,14 @@ private:
     juce::Viewport songsView_;
     Timeline timeline_;
     juce::String laneSong_;                                       // the song and parts the lanes were built for
-    std::vector<juce::String> laneParts_;
+    std::vector<juce::String> laneParts_, laneDevices_;
     TempoLane* tempoLane_ = nullptr;                              // the timeline's, while it has them
     std::vector<PartLane*> partLanes_;
     TempoCard tempoCard_;
+    MarkerInspector markerInspector_;
+    juce::Viewport markerView_;                                   // the change inspector, scrolling when it is taller than the column
+    std::vector<model::MidiDeviceDoc> devicesShown_;              // the band's devices, and their ports' states, as last shown
+    std::vector<int> portsShown_;
     std::unique_ptr<TitleLabel> title_;
     std::array<std::unique_ptr<EditChip>, 4> chips_;             // BPM, signature, key, count-in
     PillButton tap_, play_, setToCursor_, emptyNew_;

@@ -130,6 +130,13 @@ void TempoLane::movePoint(int index, engine::BarBeat at) {
     if (point.bar == at.bar && point.beat == at.beat) return;
     point.bar = at.bar;
     point.beat = at.beat;
+    if (at.beat != 1.0) {                                         // off a bar line: the signature in force there, not its own
+        auto others = *song;
+        others.tempo.erase(others.tempo.begin() + index);
+        const auto map = model::tempoMapOf(others);
+        point.numerator = map.beatsInBar(at.bar);
+        point.denominator = map.denominatorAt(at.bar);
+    }
     send(std::move(points), index);
 }
 
@@ -212,8 +219,8 @@ void TempoLane::mouseDown(const juce::MouseEvent& e) {
         if (*hit > 0 && editable()) dragging_ = *hit;             // the first point can't move
         return;
     }
-    if (tool() == EditTool::Draw) {
-        if (editable() && scale() != nullptr) addAt(snapped(e.position.x));
+    if (tool() == EditTool::Draw && editable() && scale() != nullptr) {   // in Show mode the press moves the cursor
+        addAt(snapped(e.position.x));
         return;
     }
     emptyPress_ = true;

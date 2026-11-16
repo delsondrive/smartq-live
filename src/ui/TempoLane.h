@@ -49,7 +49,7 @@ public:
     void refresh() override;
 
     void addAt(engine::BarBeat);                                  // the tempo and signature in force there; selects it
-    void movePoint(int index, engine::BarBeat);                   // not the first point
+    void movePoint(int index, engine::BarBeat);                   // not the first point; off a bar line it takes the signature in force there
     void removePoint(int index);                                  // not the first point
     // 0 keeps what the point has; the signature changes only for a point on a bar line.
     void setPoint(int index, double bpm, int numerator, int denominator);

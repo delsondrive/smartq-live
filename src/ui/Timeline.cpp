@@ -72,10 +72,12 @@ void Lane::pointer(const juce::MouseEvent& e, bool press) {
     if (onPointer) onPointer(e, press);
 }
 
-bool Lane::run(app::Session& session, const juce::String& command, const juce::var& params, const juce::String& coalesceKey) {
+bool Lane::run(app::Session& session, const juce::String& command, const juce::var& params, const juce::String& coalesceKey,
+               juce::var* value) {
     if (session.mode() != app::Mode::Edit) return false;
     const auto result = session.commands().run(command, params, coalesceKey);
     if (!result.ok) tellUser(message_, *this, result.message);
+    if (value != nullptr) *value = result.value;
     return result.ok;
 }
 
@@ -156,28 +158,32 @@ public:
     }
 
 private:
-    // The mockup's .hd: a darker cell with its dot, its title in 12 px semibold and its subtitle on the right in dim.
+    // The mockup's .hd: a darker cell with its dot, its title in 12 px semibold and its subtitle on the right in dim. A
+    // dimmed lane's dot and words are drawn at 55%.
     static void paintHeader(juce::Graphics& g, juce::Rectangle<int> head, const Lane& lane) {
         g.setColour(juce::Colours::black.withAlpha(0.18f));
         g.fillRect(head);
         g.setColour(theme::hairline);
         g.fillRect(head.getRight() - 1, head.getY(), 1, head.getHeight());
         g.fillRect(head.getX(), head.getBottom() - 1, head.getWidth(), 1);
+        const float alpha = lane.dimmed() ? 0.55f : 1.0f;
         auto text = head.toFloat().withTrimmedRight(1.0f).reduced(8.0f, 0.0f);
         if (const auto dot = lane.dot(); !dot.isTransparent()) {
-            g.setColour(dot);
+            g.setColour(dot.withMultipliedAlpha(alpha));
             g.fillEllipse(text.getX(), text.getCentreY() - 4.0f, 8.0f, 8.0f);
             text.removeFromLeft(14.0f);
         }
         const auto titleFont = theme::font(theme::sizeSmall, true), subtitleFont = theme::font(theme::sizeSmall);
         if (const auto subtitle = lane.subtitle(); subtitle.isNotEmpty()) {
-            const float w = std::min(text.getWidth() / 2.0f, widthOf(subtitleFont, subtitle) + 1.0f);
-            g.setColour(theme::dim);
+            // What the title leaves, and at least half.
+            const float room = std::max(text.getWidth() / 2.0f, text.getWidth() - widthOf(titleFont, lane.title()) - 7.0f);
+            const float w = std::min(room, widthOf(subtitleFont, subtitle) + 1.0f);
+            g.setColour(theme::dim.withMultipliedAlpha(alpha));
             g.setFont(subtitleFont);
             g.drawText(shorten(subtitle, subtitleFont, w), text.removeFromRight(w), juce::Justification::centredRight, false);
             text.removeFromRight(6.0f);
         }
-        g.setColour(theme::mid);
+        g.setColour(theme::mid.withMultipliedAlpha(alpha));
         g.setFont(titleFont);
         g.drawText(shorten(lane.title(), titleFont, std::max(0.0f, text.getWidth())), text, juce::Justification::centredLeft, false);
     }

@@ -8,6 +8,7 @@
 #include <set>
 #include <utility>
 
+#include "app/MidiPorts.h"
 #include "app/PartFiles.h"
 #include "engine/Click.h"
 #include "model/DocumentsJson.h"
@@ -16,6 +17,7 @@
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/MidiImportDialog.h"
+#include "ui/MidiLane.h"
 #include "ui/PartLanes.h"
 #include "ui/Theme.h"
 #include "ui/Veil.h"
@@ -292,6 +294,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
     : session_(session),
       songs_(std::make_unique<SongsBody>(*this)),
       timeline_(session),
+      markerInspector_(session),
       title_(std::make_unique<TitleLabel>()),
       tap_("Tap"),
       play_(juce::String::fromUTF8("\xe2\x96\xb6 Play")),
@@ -312,12 +315,18 @@ SongEditorPage::SongEditorPage(app::Session& session)
         repaint(footer_);
     };
     timeline_.onSelectionChanged = [this] {
-        showTempoCard();
+        showInspector();
+        updateControls();                                         // the song panels go while a change is inspected
         resized();
         repaint();
     };
     addAndMakeVisible(timeline_);
     addChildComponent(tempoCard_);
+    markerInspector_.onSelect = [this](EditorSelection picked) { timeline_.select(std::move(picked)); };
+    markerView_.setViewedComponent(&markerInspector_, false);
+    markerView_.setScrollBarsShown(true, false);
+    markerView_.setScrollBarThickness(10);
+    addChildComponent(markerView_);
 
     title_->onClick = [this] { showTitleMenu(); };
     addAndMakeVisible(*title_);
@@ -435,7 +444,12 @@ void SongEditorPage::refresh(bool force) {
         s.footerTime.clear();
         return s;
     };
-    const bool onlyCursor = sameDoc && loaded == loaded_ && editable() == shownEditable_ && withoutCursor(next) == withoutCursor(state_);
+    // The MIDI lanes' headers and the inspector's Send now follow the band's devices and whether their ports are open.
+    const auto& devices = session_.model().band().midiDevices;
+    std::vector<int> ports;
+    for (const auto& device : devices) ports.push_back(session_.midi() != nullptr ? static_cast<int>(session_.midi()->status(device.id)) : -1);
+    const bool sameMidi = devices == devicesShown_ && ports == portsShown_;
+    const bool onlyCursor = sameDoc && sameMidi && loaded == loaded_ && editable() == shownEditable_ && withoutCursor(next) == withoutCursor(state_);
     const bool footerChanged = next.footerBar != state_.footerBar || next.footerTime != state_.footerTime;
     state_ = std::move(next);
     if (onlyCursor && !force) {
@@ -445,10 +459,12 @@ void SongEditorPage::refresh(bool force) {
     if (doc != nullptr) doc_ = *doc;
     else doc_.reset();
     loaded_ = std::move(loaded);
+    devicesShown_ = devices;
+    portsShown_ = std::move(ports);
     shownEditable_ = editable();
     buildLanes();
     timeline_.refresh();
-    showTempoCard();
+    showInspector();
     updateControls();
     resized();
     songs_->repaint();
@@ -458,13 +474,15 @@ void SongEditorPage::refresh(bool force) {
 void SongEditorPage::buildLanes() {
     std::vector<juce::String> parts;
     for (const auto& part : state_.parts) parts.push_back(part.partId);
-    if (songId_ == laneSong_ && parts == laneParts_) {
+    auto devices = songId_.isNotEmpty() ? midiLaneDevices(session_, songId_) : std::vector<juce::String>();
+    if (songId_ == laneSong_ && parts == laneParts_ && devices == laneDevices_) {
         for (std::size_t i = 0; i < partLanes_.size() && i < state_.parts.size(); ++i) partLanes_[i]->setMissing(state_.parts[i].missing);
         return;
     }
     if (songId_ != laneSong_) timeline_.setSong(songId_);
     laneSong_ = songId_;
     laneParts_ = std::move(parts);
+    laneDevices_ = std::move(devices);
     tempoCard_.show(nullptr, -1, false);                          // before the lane it points at goes
     tempoLane_ = nullptr;
     partLanes_.clear();
@@ -473,6 +491,7 @@ void SongEditorPage::buildLanes() {
         auto tempo = std::make_unique<TempoLane>(session_, songId_);
         tempoLane_ = tempo.get();
         lanes.push_back(std::move(tempo));
+        for (const auto& device : laneDevices_) lanes.push_back(std::make_unique<MidiLane>(session_, songId_, device));
         for (const auto& part : state_.parts) {
             auto lane = std::make_unique<PartLane>(session_, songId_, part.partId);
             lane->setMissing(part.missing);
@@ -484,25 +503,32 @@ void SongEditorPage::buildLanes() {
     timeline_.setLanes(std::move(lanes));
 }
 
-void SongEditorPage::showTempoCard() {
+void SongEditorPage::showInspector() {
     const auto& picked = timeline_.selection();
     const bool tempo = picked.kind == EditorSelection::Kind::Tempo && tempoLane_ != nullptr && picked.index >= 0
                        && picked.index < static_cast<int>(tempoLane_->state().points.size());
-    if (picked.kind == EditorSelection::Kind::Tempo && !tempo) {
+    const bool change = picked.kind == EditorSelection::Kind::Marker && findMarker(session_, songId_, picked.deviceId, picked.id) != nullptr;
+    if ((picked.kind == EditorSelection::Kind::Tempo && !tempo) || (picked.kind == EditorSelection::Kind::Marker && !change)) {
         timeline_.select({});                                     // undone away: nothing is selected (and this runs again)
         return;
     }
     tempoCard_.show(tempo ? tempoLane_ : nullptr, picked.index, editable());
     tempoCard_.setVisible(tempo && state_.songId.isNotEmpty());
+    markerInspector_.show(songId_, change ? picked : EditorSelection{});
+    markerView_.setVisible(change && state_.songId.isNotEmpty());
 }
+
+bool SongEditorPage::changeShown() const { return markerView_.isVisible(); }
 
 void SongEditorPage::updateControls() {
     const bool open = state_.songId.isNotEmpty();
     const bool edit = editable();
-    for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_, &snapTo_,
-                                                                      &setToCursor_, &barOneEditor_, &songLabel_, &clickLabel_,
-                                                                      &clickOn_, &accent_, &clickSound_, &subdivision_})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_, &snapTo_})
         c->setVisible(open);
+    // The song panels give the column to the change inspector.
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&setToCursor_, &barOneEditor_, &songLabel_, &clickLabel_, &clickOn_,
+                                                                      &accent_, &clickSound_, &subdivision_})
+        c->setVisible(open && !changeShown());
     for (auto& chip : chips_) chip->setVisible(open);
     emptyNew_.setVisible(!open);
     emptyNew_.setEnabled(session_.mode() == app::Mode::Edit);
@@ -603,8 +629,17 @@ void SongEditorPage::resized() {
         bpmEditor_.setBounds(chip.withWidth(std::max(chip.getWidth(), 64)).getIntersection(bar));
     }
 
-    // The panel on the right: TEMPO while a tempo point is selected, SONG, then CLICK, each a card of labelled rows.
+    // The panel on the right: the change inspector alone while a change is selected; else TEMPO while a tempo point is
+    // selected, SONG, then CLICK, each a card of labelled rows.
     auto inspector = inspector_.withTrimmedLeft(1).reduced(kInspectorPad);
+    if (changeShown()) {
+        songCard_ = clickCard_ = {};
+        markerView_.setBounds(inspector);
+        int width = inspector.getWidth();                         // narrower by the scroll bar when it is taller than the column
+        if (markerInspector_.idealHeight(width) > inspector.getHeight()) width = std::max(0, width - markerView_.getScrollBarThickness());
+        markerInspector_.setSize(width, markerInspector_.idealHeight(width));
+        return;
+    }
     const auto card = [&](int height) {
         auto c = inspector.removeFromTop(std::min(inspector.getHeight(), height));
         inspector.removeFromTop(std::min(kCardGap, inspector.getHeight()));

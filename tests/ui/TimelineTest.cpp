@@ -203,3 +203,39 @@ TEST_CASE("the timeline zooms with Ctrl and the wheel, and follows the playhead"
     timeline.followPlayhead();                                    // while it plays, the cursor is the playhead
     CHECK(timeline.cursorSeconds() == Catch::Approx(s.now().seconds));
 }
+
+TEST_CASE("a tempo point moved off a bar line takes the signature in force there", "[timeline]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    juce::Array<juce::var> points;
+    points.add(params({{"bar", 1}, {"beat", 1.0}, {"bpm", 100.0}, {"numerator", 4}, {"denominator", 4}}));
+    points.add(params({{"bar", 9}, {"beat", 1.0}, {"bpm", 90.0}, {"numerator", 6}, {"denominator", 8}}));
+    REQUIRE(s.commands().run("song.setTempo", params({{"songId", song}, {"tempo", points}})).ok);
+    sqlive::test::ScopedLook look;
+    ui::TempoLane lane(s, song);
+    lane.movePoint(1, {5, 3.0});                                  // into a bar of 4/4: it doesn't make bar 5 6/8
+    const auto& moved = s.model().song(song)->tempo[1];
+    CHECK(moved.bar == 5);  CHECK(moved.beat == 3.0);
+    CHECK(moved.numerator == 4);  CHECK(moved.denominator == 4);
+    CHECK(model::tempoMapOf(*s.model().song(song)).beatsInBar(5) == 4);
+    CHECK(makeTempoLaneState(s, song, {}).points[1].text == juce::String::fromUTF8("90 · 4/4"));
+}
+
+TEST_CASE("in Show mode the Draw tool's press on the tempo lane moves the cursor", "[timeline]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(song);
+    snapshot(page, 1280, 698);
+    auto& timeline = page.timeline();
+    auto* tempo = dynamic_cast<ui::TempoLane*>(timeline.lanes().front().get());
+    REQUIRE(tempo != nullptr);
+    s.enterShow();
+    d.settle();
+    timeline.setTool(EditTool::Draw);
+    const auto& doc = *s.model().song(song);
+    const auto map = model::tempoMapOf(doc);
+    const auto [start, end] = model::songExtentSeconds(doc, map);
+    const ui::BarScale scale(map, start, end, static_cast<float>(tempo->getWidth()));
+    tempo->mouseDown(eventOn(*tempo, {400.0f, 14.0f}));
+    CHECK(s.model().song(song)->tempo.size() == 1);               // nothing added
+    CHECK(timeline.cursorSeconds() == Catch::Approx(map.secondsAt(scale.snap(400.0f, 1))));   // the cursor went there
+}

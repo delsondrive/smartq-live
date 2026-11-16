@@ -67,6 +67,14 @@ juce::String formatChannels(int firstChannel, bool stereo) {
     return stereo ? juce::String(firstChannel) + "/" + juce::String(firstChannel + 1) : juce::String(firstChannel);
 }
 
+juce::String timingText(double offsetMs) {
+    const double ms = std::round(offsetMs * 10.0) / 10.0;         // to a tenth of a millisecond
+    if (!std::isfinite(ms) || ms == 0.0) return "on time";
+    auto number = juce::String(std::abs(ms), 1);
+    if (number.endsWith(".0")) number = number.dropLastCharacters(2);
+    return number + (ms < 0.0 ? " ms early" : " ms late");
+}
+
 juce::String shorten(const juce::String& text, const juce::Font& font, float width) {
     if (juce::GlyphArrangement::getStringWidth(font, text) <= width) return text;
 

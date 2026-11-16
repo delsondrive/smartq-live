@@ -258,7 +258,7 @@ TEST_CASE("the song editor survives its song being undone away before it refresh
     CHECK(chips == 4);
     auto* lanes = page.lanesViewport().getViewedComponent();
     REQUIRE(lanes != nullptr);
-    press(*lanes, {40.0f, 10.0f});
+    press(*lanes, {40.0f, 38.0f});                                  // the Keys header, under the 28 px Tempo lane
     page.setBpm(130.0);  page.setKey("E");  page.setCountIn(2);  page.setBarOneAtCursor();  page.tap(1.0);
     page.setClick(true, 0, 0, true);  page.togglePlay();
     d.settle();                                                    // the refresh: the empty state
