@@ -93,7 +93,7 @@ tests/engine/  tests/model/  tests/app/  tests/ui/
 ## Time
 
 - **Song time** is a sample count at the engine's sample rate. **0 is bar 1, beat 1.** The count-in and any pre-roll are negative song times.
-- **Stream time** is the engine's running sample counter since `prepare`. It never goes backwards.
+- **Stream time** is the engine's running sample counter: it starts at 0 when the engine is made and keeps counting across `prepare`. It never goes backwards.
 - **Bars** are whole numbers. Bar 1 is the first bar. Bar 0 is the bar before it, bar -1 the one before that; they exist only for count-ins.
 - **Beats** are counted in the time signature's own unit and start at 1. In 6/8, a bar has beats 1 to 6. A tempo in BPM is always quarter notes per minute, as DAWs export it.
 
