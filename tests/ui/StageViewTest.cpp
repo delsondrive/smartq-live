@@ -299,3 +299,21 @@ TEST_CASE("the shell shows the stage view in Show mode", "[stage]") {
     juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
     CHECK(dynamic_cast<ui::StageView*>(shell.currentContent()) == nullptr);
 }
+
+TEST_CASE("after a song is cut off the stage view says PAUSED and the bar it reached", "[stage]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    sqlive::test::ScopedLook look;
+    ui::StageView view(s, nullptr);  view.setBounds(0, 0, 1280, 698);  view.setVisible(true);
+    d.settle();
+    CHECK(view.drawnLabel() == juce::String::fromUTF8("UP NEXT · 1 OF 3"));
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 8);  d.settle();
+    CHECK(view.drawnLabel() == juce::String::fromUTF8("NOW PLAYING · 1 OF 3"));
+    s.audioInterrupted();  d.settle();
+    REQUIRE(makeShowState(s).interrupted);
+    CHECK(view.drawnLabel() == juce::String::fromUTF8("PAUSED · 1 OF 3"));       // the mockup's screen 5, in mint
+    const auto image = snapshot(view, 1280, 698);
+    CHECK(hasColour(image.getClippedImage({0, 0, 640, 60}), theme::mint));        // the label
+    CHECK_FALSE(hasColour(image.getClippedImage({0, 0, 640, 60}), theme::ember));
+    s.clearInterrupted();  d.settle();
+    CHECK(view.drawnLabel() == juce::String::fromUTF8("UP NEXT · 1 OF 3"));
+}

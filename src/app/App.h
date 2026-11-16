@@ -20,6 +20,8 @@ namespace sqlive::app {
 // Welcome page; a band whose rig has no device for this computer first shows the New computer page. A device that is bound
 // but can't be opened is not a reason for that page: the main window opens with the "No audio" pill.
 // Every band folder that opens is noted in the settings, which are saved.
+// With --screenshots <folder> it draws every screen to a PNG there (ui::renderScreens), prints the folder, and opens no
+// window, so wantsWindow() is false and the app quits.
 class App {
 public:
     App(juce::File settingsFile, const juce::StringArray& commandLine);

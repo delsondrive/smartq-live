@@ -57,6 +57,7 @@ NewComputerPage::NewComputerPage(app::Session& session, app::AudioHost& host)
     : session_(session), host_(host), tone_("Test tone"), done_("Done", PillButton::Style::Primary) {
     rigId_ = session.rigId();
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &type_, &device_, &tone_, &done_}) addAndMakeVisible(*child);
+    device_.setPlaceholder("Choose an interface" + kEllipsis);
 
     rig_.onChange = [this](int index) {
         if (!juce::isPositiveAndBelow(index, static_cast<int>(rigIds_.size()))) return;
@@ -129,6 +130,10 @@ void NewComputerPage::say(const juce::String& problem) {
     repaint();
 }
 
+// The page is one column, at most 760 px wide, centred in a wider window.
+int NewComputerPage::columnWidth() const { return std::min(getWidth() - 2 * kPadX, kMaxWidth); }
+int NewComputerPage::columnX() const { return (getWidth() - columnWidth()) / 2; }
+
 juce::String NewComputerPage::rigHint() const {
     const auto* rig = session_.model().rig(rigId_);
     if (rig == nullptr) return {};
@@ -139,8 +144,7 @@ juce::String NewComputerPage::rigHint() const {
 }
 
 void NewComputerPage::resized() {
-    const int w = std::min(getWidth() - 2 * kPadX, kMaxWidth);
-    const int x = kPadX;
+    const int w = columnWidth(), x = columnX();
     const int top = kBoxTop + kBoxPad;
     const int right = x + w - kBoxPad;
     auto place = [&](Choice& choice, int rightEdge, int y, int minWidth) {
@@ -160,17 +164,17 @@ void NewComputerPage::resized() {
 
 void NewComputerPage::paint(juce::Graphics& g) {
     theme::paintAppBackground(g, getLocalBounds());
-    const int w = std::min(getWidth() - 2 * kPadX, kMaxWidth);
+    const int w = columnWidth(), x = columnX();
 
-    drawLogo(g, juce::Rectangle<float>(static_cast<float>(kPadX), static_cast<float>(kPadY), 300.0f, 26.0f), true);
+    drawLogo(g, juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(kPadY), 300.0f, 26.0f), true);
     g.setColour(theme::dim);
     g.setFont(theme::font(theme::sizeSmall));
-    g.drawText(session_.model().band().name, kPadX, kPadY, w, 26, juce::Justification::centredRight, true);
+    g.drawText(session_.model().band().name, x, kPadY, w, 26, juce::Justification::centredRight, true);
 
     int y = kPadY + 26 + 14;
     g.setColour(theme::text);
     g.setFont(theme::font(19.0f, true));
-    g.drawText("Set up this computer", kPadX, y, w, 26, juce::Justification::centredLeft, true);
+    g.drawText("Set up this computer", x, y, w, 26, juce::Justification::centredLeft, true);
     y += 26;
 
     juce::AttributedString sentence;
@@ -178,26 +182,26 @@ void NewComputerPage::paint(juce::Graphics& g) {
     sentence.append("This band folder hasn't been used on ", theme::font(theme::sizeBody), theme::dim);
     sentence.append(state_.computer, theme::font(theme::sizeBody, true), theme::mid);
     sentence.append(" before. Tell it what's plugged in here.", theme::font(theme::sizeBody), theme::dim);
-    sentence.draw(g, juce::Rectangle<float>(static_cast<float>(kPadX), static_cast<float>(y), static_cast<float>(w), 36.0f));
+    sentence.draw(g, juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y), static_cast<float>(w), 36.0f));
 
     const int boxTop = kBoxTop;
     const int boxHeight = kBoxPad + kRowHeight + 12 + kRowHeight + 10 + 34 + kBoxPad;
-    theme::paintPanel(g, juce::Rectangle<float>(static_cast<float>(kPadX), static_cast<float>(boxTop), static_cast<float>(w),
+    theme::paintPanel(g, juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(boxTop), static_cast<float>(w),
                                                 static_cast<float>(boxHeight)));
 
     g.setColour(theme::mid);
     g.setFont(theme::font(theme::sizeBody));
-    g.drawText("Rig", kPadX + kBoxPad, rig_.getY(), 160, kRowHeight, juce::Justification::centredLeft, true);
-    g.drawText("Audio interface", kPadX + kBoxPad, device_.getY(), 200, kRowHeight, juce::Justification::centredLeft, true);
+    g.drawText("Rig", x + kBoxPad, rig_.getY(), 160, kRowHeight, juce::Justification::centredLeft, true);
+    g.drawText("Audio interface", x + kBoxPad, device_.getY(), 200, kRowHeight, juce::Justification::centredLeft, true);
 
     g.setColour(theme::dim);
     g.setFont(theme::font(theme::sizeSmall));
-    g.drawFittedText(rigHint(), kPadX + kBoxPad, device_.getBottom() + 10, w - 2 * kBoxPad, 34, juce::Justification::topLeft, 2);
+    g.drawFittedText(rigHint(), x + kBoxPad, device_.getBottom() + 10, w - 2 * kBoxPad, 34, juce::Justification::topLeft, 2);
 
     if (problem_.isNotEmpty()) {
         g.setColour(theme::danger);
         g.setFont(theme::font(theme::sizeSmall));
-        g.drawFittedText(problem_, kPadX, boxTop + boxHeight + 10, w, 34, juce::Justification::topLeft, 2);
+        g.drawFittedText(problem_, x, boxTop + boxHeight + 10, w, 34, juce::Justification::topLeft, 2);
     }
 }
 

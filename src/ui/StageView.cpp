@@ -153,9 +153,14 @@ bool StageView::shownWithParents() const {
 
 std::vector<StageView::Figure> StageView::figuresOf(const ShowState& st) const {
     if (st.playing) return {{st.bar, st.beat, "BAR"}, {st.bpm, {}, st.bpmLabel}, {st.left, {}, "LEFT"}};
+    if (st.interrupted) return {{st.bar, {}, "BAR"}};               // the mockup's screen 5: where the song was cut off
     if (st.upTitle.isNotEmpty() || st.upBpm.isNotEmpty()) return {{st.upBpm, {}, st.upBpmLabel}, {st.upKey, {}, "KEY"}, {st.upLength, {}, "LENGTH"}};
     return {};
 }
+
+bool StageView::labelIsNow() const { return shape_.screen == Screen::Playing || (shape_.screen == Screen::Between && state_.interrupted); }
+
+juce::String StageView::drawnLabel() const { return labelIsNow() ? state_.label : state_.upLabel; }
 
 StageView::Shape StageView::shapeOf(const ShowState& st) const {
     Shape shape;
@@ -237,7 +242,7 @@ void StageView::repaintChanges(const ShowState& st, double hold) {
             repaintDesign(next_);
         break;
     case Screen::Between:
-        if (st.upLabel != was.upLabel) repaintDesign(labelBox_);
+        if (st.upLabel != was.upLabel || st.label != was.label) repaintDesign(labelBox_);
         if (st.action != was.action || st.actionDetail != was.actionDetail || st.pill != was.pill || st.readiness != was.readiness
             || st.loadProgress != was.loadProgress)
             repaintDesign(cta_);
@@ -347,10 +352,7 @@ void StageView::paint(juce::Graphics& g) {
 // The label, the title and the figures.
 void StageView::paintHeader(juce::Graphics& g) {
     const auto clip = g.getClipBounds().toFloat();
-    if (clip.intersects(labelBox_)) {
-        const bool playing = shape_.screen == Screen::Playing;
-        drawFitted(g, playing ? state_.label : state_.upLabel, labelFont(), playing ? theme::mint : theme::ember, labelBox_);
-    }
+    if (clip.intersects(labelBox_)) drawFitted(g, drawnLabel(), labelFont(), labelIsNow() ? theme::mint : theme::ember, labelBox_);
     if (clip.intersects(titleBox_)) {
         const float line = titleSize_ * kTitleLine;
         g.setFont(titleFont(titleSize_));

@@ -75,7 +75,8 @@ private:
 
 // The mockup's dropdown (.dd): the chosen item on a field with a hairline border, 6 px corners and a chevron; a click
 // opens a popup menu of the items with the chosen one ticked. selected() is -1 when nothing is chosen.
-// setNeedsAttention is .dd.need: the border and the words in caution, for a choice still to be made.
+// setNeedsAttention is .dd.need: the border and the words in caution, for a choice still to be made. With nothing chosen
+// it shows its placeholder ("Choose a port…"), in dim, or in caution when it needs attention.
 class Choice : public juce::Component {
 public:
     Choice();
@@ -84,6 +85,8 @@ public:
     int selected() const { return selected_; }
     const juce::StringArray& items() const { return items_; }
     void setNeedsAttention(bool);
+    void setPlaceholder(const juce::String&);
+    const juce::String& placeholder() const { return placeholder_; }
     std::function<void(int)> onChange;
 
     int idealWidth() const;
@@ -98,6 +101,7 @@ private:
     juce::StringArray items_;
     int selected_ = -1;
     bool needsAttention_ = false;
+    juce::String placeholder_;
 };
 
 // The mockup's .tools switch: segments on a field, the chosen one raised on the popup colour in bright text. The

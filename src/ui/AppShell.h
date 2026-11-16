@@ -26,7 +26,7 @@ class PreShowDialog;
 // Tab switches), then banners over the content's top edge (the red InterruptedBanner, and under it the amber
 // KeyboardBanner; while a show song is cut off, the ComesBackBox near the bottom; in Edit mode, while files changed on
 // another computer wait for an answer, the OutsideChangesBanner), then a dialog over everything, on a
-// veil. It refreshes on Session::changes() and 30 times a second for the clock. Pages and views are plugged in by plugInPages (Pages.h); a page not plugged in yet shows nothing.
+// veil. While the red banner shows, the show view sits under it, dimmed to half (the mockup's screen 5). It refreshes on Session::changes() and 30 times a second for the clock. Pages and views are plugged in by plugInPages (Pages.h); a page not plugged in yet shows nothing.
 //
 // In Show mode nothing here writes the band folder: the top bar shows no Undo, and an undo asked for anyway is ignored.
 // Tonight's level changes are asked about only in Edit mode, and always there while Session::hasTonightChanges(): they

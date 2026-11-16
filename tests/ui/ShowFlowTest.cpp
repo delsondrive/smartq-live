@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <memory>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -210,4 +211,27 @@ TEST_CASE("the keyboard is elsewhere only in Show mode, and not while the app's 
     CHECK_FALSE(ui::keyboardElsewhere(true, true, 0));            // the window has it
     CHECK_FALSE(ui::keyboardElsewhere(false, false, 0));          // Edit mode never says so
     CHECK_FALSE(ui::keyboardElsewhere(true, false, 1));           // one of the app's own modal dialogs has it
+}
+
+// ---- Task 19: the look checked against the mockups ---------------------------------------------------------------------
+
+TEST_CASE("while the red banner shows, the show view sits under it, dimmed", "[showflow]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(*d.session);
+    sqlive::test::ScopedLook look;
+    ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
+    auto main = std::make_unique<juce::Component>(); auto* mainPtr = main.get();
+    auto stage = std::make_unique<juce::Component>(); auto* stagePtr = stage.get();
+    shell.setShowComponents(std::move(main), std::move(stage));
+    s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);  d.settle();
+    CHECK(stagePtr->getY() == 62);  CHECK(stagePtr->getAlpha() == 1.0f);
+    host.deviceLost();  d.settle();
+    REQUIRE(shell.showingInterruptedBanner());
+    for (auto* view : {mainPtr, stagePtr}) {
+        CHECK(view->getY() == 62 + ui::InterruptedBanner::height);         // nothing of it hidden under the banner
+        CHECK(view->getBottom() == 760);
+        CHECK(std::abs(view->getAlpha() - 0.5f) < 0.01f);             // kept as a byte: 128 / 255
+    }
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  s.perform(Action::Start);  s.advanceWithoutDevice(4800);  d.settle();
+    REQUIRE_FALSE(shell.showingInterruptedBanner());
+    CHECK(stagePtr->getY() == 62);  CHECK(stagePtr->getAlpha() == 1.0f);
 }

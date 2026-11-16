@@ -233,8 +233,14 @@ void Choice::setNeedsAttention(bool needs) {
     repaint();
 }
 
+void Choice::setPlaceholder(const juce::String& text) {
+    if (text == placeholder_) return;
+    placeholder_ = text;
+    repaint();
+}
+
 int Choice::idealWidth() const {
-    float widest = 0.0f;
+    float widest = widthOf(choiceFont(), placeholder_);
     for (const auto& item : items_) widest = std::max(widest, widthOf(choiceFont(), item));
     return ceilToInt(widest + kChoicePadLeft + kChoiceChevronSpace);
 }
@@ -254,6 +260,10 @@ void Choice::paint(juce::Graphics& g) {
         g.setColour(needsAttention_ ? theme::caution : theme::text);
         g.setFont(choiceFont());
         g.drawText(shorten(items_[selected_], choiceFont(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);
+    } else if (placeholder_.isNotEmpty()) {
+        g.setColour(needsAttention_ ? theme::caution : theme::dim);
+        g.setFont(choiceFont());
+        g.drawText(shorten(placeholder_, choiceFont(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);
     }
     drawChevron(g, {area.getRight() - 12.0f, area.getCentreY()}, theme::dim);
 }

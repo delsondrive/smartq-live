@@ -68,6 +68,7 @@ SetupPage::SetupPage(app::Session& session, app::AudioHost* host)
     rig_.onChange = [this](int index) { chooseRig(index); };
     types_.onChange = [this](int index) { chooseType(index); };
     devices_.onChange = [this](int index) { chooseDevice(index); };
+    devices_.setPlaceholder("Choose an interface" + kEllipsis);
     rate_.onChange = [this](int index) { chooseRate(index); };
     buffer_.onChange = [this](int index) { chooseBuffer(index); };
     duplicate_.onClick = [this] {

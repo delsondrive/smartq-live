@@ -20,8 +20,10 @@ namespace sqlive::ui {
 // around the beat lights fills with ShowController::holdProgress() and "Keep holding to stop" takes the progress bar's
 // place. Between songs: "UP NEXT", the title, its BPM, key and length; the call to action (the Space key, what it does
 // and the pill) on a mint panel when the song is ready, a grey one with a progress bar while it loads, a red one when it
-// can't play; the row of songs around it; the hints. Once the last song has ended: the setlist's name and "That was the
-// last song." Sections, cues and the pad are later stages' and are left out.
+// can't play; the row of songs around it; the hints. After a song was cut off (the device went away), the same, under
+// "PAUSED · 1 OF 3" in mint with the bar it reached in place of the BPM, key and length (the mockup's screen 5).
+// Once the last song has ended: the setlist's name and "That was the last song." Sections, cues and the pad are later
+// stages' and are left out.
 //
 // Everything is drawn at the mockup's sizes for a 1280 x 698 area, scaled by min(width / 1280, height / 698).
 //
@@ -47,6 +49,9 @@ public:
     juce::Rectangle<int> progressRowArea() const { return areaOf(barRow_); }
     // For tests: the call to action's words as last drawn between songs: the action, its detail and the pill.
     juce::StringArray drawnCallToAction() const { return drawnCallToAction_; }
+    // The label over the title: "NOW PLAYING · 1 OF 3" in mint while a song plays, or "PAUSED · 1 OF 3" after one was cut
+    // off; otherwise "UP NEXT · 2 OF 3" in ember.
+    juce::String drawnLabel() const;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -76,6 +81,7 @@ private:
     bool shownWithParents() const;
     Shape shapeOf(const ShowState&) const;
     std::vector<Figure> figuresOf(const ShowState&) const;
+    bool labelIsNow() const;                                      // the label is the song playing, or cut off: mint
     void layout();
     void fitTitle(const juce::String&, float width);
     void repaintChanges(const ShowState& next, double hold);

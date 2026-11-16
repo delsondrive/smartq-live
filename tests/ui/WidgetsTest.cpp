@@ -59,3 +59,15 @@ TEST_CASE("widgets draw in the theme's colours and report gestures", "[widgets]"
     child.setBounds(10, 10, 50, 50);  CHECK(childrenInside(parent));
     child.setBounds(80, 10, 50, 50);  CHECK_FALSE(childrenInside(parent));      // the test helper catches a child cut off
 }
+TEST_CASE("a dropdown with nothing chosen shows its placeholder", "[widgets]") {
+    juce::ScopedJuceInitialiser_GUI gui;  sqlive::test::ScopedLook look;
+    Choice choice;  choice.setItems({"ASIO", "Windows Audio"}, -1);  choice.setNeedsAttention(true);
+    const int bare = choice.idealWidth();
+    const juce::Rectangle<int> words{4, 4, 150, 20};             // inside the border, left of the chevron
+    CHECK_FALSE(hasColour(snapshot(choice, 240, 28).getClippedImage(words), theme::caution, 40));
+    choice.setPlaceholder(juce::String::fromUTF8("Choose an interface…"));
+    CHECK(choice.placeholder() == juce::String::fromUTF8("Choose an interface…"));
+    CHECK(choice.idealWidth() > bare);                            // it fits the placeholder too
+    CHECK(hasColour(snapshot(choice, 240, 28).getClippedImage(words), theme::caution, 40));   // .dd.need's words
+    CHECK(choice.selected() == -1);                               // still nothing chosen
+}

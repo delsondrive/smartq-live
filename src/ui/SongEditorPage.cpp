@@ -259,7 +259,7 @@ private:
 // One row per part (its header, then its waveform), then the Click row, each header in the 150 px column on the left.
 // The waveforms are worked out from the loaded audio once per scale: a summary of each part (the min and max of every 256
 // frames, both channels) is made once per part's audio, and each pixel's column is the min and max of the summary's points
-// under it, drawn to the part's own peak so a quiet part still shows its shape.
+// under it, drawn to the part's own peak so a quiet part still shows its shape, as a bar every 2 px.
 class SongEditorPage::LanesBody : public juce::Component {
 public:
     explicit LanesBody(SongEditorPage& page) : page_(page) {}
@@ -366,14 +366,20 @@ private:
         const float mid = static_cast<float>(lane.getCentreY());
         const float half = static_cast<float>(kPartRow - 2 * kWaveInset) * 0.5f;
         const float scale = c.peak > 1.0e-6f ? 0.9f * half / c.peak : 0.0f;
-        g.setColour(colour);
-        for (std::size_t x = 0; x < c.lo.size(); ++x) {
-            if (std::isnan(c.lo[x])) continue;
-            // From the column's top to its bottom, always through the centre line: a column wholly above or below zero
-            // still reaches it.
-            const float top = mid - c.hi[x] * scale, bottom = mid - c.lo[x] * scale;
+        // The mockup's canvas.wf: a 1.3 px bar every 2 px, at 75 % opacity, so a dense part keeps its texture.
+        g.setColour(colour.withMultipliedAlpha(0.75f));
+        for (std::size_t x = 0; x < c.lo.size(); x += 2) {
+            float lo = c.lo[x], hi = c.hi[x];
+            if (x + 1 < c.lo.size() && !std::isnan(c.lo[x + 1])) {          // the bar covers both pixels' columns
+                lo = std::isnan(lo) ? c.lo[x + 1] : std::min(lo, c.lo[x + 1]);
+                hi = std::isnan(hi) ? c.hi[x + 1] : std::max(hi, c.hi[x + 1]);
+            }
+            if (std::isnan(lo)) continue;
+            // From the bar's top to its bottom, always through the centre line: a bar wholly above or below zero still
+            // reaches it.
+            const float top = mid - hi * scale, bottom = mid - lo * scale;
             const float y = std::min(top, mid - 0.5f);
-            g.fillRect(static_cast<float>(lane.getX()) + static_cast<float>(x), y, 1.0f, std::max(bottom, mid + 0.5f) - y);
+            g.fillRect(static_cast<float>(lane.getX()) + static_cast<float>(x), y, 1.3f, std::max(bottom, mid + 0.5f) - y);
         }
     }
 

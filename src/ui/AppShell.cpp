@@ -242,8 +242,13 @@ void AppShell::resized() {
     topBar_.setBounds(area.removeFromTop(TopBar::height));
     for (auto& page : pages_)
         if (page != nullptr) page->setBounds(area);
+    // Under the red banner, as the mockup's screen 5 has it: the show view moves down out of its way and dims to half.
+    const bool cutOff = interrupted_.isVisible();
     for (auto* view : {mainView_.get(), stageView_.get()})
-        if (view != nullptr) view->setBounds(area);
+        if (view != nullptr) {
+            view->setBounds(cutOff ? area.withTrimmedTop(InterruptedBanner::height) : area);
+            view->setAlpha(cutOff ? 0.5f : 1.0f);
+        }
     // The red banner first, the amber one under it when both are up.
     comesBack_.setBounds(area.withTrimmedBottom(24).reduced(28, 0).removeFromBottom(ComesBackBox::height));
     interrupted_.setBounds(area.withHeight(InterruptedBanner::height));

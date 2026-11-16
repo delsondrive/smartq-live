@@ -44,6 +44,8 @@ private:
     void finish();
     void say(const juce::String& problem);
     juce::String rigHint() const;
+    int columnWidth() const;
+    int columnX() const;
 
     app::Session& session_;
     app::AudioHost& host_;

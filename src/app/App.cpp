@@ -1,9 +1,12 @@
 #include "app/App.h"
 
+#include <iostream>
+
 #include "model/BandFolder.h"
 #include "model/DemoBand.h"
 #include "ui/MainWindow.h"
 #include "ui/NewComputerPage.h"
+#include "ui/Screens.h"
 #include "ui/Theme.h"
 #include "ui/WelcomePage.h"
 
@@ -11,11 +14,19 @@ namespace sqlive::app {
 
 namespace {
 
-// The folder after --band, read from the working folder when it is relative; {} when there is none.
-juce::File bandFromCommandLine(const juce::StringArray& commandLine) {
-    const int at = commandLine.indexOf("--band");
+// The folder after an option such as --band, read from the working folder when it is relative; {} when there is none.
+juce::File folderAfter(const juce::StringArray& commandLine, const juce::String& option) {
+    const int at = commandLine.indexOf(option);
     if (at < 0 || at + 1 >= commandLine.size()) return {};
     return juce::File::getCurrentWorkingDirectory().getChildFile(commandLine[at + 1].unquoted());
+}
+
+// --screenshots <folder>: every screen as a PNG in that folder (ui::renderScreens), then the folder printed, or why it
+// failed. No folder given: "screens" in the working folder. The user's settings and band folders are never written.
+void makeScreenshots(juce::File folder) {
+    if (folder == juce::File()) folder = juce::File::getCurrentWorkingDirectory().getChildFile("screens");
+    const auto result = ui::renderScreens(folder);
+    std::cout << (result.wasOk() ? folder.getFullPathName() : result.getErrorMessage()) << std::endl;
 }
 
 }  // namespace
@@ -37,7 +48,11 @@ public:
 };
 
 App::App(juce::File settingsFile, const juce::StringArray& commandLine) : settings_(std::move(settingsFile)) {
-    auto band = bandFromCommandLine(commandLine);
+    if (commandLine.contains("--screenshots")) {
+        makeScreenshots(folderAfter(commandLine, "--screenshots"));
+        return;                                                   // wantsWindow() is false: the app quits
+    }
+    auto band = folderAfter(commandLine, "--band");
     if (band == juce::File()) {
         const auto recent = settings_.recentBandFolders();
         if (!recent.isEmpty()) band = recent.getFirst();
