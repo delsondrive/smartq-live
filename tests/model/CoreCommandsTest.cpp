@@ -114,6 +114,8 @@ TEST_CASE("songs and parts", "[core]") {
     CHECK(f.model.song(id)->audioStartSeconds == 0.0);
     CHECK(f.run("song.setAudioStart", params({{"songId", id}, {"seconds", 1.5}})).ok);
     CHECK(f.model.song(id)->audioStartSeconds == 1.5);
+    CHECK(f.run("song.setAudioStart", params({{"songId", id}, {"seconds", 1.0e6}})).ok);
+    CHECK(f.model.song(id)->audioStartSeconds == 600.0);
 
     CHECK(f.run("song.setClick", params({{"songId", id}, {"enabled", false}, {"offsetDb", -3}, {"sound", "rim"}, {"subdivision", "triplets"}, {"accentDownbeat", false}})).ok);
     auto click = f.model.song(id)->click;

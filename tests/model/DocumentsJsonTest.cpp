@@ -90,3 +90,9 @@ TEST_CASE("a part's file that points outside the song's folder is ignored and no
     CHECK(notes.notes.contains("parts[2].file points outside the song's folder, so it is ignored."));
     CHECK(notes.notes.size() == 2);
 }
+TEST_CASE("audio starts no more than ten minutes before bar 1", "[json]") {
+    SongDoc song; ParseNotes notes;
+    REQUIRE(fromJson(R"({"version":1,"audioStartSeconds":1000000})", song, notes));
+    CHECK(song.audioStartSeconds == 600.0);
+    CHECK(notes.notes.joinIntoString(" ").contains("audioStartSeconds"));
+}

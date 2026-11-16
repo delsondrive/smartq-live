@@ -241,7 +241,7 @@ void registerCoreCommands(CommandLayer& layer) {
         return CommandResult::success();
     });
     add("song.setAudioStart", [](BandModel& m, const Params& p) {
-        songOf(m, p).audioStartSeconds = p.number("seconds", 0.0, 1.0e7);
+        songOf(m, p).audioStartSeconds = p.number("seconds", 0.0, kMaxAudioStartSeconds);
         return CommandResult::success();
     });
     add("song.setClick", [](BandModel& m, const Params& p) {

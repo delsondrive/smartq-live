@@ -362,7 +362,7 @@ bool fromVar(const juce::var& v, SongDoc& out, ParseNotes& notes) {
     out = SongDoc{};
     out.id = r.id(); out.title = r.text("title"); out.key = r.text("key");
     out.countInBars = r.whole("countInBars", 0, 0, 8);
-    out.audioStartSeconds = r.number("audioStartSeconds", 0.0, 0.0, 1.0e7);
+    out.audioStartSeconds = r.number("audioStartSeconds", 0.0, 0.0, kMaxAudioStartSeconds);
     out.lengthSeconds = r.number("lengthSeconds", 0.0, 0.0, 1.0e7);
     r.list("tempo", out.tempo, [](Reader& c, TempoPointDoc& t) { read(c, t); });
     if (out.tempo.empty()) {

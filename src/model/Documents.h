@@ -9,6 +9,8 @@
 namespace sqlive::model {
 
 inline constexpr int kSchemaVersion = 1;
+// The most audio a song may have before bar 1: ten minutes, far more than any intro, and few enough samples to be safe.
+inline constexpr double kMaxAudioStartSeconds = 600.0;
 
 // Every document struct ends with `extra`: the keys this version doesn't know, kept and written back unchanged.
 
