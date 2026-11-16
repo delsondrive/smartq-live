@@ -48,10 +48,20 @@ set(SQLIVE_BUILD_INFO_CPP "${CMAKE_BINARY_DIR}/generated/BuildInfo.cpp")
 configure_file("${CMAKE_SOURCE_DIR}/cmake/BuildInfo.cpp.in" "${SQLIVE_BUILD_INFO_CPP}" @ONLY)
 
 # Compiled into both the app and the tests. There is no JUCE-linked library target: it compiles the JUCE modules twice.
+# A file ending _windows.cpp is built on Windows only and _posix.cpp everywhere else.
+if(WIN32)
+    set(SQLIVE_PLATFORM_SUFFIX "windows")
+else()
+    set(SQLIVE_PLATFORM_SUFFIX "posix")
+endif()
 file(GLOB_RECURSE SQLIVE_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/model/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/ui/*.cpp")
+set(SQLIVE_PLATFORM_SOURCES ${SQLIVE_CORE_SOURCES})
+list(FILTER SQLIVE_CORE_SOURCES EXCLUDE REGEX "_(windows|posix)[.]cpp$")
+list(FILTER SQLIVE_PLATFORM_SOURCES INCLUDE REGEX "_${SQLIVE_PLATFORM_SUFFIX}[.]cpp$")
+list(APPEND SQLIVE_CORE_SOURCES ${SQLIVE_PLATFORM_SOURCES})
 list(APPEND SQLIVE_CORE_SOURCES "${SQLIVE_BUILD_INFO_CPP}")
 
 # The owner's logo, as plain vectors.
