@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -80,6 +81,9 @@ public:
     // The device went away: stops at once, lets go of whatever was asked of the engine and not yet heard, and makes the
     // entry that was playing the next one again. When something was playing, now() is interrupted, at the bar it reached.
     void audioInterrupted();
+    // Any thread (it only sets a flag): the device stopped by itself, as AudioHost's audioDeviceStopped says. A song the
+    // engine lets go of before audioInterrupted comes was cut off by it, and is taken as interrupted all the same.
+    void deviceStopping();
     void clearInterrupted();                                     // called by the next Start or song choice
 
     NowPlaying now() const;
@@ -90,7 +94,8 @@ public:
     void setEditFocus(const juce::String& songId);               // the song open in an Edit page: kept loaded first
 
     Mode mode() const;
-    void enterShow();                                            // views run the pre-show check first (Task 18)
+    void enterShow();                                            // views run the pre-show check first (Task 18). Stops a
+                                                                 // song played on its own, and saves what is waiting
     bool leaveShow();                                            // false while a song is playing; keeps tonight's changes
     std::optional<float> level(const LevelTarget&) const;        // as it is now, tonight's changes included; nullopt = not sent,
                                                                  // or no such thing
@@ -192,9 +197,16 @@ private:
     void refreshWanted();
     void refreshMix(bool force);
     void refreshPlayingLevels();                                 // the playing song's levels, as heard, to the engine
-    void refreshTransport();                                     // the follow-on and the cue
+    // The follow-on and the cue. A cue goes at most once per tick (a fader dragged on the next song changes it on every
+    // move), unless forced, as a Start needs it now. What the engine's full queue drops is sent again on the next tick.
+    void refreshTransport(bool force = false);
     engine::FollowOn followOn() const;
     bool handleEngineEvents();                                   // true when anything changed
+    // The engine never plays a song the session doesn't know: whatever it plays, the session holds, or has seen end.
+    bool knowsWhatPlays(const engine::EngineStatus&) const;
+    // A song the engine started that the session didn't: a follow-on of a cue it remembers, or one nothing here knows, which
+    // is still reported as playing (title unknown) so every stop gesture stops it.
+    void adoptPlaying(std::uint64_t serial, std::int64_t streamTime, const Cue* known);
     void handleEvent(const engine::EngineEvent&);
     bool engineLetGo(const engine::EngineStatus&);               // the playing song isn't playing, and no event will say so
     void forgetDeadCues(const engine::EngineStatus&);
@@ -247,6 +259,10 @@ private:
     std::map<std::uint64_t, Cue> recent_cues_;                   // by serial, so a follow-on's Started can be matched; only
                                                                  // those that could still start, as they hold songs' audio
     std::uint64_t last_started_serial_ = 0;
+    std::uint64_t last_finished_serial_ = 0;                     // the last song that ended or stopped, or that a lost device let go
+    bool cue_sent_this_tick_ = false;                            // refreshTransport's budget: one cue per tick
+    engine::EngineStatus last_status_;                           // what handleEngineEvents last read
+    std::atomic<bool> device_stopped_{false};                    // deviceStopping, until audioInterrupted or setDevice
     engine::FollowOn follow_on_;                                 // the last one sent
 
     std::map<juce::String, std::shared_ptr<const Prepared>> prepared_;   // by song id

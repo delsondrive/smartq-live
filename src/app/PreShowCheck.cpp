@@ -89,6 +89,10 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
     if (const int n = (int) session.conflictCopies().size(); n > 0)
         items.push_back(item(Level::Warning, "conflicts", plural(n, "file has a conflict copy", "files have conflict copies"),
                              "Two computers changed the same file. Click Check files to choose which to keep."));
+    if (const auto saving = session.saveState(); saving == SaveState::Failed || saving == SaveState::Waiting)
+        items.push_back(item(Level::Warning, "saving", "Some changes haven't been saved yet.",
+                             saving == SaveState::Failed ? session.saveError()
+                                                         : juce::String("They wait for your answer about files changed on another computer.")));
     if (in.power.known && in.power.onBattery)
         items.push_back(item(Level::Warning, "power", "Running on battery", juce::String(in.power.percent) + "% left. Plug the laptop in."));
     return items;

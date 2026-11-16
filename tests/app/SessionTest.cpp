@@ -2,6 +2,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "app/Session.h"
+#include "app/ShowController.h"
+#include "model/SongAudio.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
 
@@ -145,4 +147,125 @@ TEST_CASE("cues that can no longer start don't keep songs in memory", "[session]
     s.perform(Action::NextSongLater);  s.perform(Action::NextSongLater);          // each next song was cued in turn
     s.setDevice(44100.0, 2);  s.advanceWithoutDevice(512);  d.settle();          // the cache lets go of the 48 kHz audio
     for (auto& song : before) CHECK(song.expired());
+}
+
+// ---- Stage 1b final review: the session never loses track of what the engine plays ----------------------------------
+
+namespace {
+// The song as the engine would play it, made here behind the session's back.
+std::shared_ptr<const sqlive::engine::PreparedSong> songBehindTheBack(Session& s, const juce::String& songId) {
+    const auto loaded = s.cache().loaded(songId);
+    REQUIRE(loaded != nullptr);
+    return std::make_shared<const sqlive::engine::PreparedSong>(
+        sqlive::model::buildPreparedSong(*s.model().song(songId), s.model().band(), loaded->audio, s.engine().sampleRate()));
+}
+// The invariant: whatever the engine plays, the session says something plays, so every stop gesture can stop it.
+bool sessionKnowsWhatPlays(Session& s) { return s.engine().status().playingSerial == 0 || s.now().playing; }
+}  // namespace
+
+TEST_CASE("a song the engine plays that the session didn't start is still reported, and every stop stops it", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    s.enterShow();
+    s.engine().cue(songBehindTheBack(s, d.setlist().entries[2].songId));
+    s.engine().start();
+    s.advanceWithoutDevice(4800);
+    REQUIRE(s.engine().status().playingSerial != 0);
+    CHECK(s.now().playing);                                                      // title unknown is fine
+    CHECK(sessionKnowsWhatPlays(s));
+    ShowController hold(s);                                                      // hold Space
+    hold.keyDown(ShowKey::Space, 0.0);  hold.tick(1.1);
+    s.advanceWithoutDevice(9600);
+    CHECK(s.engine().status().state == sqlive::engine::PlayState::Stopped);
+    CHECK_FALSE(s.now().playing);
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);                     // and the show goes on from its next song
+    CHECK(s.now().playing);  CHECK(s.now().playingIndex == 0);
+}
+TEST_CASE("many fader moves on the next song re-cue it once per tick, and the engine never plays what the session doesn't know",
+          "[session]") {
+    DemoSession d; auto& s = *d.session;
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    s.commands().run("setlist.setTransition", params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"kind", "seamless"}}));
+    s.enterShow();
+    const auto next = d.setlist().entries[1].songId;
+    const auto part = s.model().song(next)->parts[0].id;
+    const LevelTarget fader{LevelTarget::Kind::Part, next, part, {}, {}};
+    const auto probe = songBehindTheBack(s, next);
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().playingIndex == 0);
+    const auto before = s.engine().cue(probe);                                   // serials count every cue
+    for (int i = 0; i < 40; ++i) s.setLevel(fader, -1.0f - 0.1f * (float) i, "drag");
+    const auto after = s.engine().cue(probe);
+    CHECK(after - before - 1 <= 1);                                              // one re-cue for the whole drag, not forty
+    s.advanceWithoutDevice(512);
+    for (int i = 0; i < 60 && s.now().playingIndex == 0; ++i) {                  // the follow-on, with more moves on the way
+        for (int j = 0; j < 20; ++j) s.setLevel(fader, -2.0f - 0.01f * (float) j, "drag2");
+        s.advanceWithoutDevice(48000);
+        CHECK(sessionKnowsWhatPlays(s));
+    }
+    CHECK(s.now().playingIndex == 1);
+    CHECK(sessionKnowsWhatPlays(s));
+}
+TEST_CASE("a follow-on the engine's full queue dropped is sent again", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().playingIndex == 0);
+    for (int i = 0; i < 1100; ++i) s.engine().setPartGain(0, 0, 1.0f);           // the engine's command queue is full
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    s.commands().run("setlist.setTransition", params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"kind", "seamless"}}));
+    for (int i = 0; i < 60 && s.now().playingIndex == 0; ++i) s.advanceWithoutDevice(48000);
+    CHECK(s.now().playing);  CHECK(s.now().playingIndex == 1);                   // it followed on
+}
+TEST_CASE("the setlist can be reordered under a playing song", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    auto entries = d.setlist().entries;
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    s.commands().run("setlist.setTransition", params({{"setlistId", s.setlistId()}, {"entryId", entries[0].id}, {"kind", "seamless"}}));
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);                     // entry 0 plays, entry 1 is next
+    s.commands().run("setlist.moveEntry", params({{"setlistId", s.setlistId()}, {"entryId", entries[2].id}, {"toIndex", 0}}));
+    d.settle();  s.advanceWithoutDevice(480);
+    CHECK(s.now().playing);  CHECK(s.now().playingIndex == 1);                   // the same song, at its new place
+    CHECK(s.now().nextIndex == 2);  CHECK(s.now().nextSongId == entries[1].songId);
+    for (int i = 0; i < 60 && s.now().playingSongId == entries[0].songId; ++i) s.advanceWithoutDevice(48000);
+    CHECK(s.now().playing);  CHECK(s.now().playingSongId == entries[1].songId);  // it followed on by entry, not by place
+    CHECK(s.now().playingIndex == 2);  CHECK(s.now().nextIndex == -1);
+}
+TEST_CASE("a stop inside a gap stops the show, and the song about to start stays next", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    s.commands().run("setlist.setTransition",
+                     params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"kind", "gap"}, {"seconds", 8.0}}));
+    s.perform(Action::Start);
+    for (int i = 0; i < 600 && !s.now().inGap; ++i) s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().inGap);
+    CHECK(s.now().playing);  CHECK(s.now().nextIndex == 1);
+    s.perform(Action::Stop);  s.advanceWithoutDevice(4800);
+    CHECK_FALSE(s.now().playing);  CHECK_FALSE(s.now().inGap);
+    CHECK(s.engine().status().state == sqlive::engine::PlayState::Stopped);
+    CHECK(s.now().nextIndex == 1);
+    s.advanceWithoutDevice(48000 * 10);                                          // the gap's end starts nothing
+    CHECK_FALSE(s.now().playing);  CHECK(s.engine().status().playingSerial == 0);
+}
+TEST_CASE("going into Show mode stops a song played on its own, and saves what was waiting", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    s.playSong(d.setlist().entries[2].songId, 0.0);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().playing);
+    s.commands().run("band.rename", params({{"name", "Renamed for the show"}}));
+    s.enterShow();
+    CHECK(s.folder().root().getChildFile("band.json").loadFileAsString().contains("Renamed for the show"));
+    s.advanceWithoutDevice(9600);
+    CHECK_FALSE(s.now().playing);
+    CHECK(s.engine().status().state == sqlive::engine::PlayState::Stopped);
+    CHECK(s.now().nextIndex == 0);
+}
+TEST_CASE("a new device clears whatever the engine had cued", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    const auto someSong = d.setlist().entries[0].songId;
+    for (const auto& e : std::vector<sqlive::model::SetlistEntry>(d.setlist().entries))
+        s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", e.id}}));
+    s.setEditFocus(someSong);  d.settle();
+    s.engine().cue(songBehindTheBack(s, someSong));                              // nothing the session knows of
+    s.advanceWithoutDevice(512);
+    REQUIRE(s.engine().status().cuedSerial != 0);
+    s.setDevice(48000.0, 2);  s.advanceWithoutDevice(512);
+    CHECK(s.engine().status().cuedSerial == 0);
 }

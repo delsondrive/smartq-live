@@ -105,8 +105,19 @@ juce::Result AudioHost::openFromRig() {
         return juce::Result::fail("This rig hasn't been set up on this computer yet.");
     }
     const auto* rig = session_.model().rig(session_.rigId());
-    return open({binding->deviceType, binding->deviceName, rig->sampleRate, rig->bufferSize});
+    const DeviceChoice choice{binding->deviceType, binding->deviceName, rig->sampleRate, rig->bufferSize};
+    auto opened = open(choice);
+    if (opened.failed()) {
+        // The rig's own interface isn't there (unplugged when the app started, after a restart mid-show): taken as lost, and
+        // tried again every 2 s like one that went away, so it is found once it is plugged in, stopped and silent.
+        last_choice_ = choice;
+        if (!lost_) deviceLost();
+        else if (!isTimerRunning()) startTimer(kRetryMs);
+    }
+    return opened;
 }
+
+bool AudioHost::isRetrying() const { return isTimerRunning(); }
 
 bool AudioHost::hasBindingForThisComputer() const { return bindingForThisComputer(session_) != nullptr; }
 
@@ -187,13 +198,19 @@ void AudioHost::audioDeviceAboutToStart(juce::AudioIODevice* device) {
 
 void AudioHost::audioDeviceStopped() {
     if (changing_) return;                                       // open or close stopped it
+    deviceStopping();
     onMessageThread([this] { deviceWentAway(); });
 }
 
 void AudioHost::audioDeviceError(const juce::String&) {
     if (changing_) return;
+    deviceStopping();
     onMessageThread([this] { deviceWentAway(); });
 }
+
+// A device that restarts by itself (a rate changed in its own panel) prepares the engine, which stops the song without an
+// event, before the posted deviceWentAway runs: the session may see the song gone first, and must take it as cut off.
+void AudioHost::deviceStopping() { session_.deviceStopping(); }
 
 void AudioHost::onMessageThread(std::function<void()> call) {
     std::weak_ptr<int> alive = alive_;
@@ -228,7 +245,8 @@ void AudioHost::deviceLost() {
     lost_ = true;
     session_.audioInterrupted();
     if (onChanged) onChanged();
-    if (last_choice_.has_value()) startTimer(kRetryMs);          // tests never open a device, so never start this
+    if (last_choice_.has_value()) startTimer(kRetryMs);          // only a real open or openFromRig sets it; tests give a type
+                                                                 // that doesn't exist, so a retry never opens anything
 }
 
 void AudioHost::deviceBack(double sampleRate, int outputChannels) {

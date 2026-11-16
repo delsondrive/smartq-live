@@ -57,11 +57,11 @@ public:
     // The song that start() or a follow-on will play; returns its serial. When the command queue is full the cue is not
     // queued: it returns 0, and the serial it would have had is used up all the same, so serials only ever go up.
     std::uint64_t cue(std::shared_ptr<const PreparedSong>);
-    void clearCue();
+    bool clearCue();                      // false: the command queue was full and nothing was sent
     void start();                         // Stopped and something cued at the engine's rate: play it from its start
     void startAt(SamplePos songTime);     // the same, from a position clamped to the song
     void stop();
-    void setFollowOn(FollowOn);
+    bool setFollowOn(FollowOn);           // false: the command queue was full and nothing was sent
     void setMix(std::shared_ptr<const MixSetup>);
     void setPartGain(std::uint64_t serial, int part, float linear);
     void setPartMute(std::uint64_t serial, int part, bool mute);
@@ -106,7 +106,7 @@ private:
     static_assert(kRetiresPerRender >= kSongSlots, "a block's render can retire the playing song and the cue");
     static_assert(1 + kRetiresPerRender <= kHeldCapacity, "room for one command and a render");
 
-    void push(Command&&);
+    bool push(Command&&);                 // false: the queue was full, and the command was dropped
     void handle(Command&) noexcept;
     void startPlaying(SamplePos songTime) noexcept;
     bool fitsRate(const PreparedSong&) const noexcept;

@@ -228,10 +228,11 @@ void Session::setDevice(double sampleRate, int outputChannels) {
         prepared_.clear();
     }
     // The device has just prepared the engine, which dropped every command it hadn't taken (and, at another rate, its cue):
-    // send again the follow-on, the mix and the cue for the next entry.
-    if (cue_.serial != 0) engine_.clearCue();
+    // send again the follow-on, the mix and the cue for the next entry. Whatever the engine kept cued goes, known here or not.
+    engine_.clearCue();
     cue_ = {};
     engine_.setFollowOn(follow_on_);
+    device_stopped_ = false;                                     // a device runs again: what it lets go of from now isn't the stop's
     refreshMix(true);
     refresh();
 }
@@ -240,7 +241,10 @@ void Session::setDeviceRunning(bool running) { device_running_ = running; }
 
 bool Session::deviceMayPlay() const { return device_running_.value_or(true); }
 
+void Session::deviceStopping() { device_stopped_ = true; }
+
 void Session::audioInterrupted() {
+    device_stopped_ = false;
     const auto before = now();
     const bool wasPlaying = playing_.active() || (engine_.status().inGap && !interrupted_);
     engine_.stop();                                              // for a device that still runs; one that comes back is prepared
@@ -252,6 +256,7 @@ void Session::audioInterrupted() {
     }
     // A start or stop the engine hasn't taken yet may still play out once a device runs it again; nothing the session holds
     // may take it for its own. A song started before the loss can't follow on after it either.
+    last_finished_serial_ = std::max({last_finished_serial_, last_started_serial_, playing_.serial});
     playing_ = {};
     stop_requested_ = false;
     recent_cues_.clear();
@@ -286,7 +291,7 @@ void Session::perform(Action action) {
         // whenever a device came.
         if (!deviceMayPlay()) return;
         if (playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
-        refreshTransport();                                      // the cue is up to date, or retried if it wasn't taken
+        refreshTransport(true);                                  // the cue is up to date, or retried if it wasn't taken
         if (next_entry_id_.isEmpty() || cue_.serial == 0 || cue_.entryId != next_entry_id_) return;
         if (readinessOf(songIdOf(next_entry_id_)) != Readiness::Ready) return;
         if (cue_.prepared->song->sampleRate != engine_.sampleRate()) return;   // the engine would ignore the start
@@ -352,8 +357,7 @@ void Session::playSong(const juce::String& songId, double fromSeconds) {
                                std::max(song.start, song.end));
     playing_ = {{}, songId, true, prepared, serial, at};
     stop_requested_ = false;
-    follow_on_ = {};                                             // one song alone: nothing follows it
-    engine_.setFollowOn(follow_on_);
+    if (engine_.setFollowOn({})) follow_on_ = {};                // one song alone: nothing follows it (or the next tick says so)
     engine_.startAt(at);
     playing_.askedAt = engine_.status().streamTime;              // read after the push: see engineLetGo
     cue_ = {};                                                 // the setlist's cue was replaced; it is cued again once this ends
@@ -367,8 +371,11 @@ Mode Session::mode() const { return mode_; }
 
 void Session::enterShow() {
     if (mode_ == Mode::Show) return;
+    // A song played on its own from an Edit page isn't part of the show: it stops before the show starts.
+    if (playing_.active() && playing_.single) perform(Action::Stop);
     mode_ = Mode::Show;
     writeShowMemory();
+    flushNow();                                                  // what is waiting is written now, not left for the show
     refresh();
 }
 
@@ -540,9 +547,10 @@ void Session::advanceWithoutDevice(int frames) {
         const int n = std::min(kNoDeviceBlock, frames - done);
         engine_.process(scratch_channels_.data(), channels, n);
         done += n;
+        cue_sent_this_tick_ = false;                             // each block counts as a tick
         if (handleEngineEvents()) refresh();
     }
-    refreshTransport();
+    refreshTransport(true);
     pollFolder();
     changed();
 }
@@ -860,8 +868,10 @@ juce::Result Session::resolveConflict(const model::ConflictCopy& conflict, bool 
 }
 
 void Session::timerCallback() {
+    cue_sent_this_tick_ = false;
     if (handleEngineEvents()) refresh();
-    else refreshTransport();                                     // retries a cue the engine's full queue refused
+    else refreshTransport();                                     // retries a cue the engine's full queue refused, or one held back
+    jassert(knowsWhatPlays(last_status_));                       // whatever the engine plays, every stop gesture can stop
     if ((autosaver_.hasPending() || settings_pending_)
         && juce::Time::getMillisecondCounterHiRes() - last_change_ms_ >= kAutosaveDelayMs) {
         flushNow();
@@ -899,7 +909,9 @@ NowPlaying Session::now() const {
 
     // Where the playing song is; with nothing playing, the next song at bar 1.
     engine::TempoMap tempo;
-    if (playing_.active()) {
+    if (playing_.active() && playing_.prepared == nullptr) {
+        // A song nothing here knows (see adoptPlaying): it plays, and that is all that can be said.
+    } else if (playing_.active()) {
         const auto& song = *playing_.prepared->song;
         const auto songTime = status.playingSerial == playing_.serial ? status.songTime : playing_.songTime;
         tempo = song.tempo;
@@ -1136,11 +1148,10 @@ engine::FollowOn Session::followOn() const {
     return {};
 }
 
-void Session::refreshTransport() {
+void Session::refreshTransport(bool force) {
     const auto follow = followOn();
     if (follow.kind != follow_on_.kind || follow.gapSeconds != follow_on_.gapSeconds) {
-        follow_on_ = follow;
-        engine_.setFollowOn(follow_on_);
+        if (engine_.setFollowOn(follow)) follow_on_ = follow;    // not taken: the next tick tries again
     }
 
     // The next entry, once it is ready; nothing while one song plays alone in Edit mode.
@@ -1151,12 +1162,13 @@ void Session::refreshTransport() {
     }
     if (wanted.entryId == cue_.entryId && wanted.prepared == cue_.prepared) return;
     if (wanted.prepared == nullptr) {
-        engine_.clearCue();
-        cue_ = {};
+        if (engine_.clearCue()) cue_ = {};                       // not taken: the next tick tries again
         return;
     }
+    if (cue_sent_this_tick_ && !force) return;                   // the next tick sends the latest
     const auto serial = engine_.cue(wanted.prepared->song);
     if (serial == 0) return;                                     // not taken: the next tick tries again
+    cue_sent_this_tick_ = true;
     wanted.serial = serial;
     cue_ = wanted;
     recent_cues_[serial] = wanted;
@@ -1174,17 +1186,58 @@ bool Session::handleEngineEvents() {
         any = true;
     }
     engine_.collectGarbage();
+    last_status_ = status;
+    // The engine holds a later cue than the one here (none the session sent): this one is gone, and is sent again.
+    if (cue_.serial != 0 && cue_.serial < status.cuedSerial) cue_ = {};
+    // A safety net: the engine plays a song whose start no event told of. Whatever it plays is reported as playing.
+    if (!knowsWhatPlays(status)) {
+        last_started_serial_ = std::max(last_started_serial_, status.playingSerial);
+        adoptPlaying(status.playingSerial, status.streamTime, nullptr);
+        any = true;
+    }
     if (playing_.active() && status.playingSerial == playing_.serial) playing_.songTime = status.songTime;
     if (engineLetGo(status)) {
+        if (device_stopped_.exchange(false)) {
+            // Cut off by the device stopping (it restarted by itself), before AudioHost could say so: interrupted.
+            audioInterrupted();
+            return true;
+        }
         // A start the engine never took, or a song prepare stopped without an event: nothing plays, and the song is
         // the next one again, as after a stop.
         if (!playing_.single && indexOf(playing_.entryId) >= 0) setNext(playing_.entryId);
+        last_finished_serial_ = std::max(last_finished_serial_, playing_.serial);
         playing_ = {};
         stop_requested_ = false;
         any = true;
     }
     forgetDeadCues(status);
     return any;
+}
+
+bool Session::knowsWhatPlays(const engine::EngineStatus& status) const {
+    const auto serial = status.playingSerial;
+    // Once the device has gone, the engine's status is the last one it published: it may name a song that no longer plays.
+    return serial == 0 || serial == playing_.serial || serial <= last_finished_serial_ || !deviceMayPlay();
+}
+
+void Session::adoptPlaying(std::uint64_t serial, std::int64_t streamTime, const Cue* known) {
+    const auto found = recent_cues_.find(serial);
+    const Cue* cue = found != recent_cues_.end() ? &found->second : (known != nullptr && known->serial == serial ? known : nullptr);
+    if (cue != nullptr) {
+        // A follow-on: the entry whose cue it was, looked up by id, so a reordered setlist is harmless.
+        const auto taken = *cue;
+        playing_ = {taken.entryId, taken.prepared->doc.id, false, taken.prepared, serial, taken.prepared->song->start};
+        const int at = indexOf(taken.entryId);
+        setNext(at >= 0 ? entryIdAt(at + 1) : juce::String());
+    } else {
+        // Nothing here knows it. It is still playing, title unknown, so hold Space, double Esc and the held ▶ stop it; and
+        // nothing follows it.
+        playing_ = {};
+        playing_.serial = serial;
+    }
+    playing_.started = true;
+    playing_.startedAt = streamTime;
+    stop_requested_ = false;
 }
 
 bool Session::engineLetGo(const engine::EngineStatus& status) {
@@ -1221,34 +1274,30 @@ void Session::handleEvent(const engine::EngineEvent& event) {
     switch (event.type) {
     case Type::Started: {
         last_started_serial_ = std::max(last_started_serial_, event.serial);
-        if (cue_.serial == event.serial) cue_ = {};             // the engine has taken it to play
+        const Cue taken = cue_;
+        if (cue_.serial != 0 && cue_.serial <= event.serial) cue_ = {};   // taken to play, or replaced by a later cue that was
         if (playing_.serial == event.serial) {                  // a start the session asked for: already in place
             playing_.started = true;
             playing_.startedAt = event.streamTime;
             return;
         }
-        const auto found = recent_cues_.find(event.serial);
-        if (found == recent_cues_.end()) return;
-        // A follow-on: the entry whose cue it was, looked up by id, so a reordered setlist is harmless.
-        const auto cue = found->second;
-        playing_ = {cue.entryId, cue.prepared->doc.id, false, cue.prepared, event.serial, cue.prepared->song->start};
-        playing_.started = true;
-        playing_.startedAt = event.streamTime;
-        stop_requested_ = false;
-        const int at = indexOf(cue.entryId);
-        setNext(at >= 0 ? entryIdAt(at + 1) : juce::String());
+        // A song the session let go of when the device went (its stop is on the way), or one it has already seen end.
+        if (event.serial <= last_finished_serial_) return;
+        adoptPlaying(event.serial, event.streamTime, &taken);
         break;
     }
     case Type::Ended:
+        last_finished_serial_ = std::max(last_finished_serial_, event.serial);
         if (playing_.serial != event.serial) return;
-        if (!playing_.single) last_played_entry_id_ = playing_.entryId;
+        if (!playing_.single && playing_.entryId.isNotEmpty()) last_played_entry_id_ = playing_.entryId;
         playing_ = {};                                           // the next entry stays as it is
         stop_requested_ = false;
         break;
     case Type::Stopped:
+        last_finished_serial_ = std::max(last_finished_serial_, event.serial);
         // During a gap the song it names had already ended, and the next entry is already the one after it.
         if (event.inGap || playing_.serial != event.serial) return;
-        if (!playing_.single) last_played_entry_id_ = playing_.entryId;
+        if (!playing_.single && playing_.entryId.isNotEmpty()) last_played_entry_id_ = playing_.entryId;
         if (!playing_.single && indexOf(playing_.entryId) >= 0) setNext(playing_.entryId);
         playing_ = {};
         stop_requested_ = false;

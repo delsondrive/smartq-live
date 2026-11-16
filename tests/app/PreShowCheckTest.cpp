@@ -4,6 +4,7 @@
 
 #include "app/PreShowCheck.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/FileHold.h"
 #include "tests/support/Params.h"
 
 using namespace sqlive::app;
@@ -65,4 +66,21 @@ TEST_CASE("a conflict copy is named, with where to choose which to keep", "[pres
     REQUIRE(item != nullptr);
     CHECK(item->title == "1 file has a conflict copy");
     CHECK(item->detail == "Two computers changed the same file. Click Check files to choose which to keep.");
+}
+TEST_CASE("changes that couldn't be saved yet are named before the show", "[preshow]") {
+    DemoSession d; auto& s = *d.session;
+    CHECK(find(runPreShowCheck(s, good()), "saving") == nullptr);
+    auto band = s.folder().root().getChildFile("band.json");
+    sqlive::test::ExclusiveFileHold hold(band);                   // the write is refused while this is held
+    if (!hold.held()) SKIP("this system lets a file that is open be replaced");
+    s.commands().run("band.rename", params({{"name", "Unsaved"}}));
+    s.flushNow();
+    REQUIRE(s.saveState() == SaveState::Failed);
+    const auto items = runPreShowCheck(s, good());
+    const auto* item = find(items, "saving");
+    REQUIRE(item != nullptr);
+    CHECK(item->level == CheckItem::Level::Warning);
+    CHECK(item->title == "Some changes haven't been saved yet.");
+    CHECK(item->detail == s.saveError());
+    CHECK(mayEnterShow(items));
 }

@@ -128,3 +128,32 @@ TEST_CASE("a lost device with nothing playing is not an interruption", "[audioho
     host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);
     CHECK(d.session->now().nextIndex == 1);
 }
+TEST_CASE("a rig's interface that isn't there when the app starts is taken as lost and looked for again", "[audiohost]") {
+    DemoSession d; app::AudioHost host(*d.session);
+    int changes = 0; host.onChanged = [&] { ++changes; };
+    d.session->commands().run("rig.setDevice", params({{"rigId", d.session->rigId()}, {"computerId", d.session->settings().computerName()},
+                                                         {"deviceType", "No such type here"}, {"deviceName", "Unplugged"}}));
+    d.session->enterShow();                                       // as after a restart in the middle of a show
+    CHECK(host.openFromRig().failed());
+    CHECK(host.isLost());  CHECK(host.isRetrying());  CHECK(changes >= 1);
+    CHECK_FALSE(d.session->now().interrupted);                    // nothing was playing
+    d.session->perform(Action::Start);
+    CHECK_FALSE(d.session->now().playing);
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);   // as the retry opening it would
+    CHECK_FALSE(host.isLost());  CHECK_FALSE(host.isRetrying());
+    d.session->advanceWithoutDevice(48000);
+    CHECK_FALSE(d.session->now().playing);                        // nothing plays by itself
+    CHECK_FALSE(d.session->now().interrupted);
+}
+TEST_CASE("a song cut off by the device restarting itself is marked interrupted", "[audiohost]") {
+    DemoSession d; app::AudioHost host(*d.session);
+    d.session->enterShow();  d.session->perform(Action::Start);  d.session->advanceWithoutDevice(48000 * 5);
+    REQUIRE(d.session->now().playing);
+    const int bar = d.session->now().bar;
+    host.deviceStopping();                                        // what audioDeviceStopped does on the device's thread
+    host.deviceStarting(48000.0, 512);                            // and the restart prepares the engine: the song stops, no event
+    d.session->advanceWithoutDevice(4800);                        // the session sees it gone before the posted call comes
+    auto now = d.session->now();
+    CHECK_FALSE(now.playing);
+    CHECK(now.interrupted);  CHECK(now.bar == bar);  CHECK(now.nextIndex == 0);
+}

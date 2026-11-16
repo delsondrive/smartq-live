@@ -46,9 +46,9 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
 
 // ---- Control thread ----------------------------------------------------------------------------------------------------
 
-void Engine::push(Command&& command) {
+bool Engine::push(Command&& command) {
     // A full queue drops the command here, on the control thread, so whatever it carries is freed here too.
-    commands_.push(std::move(command));
+    return commands_.push(std::move(command));
 }
 
 std::uint64_t Engine::cue(std::shared_ptr<const PreparedSong> song) {
@@ -60,13 +60,13 @@ std::uint64_t Engine::cue(std::shared_ptr<const PreparedSong> song) {
     return commands_.push(Command{.type = Command::Type::Cue, .serial = serial, .object = std::move(song)}) ? serial : 0;
 }
 
-void Engine::clearCue() { push({.type = Command::Type::ClearCue}); }
+bool Engine::clearCue() { return push({.type = Command::Type::ClearCue}); }
 void Engine::start() { push({.type = Command::Type::Start}); }
 void Engine::startAt(SamplePos songTime) { push({.type = Command::Type::StartAt, .index = songTime}); }
 void Engine::stop() { push({.type = Command::Type::Stop}); }
 
-void Engine::setFollowOn(FollowOn follow) {
-    push({.type = Command::Type::SetFollowOn, .index = static_cast<std::int64_t>(follow.kind), .value = follow.gapSeconds});
+bool Engine::setFollowOn(FollowOn follow) {
+    return push({.type = Command::Type::SetFollowOn, .index = static_cast<std::int64_t>(follow.kind), .value = follow.gapSeconds});
 }
 
 void Engine::setMix(std::shared_ptr<const MixSetup> mix) { push({.type = Command::Type::SetMix, .object = std::move(mix)}); }

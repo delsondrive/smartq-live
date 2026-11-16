@@ -21,9 +21,10 @@ struct DeviceChoice {
 // Connects the session's engine to a sound card. It opens a device's outputs (all of them, no inputs), prepares the engine
 // whenever the device starts, and runs Engine::process in the device's callback, with an optional test tone on top.
 //
-// A device that goes away interrupts the session and is tried again every 2 s with the last choice, until it opens; one
-// that comes back, at whatever rate and channel count, is handed to the session as it is, and nothing plays until the
-// next Start. Nothing is opened unless open or openFromRig is called: tests drive the device hooks themselves.
+// A device that goes away interrupts the session and is tried again every 2 s with the last choice, until it opens; so is
+// the rig's own device when openFromRig can't open it. One that comes back, at whatever rate and channel count, is handed
+// to the session as it is, and nothing plays until the next Start. Nothing is opened unless open or openFromRig is called:
+// tests drive the device hooks themselves.
 class AudioHost : private juce::AudioIODeviceCallback, private juce::Timer {
 public:
     explicit AudioHost(Session&);
@@ -33,11 +34,13 @@ public:
     juce::StringArray devicesOfType(const juce::String& type);
     juce::Result open(const DeviceChoice&);                       // every output channel the device has; no inputs
     juce::Result openFromRig();                                   // the rig's binding for this computer; fails with a plain reason
-                                                                  // when there is none
+                                                                  // when there is none. A bound device that can't be opened is
+                                                                  // taken as lost and tried again every 2 s
     bool hasBindingForThisComputer() const;                       // the rig has a device named for settings().computerName()
     void close();
     bool isOpen() const;                                          // a device is open and running
-    bool isLost() const;                                          // it was open and went away
+    bool isLost() const;                                          // it was open and went away, or the rig's own couldn't be opened
+    bool isRetrying() const;                                      // a lost device is being tried again every 2 s
 
     juce::String deviceName() const;                              // these describe the open device; "" or 0 when none is
     double sampleRate() const;
@@ -53,6 +56,8 @@ public:
     void renderBlock(float* const* out, int numChannels, int frames) noexcept;
     // What audioDeviceAboutToStart does on its own thread, before the first callback: Engine::prepare.
     void deviceStarting(double sampleRate, int bufferSize);
+    // What audioDeviceStopped (or audioDeviceError) does first, on the device's thread: tells the session the device stopped.
+    void deviceStopping();
     // What the device's callbacks lead to, on the message thread. Public for tests; they never say a device runs.
     void deviceLost();
     void deviceBack(double sampleRate, int outputChannels);
@@ -75,7 +80,7 @@ private:
     engine::Engine& engine_;
     juce::AudioDeviceManager manager_;
 
-    std::optional<DeviceChoice> last_choice_;                     // the last device open opened
+    std::optional<DeviceChoice> last_choice_;                     // the last device open opened, or the rig's that openFromRig couldn't
     bool running_ = false;                                        // a real device this host accepted is running
     bool lost_ = false;
     std::atomic<bool> changing_{false};                           // open or close is stopping or starting a device itself
