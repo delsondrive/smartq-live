@@ -29,7 +29,8 @@ std::optional<double> asNumber(const var& v) {
     }
     if (v.isString()) {
         auto s = v.toString().trim();
-        if (s.isNotEmpty() && s.containsOnly("0123456789.+-eE")) {
+        // At least one digit: "-", "e" and "." alone are not numbers, though getDoubleValue would make 0 of them.
+        if (s.containsAnyOf("0123456789") && s.containsOnly("0123456789.+-eE")) {
             const double d = s.getDoubleValue();
             if (std::isfinite(d)) return d;
         }
@@ -40,11 +41,11 @@ std::optional<double> asNumber(const var& v) {
 // The parameters of one call. A parameter is "given" when it is present and not void.
 class Params {
 public:
-    explicit Params(const var& v) : all(v) {}
+    explicit Params(const var& v) : all_(v) {}
 
     bool given(const char* key) const { return present(key) && ! raw(key).isVoid(); }
-    bool present(const char* key) const { return all.hasProperty(juce::Identifier(key)); }
-    var raw(const char* key) const { return all[juce::Identifier(key)]; }
+    bool present(const char* key) const { return all_.hasProperty(juce::Identifier(key)); }
+    var raw(const char* key) const { return all_[juce::Identifier(key)]; }
 
     String id(const char* key) const { auto v = raw(key); return v.isString() ? v.toString() : String(); }
     String text(const char* key) const {
@@ -72,7 +73,7 @@ public:
     }
 
 private:
-    var all;
+    var all_;
 };
 
 // The one place that says "that thing no longer exists".
@@ -158,7 +159,9 @@ void checkPaChannels(const RigDoc& rig, const OutputDoc& changed) {
     }
 }
 
-template <typename T, typename Pred> void eraseIf(std::vector<T>& v, Pred&& pred) { v.erase(std::remove_if(v.begin(), v.end(), pred), v.end()); }
+template <typename T, typename Pred> void eraseIf(std::vector<T>& v, Pred&& pred) {
+    v.erase(std::remove_if(v.begin(), v.end(), pred), v.end());
+}
 
 }  // namespace
 
@@ -240,7 +243,8 @@ void registerCoreCommands(CommandLayer& layer) {
         wrapper->setProperty("tempo", p.raw("tempo"));
         SongDoc scratch; ParseNotes notes;
         fromVar(holder, scratch, notes);
-        if (scratch.tempo.size() != (size_t) points->size()) refuse("Every tempo point needs to be an object with bar, beat, bpm and a time signature.");
+        if (scratch.tempo.size() != (size_t) points->size())
+            refuse("Every tempo point needs to be an object with bar, beat, bpm and a time signature.");
         song.tempo = scratch.tempo;
         return CommandResult::success();
     });
@@ -334,7 +338,8 @@ void registerCoreCommands(CommandLayer& layer) {
     });
     add("setlist.setTransition", [](BandModel& m, const Params& p) {
         auto& entry = entryOf(setlistOf(m, p), p);
-        static const Named<TransitionKind> kinds[] = {{TransitionKind::Stop, "stop"}, {TransitionKind::Gap, "gap"}, {TransitionKind::Seamless, "seamless"}};
+        static const Named<TransitionKind> kinds[] = {
+            {TransitionKind::Stop, "stop"}, {TransitionKind::Gap, "gap"}, {TransitionKind::Seamless, "seamless"}};
         auto kind = pick(p, "kind", kinds, "A transition is stop, gap or seamless.");
         const double seconds = p.given("seconds") ? p.number("seconds", 0.0, 60.0) : entry.transition.seconds;
         entry.transition.kind = kind;

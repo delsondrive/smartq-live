@@ -57,6 +57,10 @@ TEST_CASE("the band's name and levels", "[core]") {
     CHECK(f.model.band().cuesDb == -4.0f);
     CHECK_FALSE(f.run("band.setLevel", params({{"which", "drums"}, {"db", 0}})).ok);
     CHECK_FALSE(f.run("band.setLevel", params({{"which", "click"}, {"db", "loud"}})).ok);
+    for (auto* notANumber : {"-", "e", ".", "+", "-.", "eE"})
+        CHECK(f.run("band.setLevel", params({{"which", "click"}, {"db", notANumber}})).message == "db must be a number.");
+    CHECK(f.run("band.setLevel", params({{"which", "click"}, {"db", "-.5e1"}})).ok);
+    CHECK(f.model.band().clickDb == -5.0f);
     while (f.commands.canUndo()) f.commands.undo();
     CHECK(toJson(f.model.band()) == f.bandAtStart);
 }
