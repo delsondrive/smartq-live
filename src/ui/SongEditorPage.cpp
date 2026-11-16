@@ -470,6 +470,9 @@ void SongEditorPage::buildLanes() {
     partLanes_.clear();
     std::vector<std::unique_ptr<Lane>> lanes;
     if (songId_.isNotEmpty()) {
+        auto tempo = std::make_unique<TempoLane>(session_, songId_);
+        tempoLane_ = tempo.get();
+        lanes.push_back(std::move(tempo));
         for (const auto& part : state_.parts) {
             auto lane = std::make_unique<PartLane>(session_, songId_, part.partId);
             lane->setMissing(part.missing);
@@ -477,11 +480,6 @@ void SongEditorPage::buildLanes() {
             lanes.push_back(std::move(lane));
         }
         lanes.push_back(std::make_unique<ClickLane>(session_, songId_));
-        // The Tempo lane last, for now: the mockup has it first, but the stage 1b editor tests find the parts and the click
-        // at the places they had under the ruler (see the task 11 report).
-        auto tempo = std::make_unique<TempoLane>(session_, songId_);
-        tempoLane_ = tempo.get();
-        lanes.push_back(std::move(tempo));
     }
     timeline_.setLanes(std::move(lanes));
 }

@@ -53,8 +53,8 @@ SongEditorState makeSongEditorState(const app::Session&, const juce::String& son
 // every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the title (a click: Rename…,
 // Import a MIDI file…), the chips edited in place (BPM typed or tapped, the time signature, the key and the count-in from
 // menus), the tools "Select · Draw" and the snap "Bar · Beat · 1/8", and "▶ Play" / "■ Stop" (the tools go to a second
-// row when the window is too narrow for one). The Timeline: one PartLane per part (a click on its name: Rename, Role,
-// Remove), the ClickLane and the Tempo lane, under the BARS ruler, with the white cursor line (moved by a click or drag on
+// row when the window is too narrow for one). The Timeline: the Tempo lane, one PartLane per part (a click on its name:
+// Rename, Role, Remove) and the ClickLane, under the BARS ruler, with the white cursor line (moved by a click or drag on
 // the ruler or a lane's empty space, snapped as the snap says; Alt for no snap), which follows the playhead while the song
 // plays. Right (290 px): TEMPO while a tempo point is selected, SONG ("Bar 1 starts at") and CLICK. Footer: where the
 // cursor is, the key hints and how the save went. With no song open: "Choose a song on the left, or add one." and

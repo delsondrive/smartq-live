@@ -83,19 +83,20 @@ TEST_CASE("the song editor's timeline has a lane per part, the click and the tem
     ui::SongEditorPage page(s);  page.openSong(song);
     snapshot(page, 1280, 698);
     auto& lanes = page.timeline().lanes();
-    REQUIRE(lanes.size() == 5);                                   // three parts, the click, the tempo
-    CHECK(lanes[0]->title() == "Keys");  CHECK(dynamic_cast<ui::PartLane*>(lanes[0].get()) != nullptr);
-    CHECK(lanes[0]->dot() == s.model().band().roles[3].colour);
-    CHECK(lanes[3]->title() == "Click");  CHECK(lanes[4]->title() == "Tempo");
-    CHECK(lanes[0]->getHeight() == 44);  CHECK(lanes[3]->getHeight() == 36);  CHECK(lanes[4]->getHeight() == 28);
+    REQUIRE(lanes.size() == 5);                                   // the tempo, three parts, the click
+    CHECK(lanes[0]->title() == "Tempo");  CHECK(lanes[0]->getY() == 0);
+    CHECK(lanes[1]->title() == "Keys");  CHECK(dynamic_cast<ui::PartLane*>(lanes[1].get()) != nullptr);
+    CHECK(lanes[1]->dot() == s.model().band().roles[3].colour);
+    CHECK(lanes[4]->title() == "Click");
+    CHECK(lanes[0]->getHeight() == 28);  CHECK(lanes[1]->getHeight() == 44);  CHECK(lanes[4]->getHeight() == 36);
     CHECK(&page.lanesViewport() == &page.timeline().viewport());
     int switches = 0;
     for (auto* child : page.getChildren()) switches += dynamic_cast<ui::Segmented*>(child) != nullptr && child->isVisible() ? 1 : 0;
     CHECK(switches == 2);                                         // "Select · Draw" and "Bar · Beat · 1/8"
-    auto* first = lanes[0].get();
+    auto* first = lanes[1].get();
     s.commands().run("part.set", params({{"songId", song}, {"partId", s.model().song(song)->parts[0].id}, {"name", "Piano"}}));
     d.settle();
-    CHECK(page.timeline().lanes()[0].get() == first);             // a rename keeps the lanes, and shows the new name
+    CHECK(page.timeline().lanes()[1].get() == first);             // a rename keeps the lanes, and shows the new name
     CHECK(first->title() == "Piano");
 }
 
@@ -105,7 +106,7 @@ TEST_CASE("a press on a lane's empty space moves the cursor, snapped, and clears
     ui::SongEditorPage page(s);  page.openSong(song);
     snapshot(page, 1280, 698);
     auto& timeline = page.timeline();
-    auto& keys = *timeline.lanes()[0];
+    auto& keys = *timeline.lanes()[1];
     REQUIRE(keys.getWidth() == 640);
     const auto& doc = *s.model().song(song);
     const auto tempo = model::tempoMapOf(doc);
@@ -141,7 +142,7 @@ TEST_CASE("the tempo lane adds with the Draw tool, and Delete removes the select
     ui::SongEditorPage page(s);  page.openSong(song);
     snapshot(page, 1280, 698);
     auto& timeline = page.timeline();
-    auto* tempo = dynamic_cast<ui::TempoLane*>(timeline.lanes().back().get());
+    auto* tempo = dynamic_cast<ui::TempoLane*>(timeline.lanes().front().get());
     REQUIRE(tempo != nullptr);
     timeline.setTool(EditTool::Draw);
     tempo->mouseDown(eventOn(*tempo, {400.0f, 14.0f}));
@@ -172,7 +173,7 @@ TEST_CASE("the tempo lane adds with the Draw tool, and Delete removes the select
     d.settle();
     CHECK(timeline.selection().kind == EditorSelection::Kind::None);
     s.enterShow();                                                // Show mode edits nothing
-    tempo = dynamic_cast<ui::TempoLane*>(timeline.lanes().back().get());
+    tempo = dynamic_cast<ui::TempoLane*>(timeline.lanes().front().get());
     REQUIRE(tempo != nullptr);
     tempo->addAt({5, 1.0});
     CHECK(s.model().song(song)->tempo.size() == 1);
