@@ -93,6 +93,26 @@ TEST_CASE("a song started from stopped hears the current mix from its first samp
     auto out = renderOffline(e, 2, 10, 512);
     CHECK(out[0][0] == 0.5f);  CHECK(out[1][9] == 0.5f);
 }
+TEST_CASE("stream time keeps counting up across a second prepare", "[engine]") {
+    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    e.cue(share(testSong("a", 1000, 0.25f))); e.start();
+    renderOffline(e, 2, 3000, 512);
+    CHECK(e.status().streamTime == 3000);
+    EngineEvent first;
+    REQUIRE(e.popEvent(first)); CHECK(first.type == EngineEvent::Type::Started); CHECK(first.streamTime == 0);
+    EngineEvent ended;
+    REQUIRE(e.popEvent(ended)); CHECK(ended.type == EngineEvent::Type::Ended); CHECK(ended.streamTime == 1000);
+
+    e.prepare(48000.0, 256, 2);                     // a device restart
+    CHECK(e.status().streamTime == 3000);
+    e.cue(share(testSong("b", 1000, 0.5f))); e.start();
+    auto out = renderOffline(e, 2, 2000, 256);
+    CHECK(out[0][0] == 0.5f);
+    CHECK(e.status().streamTime == 5000);
+    EngineEvent ev;
+    REQUIRE(e.popEvent(ev)); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 3000);
+    REQUIRE(e.popEvent(ev)); CHECK(ev.type == EngineEvent::Type::Ended); CHECK(ev.streamTime == 4000);
+}
 TEST_CASE("process allocates nothing, and finished songs are freed by collectGarbage", "[engine]") {
     Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
     auto song = share(testSong("a", 2000, 0.3f));

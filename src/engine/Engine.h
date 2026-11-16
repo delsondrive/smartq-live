@@ -24,7 +24,7 @@ struct EngineStatus {
     std::uint64_t playingSerial = 0;   // 0 = none
     std::uint64_t cuedSerial = 0;      // 0 = none
     SamplePos songTime = 0;            // the next sample the playing song will play; 0 when nothing plays
-    std::int64_t streamTime = 0;       // samples processed since prepare
+    std::int64_t streamTime = 0;       // samples processed since the engine was made; never goes backwards, even across prepare
 };
 
 struct EngineEvent {

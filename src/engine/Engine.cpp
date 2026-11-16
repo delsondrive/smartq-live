@@ -25,11 +25,11 @@ void Engine::prepare(double sampleRate, int maxBlockFrames, int numOutputChannel
     fade_length_ = std::llround(kStopFadeSeconds * sampleRate);
 
     // Song times made at another rate mean nothing now, so whatever played stops. The audio thread isn't running, so it
-    // is freed here. The cue and the mix are kept: a start snaps the mix into the renderer again.
+    // is freed here. The cue and the mix are kept: a start snaps the mix into the renderer again. Stream time carries on:
+    // it never goes backwards, so times from before and after a device restart stay comparable.
     playing_ = {};
     state_ = PlayState::Stopped;
     song_time_ = 0;
-    stream_time_ = 0;
     fade_pos_ = 0;
     publishStatus();
 }
