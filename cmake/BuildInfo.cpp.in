@@ -1,0 +1,11 @@
+// Written by CMake when it configures; edits here are lost. See cmake/BuildInfo.cpp.in.
+#include "app/BuildInfo.h"
+
+namespace sqlive {
+
+const BuildInfo& buildInfo() {
+    static const BuildInfo info{"@PROJECT_VERSION@", "@SQLIVE_GIT_COMMIT@", @SQLIVE_GIT_MODIFIED@, @SQLIVE_GIT_SECONDS@};
+    return info;
+}
+
+}  // namespace sqlive
