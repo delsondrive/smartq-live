@@ -44,7 +44,8 @@ struct ShowState {
         Kind kind = Kind::Later;
         bool operator==(const After&) const = default;
     };
-    std::vector<After> after;                                      // between songs only
+    std::vector<After> after;                                      // between songs only; Played is NowPlaying::lastPlayedIndex
+                                                                   // (none before the first song ends or is stopped)
     juce::StringArray hints;                                       // the key hints along the bottom
     bool operator==(const ShowState&) const = default;
 };

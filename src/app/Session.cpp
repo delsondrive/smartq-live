@@ -487,6 +487,7 @@ NowPlaying Session::now() const {
     n.interrupted = interrupted_;
     n.playingIndex = playing_.active() && !playing_.single ? indexOf(playing_.entryId) : -1;
     n.nextIndex = indexOf(next_entry_id_);
+    n.lastPlayedIndex = indexOf(last_played_entry_id_);
     n.playingSongId = playing_.active() ? playing_.songId : juce::String();
     n.nextSongId = songIdOf(next_entry_id_);
     if (n.nextSongId.isNotEmpty()) {
@@ -839,12 +840,14 @@ void Session::handleEvent(const engine::EngineEvent& event) {
     }
     case Type::Ended:
         if (playing_.serial != event.serial) return;
+        if (!playing_.single) last_played_entry_id_ = playing_.entryId;
         playing_ = {};                                           // the next entry stays as it is
         stop_requested_ = false;
         break;
     case Type::Stopped:
         // During a gap the song it names had already ended, and the next entry is already the one after it.
         if (event.inGap || playing_.serial != event.serial) return;
+        if (!playing_.single) last_played_entry_id_ = playing_.entryId;
         if (!playing_.single && indexOf(playing_.entryId) >= 0) setNext(playing_.entryId);
         playing_ = {};
         stop_requested_ = false;

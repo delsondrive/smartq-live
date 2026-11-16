@@ -158,7 +158,7 @@ ShowState makeShowState(const app::Session& session) {
         st.beat = now.countIn ? juce::String() : "." + juce::String(static_cast<int>(std::floor(now.beat)));
         st.bpm = formatBpm(now.bpm);
         st.bpmLabel = "BPM" + kDot + juce::String(now.numerator) + "/" + juce::String(now.denominator);
-        st.left = formatTime(std::max(0.0, length - now.seconds));
+        st.left = formatTime(std::max(0.0, length - std::max(0.0, now.seconds)));   // the count-in isn't part of the song
         st.beatsInBar = now.numerator;
         if (now.playing && !now.inGap) st.beatNow = std::clamp(static_cast<int>(std::floor(now.beat)), 1, std::max(1, now.numerator));
     }
@@ -207,8 +207,9 @@ ShowState makeShowState(const app::Session& session) {
         }
 
         using AfterKind = ShowState::After::Kind;
-        if (nextAt > 0)
-            st.after.push_back({utf8("\xe2\x9c\x93 ") + juce::String(nextAt) + " " + titleAt(nextAt - 1) + kDot + "played", AfterKind::Played});
+        // The song that last ended or was stopped, whatever the arrows have chosen since; none before the first.
+        if (const int played = now.lastPlayedIndex; played >= 0)
+            st.after.push_back({utf8("\xe2\x9c\x93 ") + juce::String(played + 1) + " " + titleAt(played) + kDot + "played", AfterKind::Played});
         st.after.push_back({juce::String(nextAt + 1) + " " + titleAt(nextAt), AfterKind::Next});
         for (int i = nextAt + 1; i < std::min(count, nextAt + 4); ++i)
             st.after.push_back({juce::String(i + 1) + " " + titleAt(i), AfterKind::Later});

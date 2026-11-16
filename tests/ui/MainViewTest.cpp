@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <functional>
 #include <vector>
 
@@ -79,6 +80,7 @@ TEST_CASE("the show state while a song plays", "[show]") {
     s.perform(Action::Start);  s.advanceWithoutDevice(48000);
     auto count = makeShowState(s);
     CHECK(count.label == juce::String::fromUTF8("COUNT-IN · 1 OF 3"));  CHECK(count.bar == juce::String::fromUTF8("–"));  CHECK(count.beatNow == 2);
+    CHECK(count.left == formatTime(s.model().song(d.setlist().entries[0].songId)->lengthSeconds));   // the whole song, not more
     s.advanceWithoutDevice(48000 * 11);                           // 12 s in: 9.6 s past bar 1 at 100 BPM = bar 5, beat 1
     auto st = makeShowState(s);
     CHECK(st.playing);  CHECK(st.label == juce::String::fromUTF8("NOW PLAYING · 1 OF 3"));  CHECK(st.title == "First Light");
@@ -174,14 +176,14 @@ TEST_CASE("the show state's notes, texts and hints follow the setlist and the vi
     CHECK(st.cards[0].kind == ShowState::Card::Kind::Done);
     s.perform(Action::Stop);  s.advanceWithoutDevice(9600);
 
-    // Between songs, after the second: the played one, the next, and the rest.
+    // Between songs, after the second: the one stopped (the second, which is next again), the next, and the rest.
     st = makeShowState(s);
     REQUIRE_FALSE(st.playing);
     CHECK(st.hints == juce::StringArray{"Space start", juce::String::fromUTF8("← → choose a different song"), "Tab main view"});
     CHECK(st.upLabel == juce::String::fromUTF8("UP NEXT · 2 OF 3"));
     CHECK(st.upKey == "A");
     REQUIRE(st.after.size() == 3);
-    CHECK(st.after[0].text == juce::String::fromUTF8("✓ 1 First Light · played"));  CHECK(st.after[0].kind == ShowState::After::Kind::Played);
+    CHECK(st.after[0].text == juce::String::fromUTF8("✓ 2 Low Tide · played"));  CHECK(st.after[0].kind == ShowState::After::Kind::Played);
     CHECK(st.after[1].text == "2 Low Tide");  CHECK(st.after[1].kind == ShowState::After::Kind::Next);
     CHECK(st.after[2].kind == ShowState::After::Kind::Later);
 }
@@ -343,4 +345,59 @@ TEST_CASE("the shell shows the main view in Show mode", "[show]") {
     juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
     CHECK(shell.currentContent() != nullptr);
     CHECK(dynamic_cast<ui::MainView*>(shell.currentContent()) == nullptr);
+}
+
+TEST_CASE("the played song is the one that last ended or was stopped, whatever the arrows choose", "[show]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    const auto isPlayed = [](const ShowState::After& a) { return a.kind == ShowState::After::Kind::Played; };
+
+    // Nothing played yet: no played item, wherever the next song is.
+    CHECK(s.now().lastPlayedIndex == -1);
+    s.chooseNext(2);
+    auto st = makeShowState(s);
+    CHECK(std::none_of(st.after.begin(), st.after.end(), isPlayed));
+    CHECK(st.after[0].text == "3 Run");
+    s.chooseNext(0);
+
+    // The first song ends: it is the played one, and stays so while the arrows choose another next song.
+    s.perform(Action::Start);
+    for (int i = 0; i < 60 && s.now().playing; ++i) s.advanceWithoutDevice(48000);
+    REQUIRE_FALSE(s.now().playing);
+    CHECK(s.now().lastPlayedIndex == 0);
+    st = makeShowState(s);
+    REQUIRE(st.after.size() == 3);
+    CHECK(st.after[0].text == juce::String::fromUTF8("✓ 1 First Light · played"));
+    CHECK(st.after[1].text == "2 Low Tide");
+    s.perform(Action::NextSongLater);
+    st = makeShowState(s);
+    CHECK(st.after[0].text == juce::String::fromUTF8("✓ 1 First Light · played"));
+    CHECK(st.after[1].text == "3 Run");  CHECK(st.after[1].kind == ShowState::After::Kind::Next);
+    s.perform(Action::NextSongEarlier);  s.perform(Action::NextSongEarlier);
+    st = makeShowState(s);
+    CHECK(st.after[0].text == juce::String::fromUTF8("✓ 1 First Light · played"));
+    CHECK(st.after[1].text == "1 First Light");  CHECK(st.after[1].kind == ShowState::After::Kind::Next);
+
+    // A stopped song counts as played too.
+    s.chooseNext(1);
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 4);
+    s.perform(Action::Stop);  s.advanceWithoutDevice(9600);
+    REQUIRE_FALSE(s.now().playing);
+    CHECK(s.now().lastPlayedIndex == 1);
+    CHECK(makeShowState(s).after[0].text == juce::String::fromUTF8("✓ 2 Low Tide · played"));
+
+    // A song played alone outside the setlist doesn't count.
+    REQUIRE(s.leaveShow());
+    s.playSong(d.setlist().entries[2].songId, 0.0);
+    for (int i = 0; i < 80 && s.now().playing; ++i) s.advanceWithoutDevice(48000);
+    REQUIRE_FALSE(s.now().playing);
+    CHECK(s.now().lastPlayedIndex == 1);
+    s.enterShow();
+
+    // The played entry removed from the setlist: no played item.
+    const auto& list = d.setlist();
+    REQUIRE(s.commands().run("setlist.removeEntry", params({{"setlistId", list.id}, {"entryId", list.entries[1].id}})).ok);
+    d.settle();
+    CHECK(s.now().lastPlayedIndex == -1);
+    st = makeShowState(s);
+    CHECK(std::none_of(st.after.begin(), st.after.end(), isPlayed));
 }

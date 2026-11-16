@@ -28,6 +28,8 @@ enum class SaveState { Saved, Saving, Failed };
 struct NowPlaying {
     bool playing = false, stopping = false, inGap = false, interrupted = false;
     int playingIndex = -1, nextIndex = -1, entryCount = 0;       // places in the setlist; -1 = none
+    int lastPlayedIndex = -1;                                    // the setlist entry that last ended or was stopped; -1 = none, or
+                                                                 // removed. A song played alone (playSong) doesn't count
     juce::String playingSongId, nextSongId;                      // playingSongId is also set for Edit-mode playback
     Readiness nextReadiness = Readiness::None;  double nextProgress = 0.0;  juce::StringArray nextProblems;
     bool countIn = false;  int bar = 1;  double beat = 1.0;
@@ -194,6 +196,7 @@ private:
     double interrupted_beat_ = 1.0;
 
     juce::String next_entry_id_;                                 // "" = none
+    juce::String last_played_entry_id_;                          // the setlist entry that last ended or was stopped; "" = none
     int next_hint_ = -1;                                         // where the next entry was, for when it is removed
     Playing playing_;
     bool stop_requested_ = false;
