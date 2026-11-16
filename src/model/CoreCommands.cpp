@@ -139,6 +139,23 @@ const Named<OutputLabel> kLabelNames[] = {{OutputLabel::Monitor, "monitor"}, {Ou
                                           {OutputLabel::Timecode, "timecode"}, {OutputLabel::Unused, "unused"}};
 const char* const kLabelSentence = "A label is monitor, foh, timecode or unused.";
 
+// Refuses an output that would share a device channel with another when either goes to the PA: the click could leak
+// into it. Two in-ear outputs may overlap; checkRig reports that. Unused outputs send nothing, so they never count.
+void checkPaChannels(const RigDoc& rig, const OutputDoc& changed) {
+    if (changed.label == OutputLabel::Unused) return;
+    for (auto& other : rig.outputs) {
+        if (other.id == changed.id || other.label == OutputLabel::Unused) continue;
+        if (changed.label != OutputLabel::Foh && other.label != OutputLabel::Foh) continue;
+        const int shared = firstSharedChannel(changed, other);
+        if (shared == 0) continue;
+        // The sentence names the output that goes to the PA last.
+        const bool otherIsPa = other.label == OutputLabel::Foh;
+        const auto& near = otherIsPa ? changed : other;
+        const auto& pa = otherIsPa ? other : changed;
+        refuse(near.name + " would share output " + String(shared) + " with " + pa.name + ", which goes to the PA.");
+    }
+}
+
 template <typename T, typename Pred> void eraseIf(std::vector<T>& v, Pred&& pred) { v.erase(std::remove_if(v.begin(), v.end(), pred), v.end()); }
 
 }  // namespace
@@ -377,12 +394,14 @@ void registerCoreCommands(CommandLayer& layer) {
         out.firstChannel = p.whole("firstChannel", 1, 1024);
         out.stereo = p.flag("stereo");
         out.label = pick(p, "label", kLabelNames, kLabelSentence);
+        checkPaChannels(rig, out);
         auto id = out.id;
         rig.outputs.push_back(std::move(out));
         return CommandResult::success(id);
     });
     add("output.set", [](BandModel& m, const Params& p) {
-        auto& out = outputOf(rigOf(m, p), p);
+        auto& rig = rigOf(m, p);
+        auto& out = outputOf(rig, p);
         if (p.given("name")) out.name = nonEmpty(p.text("name"), "An output needs a name.");
         if (p.given("firstChannel")) out.firstChannel = p.whole("firstChannel", 1, 1024);
         if (p.given("stereo")) out.stereo = p.flag("stereo");
@@ -397,6 +416,7 @@ void registerCoreCommands(CommandLayer& layer) {
             }
             if (! taken.isEmpty()) message = joinNames(taken) + (taken.size() == 1 ? " was" : " were") + " taken out of " + out.name + ".";
         }
+        if (p.given("firstChannel") || p.given("stereo") || p.given("label")) checkPaChannels(rig, out);
         return CommandResult::success({}, message);
     });
     add("output.remove", [](BandModel& m, const Params& p) {

@@ -1,6 +1,7 @@
 #include "model/Routing.h"
 
 #include <algorithm>
+#include <set>
 
 #include "model/Units.h"
 
@@ -54,6 +55,11 @@ int roleIndex(const BandDoc& band, const juce::String& roleId) noexcept {
     return -1;
 }
 
+int firstSharedChannel(const OutputDoc& a, const OutputDoc& b) noexcept {
+    const int lo = std::max(a.firstChannel, b.firstChannel);
+    return lo <= std::min(lastChannel(a), lastChannel(b)) ? lo : 0;
+}
+
 std::vector<RoutingProblem> checkRig(const BandDoc& band, const RigDoc& rig, int deviceChannels) {
     using Kind = RoutingProblem::Kind;
     std::vector<RoutingProblem> out;
@@ -82,8 +88,7 @@ std::vector<RoutingProblem> checkRig(const BandDoc& band, const RigDoc& rig, int
         for (size_t b = a + 1; b < rig.outputs.size(); ++b) {
             const auto& ob = rig.outputs[b];
             if (ob.label == OutputLabel::Unused) continue;
-            const int lo = std::max(oa.firstChannel, ob.firstChannel);
-            if (lo <= std::min(lastChannel(oa), lastChannel(ob)))
+            if (const int lo = firstSharedChannel(oa, ob); lo != 0)
                 out.push_back({Kind::ChannelsOverlap, oa.id, {}, oa.name + " and " + ob.name + " both use output " + juce::String(lo) + ".", true});
         }
     }
@@ -116,14 +121,29 @@ std::shared_ptr<const engine::MixSetup> buildMixSetup(const BandDoc& band, const
         if (used.size() >= static_cast<size_t>(engine::kMaxBuses)) break;
         if (usesBus(o.label) && onDevice(o, deviceChannels)) used.push_back(&o);
     }
+    // Every device channel the PA is on. An in-ear output that shares one of them (only a hand-edited file can have
+    // that) would carry the click into the PA, so the click and cues are kept off the whole of it.
+    std::set<int> pa;
+    for (auto& o : rig.outputs)
+        if (o.label == OutputLabel::Foh)
+            for (int c = o.firstChannel; c <= lastChannel(o); ++c) pa.insert(c);
+    const auto touchesPa = [&](const OutputDoc& o) {
+        for (int c = o.firstChannel; c <= lastChannel(o); ++c)
+            if (pa.count(c) != 0) return true;
+        return false;
+    };
+
     const size_t n = used.size();
     mix->gain.assign(static_cast<size_t>(mix->roleCount) * n, 0.0f);
     for (size_t b = 0; b < n; ++b) {
         const auto& o = *used[b];
+        const bool nearPa = touchesPa(o);
         mix->buses.push_back({o.firstChannel - 1, o.stereo, dbToGain(o.trimDb)});
         for (auto& [roleId, db] : o.mix) {
             const int ri = roleIndex(band, roleId);
-            if (ri < 0 || ri >= mix->roleCount || !mayRoute(band.roles[static_cast<size_t>(ri)].kind, o.label)) continue;
+            if (ri < 0 || ri >= mix->roleCount) continue;
+            const auto kind = band.roles[static_cast<size_t>(ri)].kind;
+            if (!mayRoute(kind, o.label) || (nearPa && !mayRoute(kind, OutputLabel::Foh))) continue;
             mix->gain[static_cast<size_t>(ri) * n + b] = dbToGain(db);
         }
     }

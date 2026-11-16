@@ -12,6 +12,7 @@
 #include "model/BandFolder.h"
 #include "model/CoreCommands.h"
 #include "model/DemoBand.h"
+#include "model/DocumentsJson.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
 #include "model/Units.h"
@@ -81,4 +82,26 @@ TEST_CASE("the demo band's audio is the same every time, 24-bit at 48 kHz and no
         CHECK(peak > 0.01f);
         CHECK(peak <= dbToGain(-16.0f));
     }
+}
+
+TEST_CASE("no click reaches the PA through an in-ear output that shares its channel", "[e2e]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band");
+    REQUIRE(BandFolder::create(root, "Band").wasOk());
+    BandFolder folder(root); BandModel model; folder.load(model);
+    CommandLayer commands(model); registerCoreCommands(commands);
+    const auto rigId = model.rigIds()[0];
+    // The command refuses this layout, so it is made the way a hand-edited file would have it.
+    RigDoc rig = *model.rig(rigId);
+    OutputDoc pa; pa.id = newId(); pa.name = "PA"; pa.firstChannel = 2; pa.stereo = false; pa.label = OutputLabel::Foh;
+    rig.outputs.push_back(pa);                                     // the in-ear Headphones stay on 1/2, click and all
+    model.putRig(rig);
+    REQUIRE(model.rig(rigId)->outputs[0].mix.count(model.band().roles[0].id) == 1);
+
+    engine::Engine e; e.prepare(48000.0, 512, 2); e.setMix(buildMixSetup(model.band(), *model.rig(rigId), 2));
+    engine::ClickSetup click; click.enabled = true;
+    auto song = std::make_shared<const engine::PreparedSong>(
+        engine::prepareSong("click", engine::TempoMap{}, 1, 0, {}, click, 48000.0, 96000));   // nothing but the click
+    e.cue(song); e.start();
+    auto out = engine::renderOffline(e, 2, 96000 * 2, 512);
+    CHECK(std::all_of(out[1].begin(), out[1].end(), [](float x) { return x == 0.0f; }));   // channel 2 is the PA's
 }

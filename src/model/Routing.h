@@ -14,6 +14,7 @@ namespace sqlive::model {
 bool mayRoute(RoleKind, OutputLabel) noexcept;
 juce::String whyNot(RoleKind, OutputLabel);                              // the sentence to show when mayRoute is false
 int roleIndex(const BandDoc&, const juce::String& roleId) noexcept;     // its place in band.roles, -1 if absent
+int firstSharedChannel(const OutputDoc&, const OutputDoc&) noexcept;    // the lowest device channel (1-based) both use; 0 = none
 
 struct RoutingProblem {
     enum class Kind { ForbiddenSend, ChannelsOverlap, BeyondDevice, NothingHeard, ClickNotHeard } kind;

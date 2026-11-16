@@ -233,3 +233,30 @@ TEST_CASE("rigs, outputs and mixes", "[core]") {
     CHECK(f.rig().outputs.size() == 1);  CHECK(f.rig().outputs[0].mix.count(clickId) == 1);
     CHECK(f.rig().name == "Headphones");
 }
+
+TEST_CASE("no output may share a channel with one that goes to the PA", "[core]") {
+    Fixture f;
+    auto rigId = f.rigId();
+    auto phones = f.rig().outputs[0].id;                        // in-ear, on 1/2
+    auto add = [&](const char* name, int first, bool stereo, const char* label) {
+        return f.run("output.add", params({{"rigId", rigId}, {"name", name}, {"firstChannel", first}, {"stereo", stereo}, {"label", label}}));
+    };
+    auto refused = add("PA", 2, false, "foh");
+    CHECK_FALSE(refused.ok);
+    CHECK(refused.message == "Headphones would share output 2 with PA, which goes to the PA.");
+    CHECK(f.rig().outputs.size() == 1);
+    auto pa = add("PA", 3, true, "foh").value.toString();      // 3/4
+    REQUIRE(pa.isNotEmpty());
+    CHECK(add("Drummer", 4, false, "monitor").message == "Drummer would share output 4 with PA, which goes to the PA.");
+    CHECK(add("Side", 4, true, "foh").message == "Side would share output 4 with PA, which goes to the PA.");
+    CHECK(add("Spare", 4, false, "unused").ok);                // an unused output sends nothing
+    CHECK(add("Bass", 2, false, "monitor").ok);                 // two in-ear outputs may overlap; checkRig says so
+    CHECK(f.run("output.set", params({{"rigId", rigId}, {"outputId", phones}, {"firstChannel", 4}})).message
+          == "Headphones would share output 4 with PA, which goes to the PA.");
+    CHECK(f.run("output.set", params({{"rigId", rigId}, {"outputId", pa}, {"stereo", false}, {"firstChannel", 2}})).message
+          == "Headphones would share output 2 with PA, which goes to the PA.");
+    CHECK(f.rig().outputs[0].firstChannel == 1);  CHECK(f.rig().outputs[1].firstChannel == 3);   // refused: nothing changed
+    CHECK(f.run("output.set", params({{"rigId", rigId}, {"outputId", phones}, {"label", "foh"}})).message
+          == "Bass would share output 2 with Headphones, which goes to the PA.");
+    CHECK(f.run("output.set", params({{"rigId", rigId}, {"outputId", phones}, {"name", "Phones"}})).ok);
+}

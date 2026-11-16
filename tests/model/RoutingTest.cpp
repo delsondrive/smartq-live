@@ -68,3 +68,18 @@ TEST_CASE("a rig's problems are found and said plainly", "[routing]") {
     RigDoc good; good.outputs = {{"x", "X", 1, true, OutputLabel::Monitor, 0.0f, {{"click", 0.0f}, {"keys", 0.0f}}}};
     CHECK(checkRig(band, good, 2).empty());
 }
+TEST_CASE("click and cues stay off every bus that shares a channel with the PA", "[routing]") {
+    auto band = band3();
+    RigDoc rig;   // overlapping outputs, as a hand-edited file could have them
+    rig.outputs = {{"pa", "PA", 2, false, OutputLabel::Foh, 0.0f, {{"keys", 0.0f}}},
+                   {"wide", "Singer", 1, true, OutputLabel::Monitor, 0.0f, {{"click", 0.0f}, {"cues", 0.0f}, {"keys", 0.0f}}},
+                   {"apart", "Drummer", 3, true, OutputLabel::Monitor, 0.0f, {{"click", 0.0f}, {"cues", 0.0f}, {"keys", 0.0f}}},
+                   {"left", "Bass", 2, false, OutputLabel::Monitor, 0.0f, {{"click", 0.0f}}}};
+    auto mix = buildMixSetup(band, rig, 8);
+    REQUIRE(mix->buses.size() == 4);
+    for (int bus : {1, 3}) {                                     // Singer's right side and Bass are the PA's channel 2
+        CHECK(mix->at(0, bus) == 0.0f);  CHECK(mix->at(1, bus) == 0.0f);
+    }
+    CHECK(mix->at(2, 1) == 1.0f);                                // parts may still go there
+    CHECK(mix->at(0, 2) == 1.0f);  CHECK(mix->at(1, 2) == 1.0f);   // Drummer shares nothing with the PA
+}
