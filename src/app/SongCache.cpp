@@ -1,6 +1,7 @@
 #include "app/SongCache.h"
 
 #include <algorithm>
+#include <set>
 #include <utility>
 
 #include "model/SongAudio.h"
@@ -82,7 +83,6 @@ void SongCache::setWanted(std::vector<WantedSong> inPriorityOrder) {
     {
         const juce::ScopedLock sl(lock_);
         wanted_ = std::move(inPriorityOrder);
-        forgotten_.clear();
         rebuildLocked();
     }
     notify();
@@ -108,7 +108,8 @@ double SongCache::progress(const juce::String& songId) const {
     const auto found = entries_.find(songId);
     if (found == entries_.end()) return 0.0;
     if (found->second.state == State::Ready) return 1.0;
-    return found->second.state == State::Loading ? found->second.progress : 0.0;
+    // While paused even a load still finishing shows 0, so a paused screen is the same every time.
+    return found->second.state == State::Loading && ! paused_ ? found->second.progress : 0.0;
 }
 
 std::shared_ptr<const LoadedSong> SongCache::loaded(const juce::String& songId) const {
@@ -120,9 +121,13 @@ std::shared_ptr<const LoadedSong> SongCache::loaded(const juce::String& songId) 
 void SongCache::forget(const juce::String& songId) {
     {
         const juce::ScopedLock sl(lock_);
-        forgotten_.insert(songId);
-        if (entries_.erase(songId) > 0) noteChangedLocked(songId);
-        rebuildLocked();
+        const auto found = entries_.find(songId);
+        if (found == entries_.end()) return;                       // not kept: nothing to load again
+        Entry fresh;
+        fresh.song = std::move(found->second.song);
+        fresh.token = ++nextToken_;                                // a load of the old entry is abandoned
+        found->second = std::move(fresh);
+        noteChangedLocked(songId);
     }
     notify();
     triggerAsyncUpdate();
@@ -150,7 +155,6 @@ void SongCache::rebuildLocked() {
         if (kept.size() >= 2 && total + bytes > budget_) break;
         total += bytes;
         kept.insert(id);
-        if (forgotten_.count(id) > 0) continue;
         const auto old = entries_.find(id);
         if (old != entries_.end() && old->second.song.files == wanted.files) {
             Entry entry = std::move(old->second);

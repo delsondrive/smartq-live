@@ -4,7 +4,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <set>
 #include <vector>
 
 #include <juce_events/juce_events.h>
@@ -56,13 +55,12 @@ public:
     void setWanted(std::vector<WantedSong> inPriorityOrder);
     void setPaused(bool);                                         // for tests and screenshots: while paused the loader starts nothing,
                                                                   // and a kept song that isn't Ready reports Loading at progress 0
+                                                                  // (one already Failed stays Failed)
 
     State state(const juce::String& songId) const;               // Loading also while waiting its turn
     double progress(const juce::String& songId) const;            // 0..1 while Loading
     std::shared_ptr<const LoadedSong> loaded(const juce::String& songId) const;   // nullptr unless Ready
-    // Its files changed: drops what is loaded, and the song is NotLoaded until the next setWanted hands it over again (with
-    // its files resolved afresh), when it loads again.
-    void forget(const juce::String& songId);
+    void forget(const juce::String& songId);                      // its files changed: load it again (nothing if it isn't kept)
 
     std::function<void(const juce::String& songId)> onChanged;    // message thread; once per song whose state or progress changed
     bool waitUntilIdle(int timeoutMs);                            // for tests; also delivers pending onChanged calls
@@ -99,7 +97,6 @@ private:
     double sampleRate_ = 48000.0;
     bool paused_ = false, busy_ = false;
     std::vector<WantedSong> wanted_;
-    std::set<juce::String> forgotten_;                            // until the next setWanted
     std::map<juce::String, Entry> entries_;
     std::uint64_t nextToken_ = 0;
     juce::StringArray changed_;

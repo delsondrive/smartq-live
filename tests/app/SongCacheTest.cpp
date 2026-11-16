@@ -88,9 +88,9 @@ TEST_CASE_METHOD(CacheFixture, "a new sample rate or a forgotten song loads agai
     CHECK(cache.loaded(a.id)->sampleRate == 44100.0);
     const auto& id0 = a.parts[0].id;
     CHECK(cache.loaded(a.id)->audio.at(id0)->left.size() < first->audio.at(id0)->left.size());
-    cache.forget(a.id);
+    cache.setPaused(true);  cache.forget(a.id);
     CHECK(cache.state(a.id) != SongCache::State::Ready);
-    cache.setPaused(true);  cache.setWanted({wanted(a)});
+    cache.setWanted({wanted(a)});
     CHECK(cache.state(a.id) == SongCache::State::Loading);       // wanted, but the loader is paused
     CHECK(cache.progress(a.id) == 0.0);
     cache.setPaused(false);  REQUIRE(cache.waitUntilIdle(20000));
