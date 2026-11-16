@@ -76,10 +76,17 @@ target_compile_definitions(SmartQLive PRIVATE ${SQLIVE_DEFINITIONS})
 target_link_libraries(SmartQLive
     PRIVATE
         SmartQLiveAssets
+        sqlive_engine
         juce::juce_audio_utils
         juce::juce_gui_extra
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+
+# The engine: timing and mixing with no JUCE in it.
+file(GLOB SQLIVE_ENGINE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/engine/*.cpp")
+add_library(sqlive_engine STATIC ${SQLIVE_ENGINE_SOURCES})
+target_compile_features(sqlive_engine PUBLIC cxx_std_20)
+target_include_directories(sqlive_engine PUBLIC "${CMAKE_SOURCE_DIR}/src")
 
 # Tests
 file(GLOB_RECURSE SQLIVE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
@@ -90,6 +97,7 @@ target_compile_definitions(sqlive_tests PRIVATE ${SQLIVE_DEFINITIONS})
 target_link_libraries(sqlive_tests
     PRIVATE
         SmartQLiveAssets
+        sqlive_engine
         juce::juce_audio_utils
         juce::juce_gui_extra
         juce::juce_recommended_config_flags
