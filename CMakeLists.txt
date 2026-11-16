@@ -90,6 +90,12 @@ target_include_directories(sqlive_engine PUBLIC "${CMAKE_SOURCE_DIR}/src")
 
 # Tests
 file(GLOB_RECURSE SQLIVE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
+list(FILTER SQLIVE_TEST_SOURCES EXCLUDE REGEX "_(windows|posix)[.]cpp$")
+if(WIN32)
+    list(APPEND SQLIVE_TEST_SOURCES "${CMAKE_SOURCE_DIR}/tests/support/FileHold_windows.cpp")
+else()
+    list(APPEND SQLIVE_TEST_SOURCES "${CMAKE_SOURCE_DIR}/tests/support/FileHold_posix.cpp")
+endif()
 juce_add_console_app(sqlive_tests PRODUCT_NAME "sqlive_tests")
 target_sources(sqlive_tests PRIVATE ${SQLIVE_TEST_SOURCES} ${SQLIVE_CORE_SOURCES})
 target_include_directories(sqlive_tests PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")

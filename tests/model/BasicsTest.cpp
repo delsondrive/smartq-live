@@ -6,11 +6,8 @@
 #include "model/AtomicFile.h"
 #include "model/FileNames.h"
 #include "model/Units.h"
+#include "tests/support/FileHold.h"
 #include "tests/support/TempDir.h"
-
-#if JUCE_WINDOWS
- #include <windows.h>
-#endif
 
 using namespace sqlive::model;
 
@@ -76,20 +73,17 @@ TEST_CASE("an undeletable stale temporary file fails plainly", "[basics]") {
     CHECK(r.failed());  CHECK(r.getErrorMessage().isNotEmpty());
     CHECK_FALSE(file.exists());
 }
-#if JUCE_WINDOWS
 TEST_CASE("a failed swap leaves no temporary file", "[basics]") {
     sqlive::test::TempDir t;
     auto file = t.dir().getChildFile("doc.json");
     REQUIRE(writeFileAtomically(file, "old").wasOk());
     {
-        HANDLE holder = CreateFileW(file.getFullPathName().toWideCharPointer(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        REQUIRE(holder != INVALID_HANDLE_VALUE);   // no sharing at all, so the swap is refused
+        sqlive::test::ExclusiveFileHold hold(file);   // the swap is refused while this is held
+        if (!hold.held()) SKIP("this system lets a file that is open be replaced");
         auto r = writeFileAtomically(file, "new");
         CHECK(r.failed());
         CHECK(r.getErrorMessage().isNotEmpty());
-        CloseHandle(holder);
     }
     CHECK(file.loadFileAsString() == "old");
     CHECK(t.dir().getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1);
 }
-#endif
