@@ -6,6 +6,7 @@
 #include "ui/MixerPage.h"
 #include "ui/NewSongDialog.h"
 #include "ui/SetlistsPage.h"
+#include "ui/SetupPage.h"
 #include "ui/SongEditorPage.h"
 
 namespace sqlive::ui {
@@ -53,7 +54,7 @@ private:
 }  // namespace
 
 // Each of Tasks 11-17 adds its page or view here, with AppShell::setPageComponent or setShowComponents.
-void plugInPages(AppShell& shell, app::Session& session, app::AudioHost*, app::ShowController*) {
+void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, app::ShowController*) {
     auto setlists = std::make_unique<SetlistsPage>(session);
     auto editor = std::make_unique<SongEditorPage>(session);
     auto mixer = std::make_unique<MixerPage>(session);
@@ -89,6 +90,7 @@ void plugInPages(AppShell& shell, app::Session& session, app::AudioHost*, app::S
     shell.setPageComponent(Page::Setlists, std::move(setlists));
     shell.setPageComponent(Page::SongEditor, std::move(editor));
     shell.setPageComponent(Page::Mixer, std::move(mixer));
+    shell.setPageComponent(Page::Setup, std::make_unique<SetupPage>(session, host));
 }
 
 }  // namespace sqlive::ui
