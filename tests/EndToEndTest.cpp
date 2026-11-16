@@ -40,7 +40,7 @@ TEST_CASE("the demo band plays", "[e2e]") {
     for (auto& part : song.parts) audio.push_back(loadPartAudio(folder.audioFile(song, part), 48000.0, [](double) { return true; }));
     for (auto& a : audio) REQUIRE(a != nullptr);
     auto play = [&](const RigDoc& r) {
-        engine::Engine e; e.prepare(48000.0, 512, 2); e.setMix(buildMixSetup(model.band(), r, 2));
+        engine::Engine e; e.prepare(48000.0, 512); e.setMix(buildMixSetup(model.band(), r, 2));
         auto prepared = std::make_shared<const engine::PreparedSong>(buildPreparedSong(song, model.band(), audio, 48000.0));
         e.cue(prepared); e.start();
         return engine::renderOffline(e, 2, -prepared->start + prepared->end + 1000, 512);
@@ -97,7 +97,7 @@ TEST_CASE("no click reaches the PA through an in-ear output that shares its chan
     model.putRig(rig);
     REQUIRE(model.rig(rigId)->outputs[0].mix.count(model.band().roles[0].id) == 1);
 
-    engine::Engine e; e.prepare(48000.0, 512, 2); e.setMix(buildMixSetup(model.band(), *model.rig(rigId), 2));
+    engine::Engine e; e.prepare(48000.0, 512); e.setMix(buildMixSetup(model.band(), *model.rig(rigId), 2));
     engine::ClickSetup click; click.enabled = true;
     auto song = std::make_shared<const engine::PreparedSong>(
         engine::prepareSong("click", engine::TempoMap{}, 1, 0, {}, click, 48000.0, 96000));   // nothing but the click

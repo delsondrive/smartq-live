@@ -17,11 +17,11 @@ constexpr double kStopFadeSeconds = 0.050;
 
 Engine::Engine() : commands_(kCommandCapacity), garbage_(kGarbageCapacity), events_(kEventCapacity) {}
 
-void Engine::prepare(double sampleRate, int maxBlockFrames, int numOutputChannels) {
+void Engine::prepare(double sampleRate, int maxBlockFrames) {
     sample_rate_.store(sampleRate, std::memory_order_relaxed);
     max_block_ = std::max(1, maxBlockFrames);
     envelope_.assign(static_cast<std::size_t>(max_block_), 0.0f);
-    channels_.assign(static_cast<std::size_t>(std::max(0, numOutputChannels)), nullptr);
+    channels_.assign(static_cast<std::size_t>(kMaxDeviceChannels), nullptr);
     renderer_.prepare(sampleRate, max_block_);
     fade_length_ = std::llround(kStopFadeSeconds * sampleRate);
 
@@ -127,7 +127,7 @@ void Engine::process(float* const* out, int numChannels, int frames) noexcept {
         if (out[c] != nullptr) std::fill_n(out[c], frames, 0.0f);
     if (max_block_ <= 0) return;
 
-    const int channelCount = std::min(numChannels, static_cast<int>(channels_.size()));   // beyond prepare's count: silence
+    const int channelCount = std::min(numChannels, kMaxDeviceChannels);   // any beyond: silence
     for (int offset = 0; offset < frames; offset += max_block_)
         renderChunk(out, channelCount, offset, std::min(max_block_, frames - offset));
     publishStatus();

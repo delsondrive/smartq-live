@@ -33,6 +33,9 @@ struct EngineEvent {
     std::int64_t streamTime = 0;       // Started: the song's first sample. Ended, Stopped: the first sample after it.
 };
 
+// The most device channels process renders into; any beyond these are cleared and left silent.
+inline constexpr int kMaxDeviceChannels = 256;
+
 // Plays one song at a time into the device's outputs. The control methods run on the message thread only: each pushes a
 // command that process, on the audio thread, takes at the start of its next block. process never allocates, locks or
 // frees: what it has finished with goes back through a queue, and collectGarbage frees it on the control thread.
@@ -40,8 +43,11 @@ class Engine {
 public:
     Engine();
 
-    void prepare(double sampleRate, int maxBlockFrames, int numOutputChannels);   // not while process may run
-    void process(float* const* out, int numChannels, int frames) noexcept;        // audio thread: clears out, then renders
+    // Must only be called while process cannot run: for a device, from audioDeviceAboutToStart, before its first callback.
+    // It stops whatever was playing, at once and without an event, keeps the cue and the mix, and keeps stream time running.
+    void prepare(double sampleRate, int maxBlockFrames);
+    // Audio thread: clears out, then renders into the first min(numChannels, kMaxDeviceChannels) of it.
+    void process(float* const* out, int numChannels, int frames) noexcept;
 
     // Control thread (the message thread).
     std::uint64_t cue(std::shared_ptr<const PreparedSong>);   // the song that start() or a follow-on will play; returns its serial

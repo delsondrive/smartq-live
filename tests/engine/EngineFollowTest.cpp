@@ -18,7 +18,7 @@ using namespace sqlive::test;
 
 TEST_CASE("seamless: the next song starts on the very next sample", "[follow]") {
     for (int block : {1, 64, 512}) {
-        Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
         auto a = e.cue(share(testSong("a", 1000, 0.25f))); e.start();
         e.setFollowOn({FollowKind::Seamless, 0.0});
         std::uint64_t b = 0;
@@ -32,7 +32,7 @@ TEST_CASE("seamless: the next song starts on the very next sample", "[follow]") 
 }
 TEST_CASE("seamless skips the next song's count-in; a gap keeps it", "[follow]") {
     for (auto kind : {FollowKind::Seamless, FollowKind::Gap}) {
-        Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
         e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({kind, 0.0});
         auto out = renderOffline(e, 2, 1000 + 96000 + 100, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 200000, 0.5f, 1))); }}});
         if (kind == FollowKind::Seamless) CHECK(out[0][1000] == 0.5f);               // straight into bar 1
@@ -40,7 +40,7 @@ TEST_CASE("seamless skips the next song's count-in; a gap keeps it", "[follow]")
     }
 }
 TEST_CASE("gap: silence for the gap, then the next song", "[follow]") {
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.5});
     auto out = renderOffline(e, 2, 30000, 512, {
         {10, [](Engine& en) { en.cue(share(testSong("b", 1000, 0.5f))); }},
@@ -48,7 +48,7 @@ TEST_CASE("gap: silence for the gap, then the next song", "[follow]") {
     CHECK(out[0][1000] == 0.0f);  CHECK(out[0][24999] == 0.0f);  CHECK(out[0][25000] == 0.5f);
 }
 TEST_CASE("with nothing cued, or with follow-on set to stop, the engine stops and keeps the cue", "[follow]") {
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Seamless, 0.0});
     renderOffline(e, 2, 2000, 512);
     CHECK(e.status().state == PlayState::Stopped);
@@ -62,7 +62,7 @@ TEST_CASE("with nothing cued, or with follow-on set to stop, the engine stops an
     CHECK(renderOffline(e, 2, 10, 512)[0][0] == 0.5f);
 }
 TEST_CASE("awkward moments leave the engine in a defined state", "[follow]") {
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     e.cue(share(testSong("a", 48000, 1.0f))); e.start(); e.setFollowOn({FollowKind::Gap, 1.0});
     std::uint64_t b = 0, c = 0;
     auto out = renderOffline(e, 2, 200000, 512, {
@@ -87,7 +87,7 @@ TEST_CASE("awkward moments leave the engine in a defined state", "[follow]") {
     e.collectGarbage();
 }
 TEST_CASE("levels change on the playing song only", "[follow]") {
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     auto a = e.cue(share(testSong("a", 48000, 1.0f, 0, true))); e.start();
     auto out = renderOffline(e, 2, 20000, 512, {
         {1000, [&](Engine& en) { en.setPartGain(a + 99, 0, 0.0f); }},       // another song's serial: ignored
@@ -104,7 +104,7 @@ TEST_CASE("levels change on the playing song only", "[follow]") {
     CHECK(next[0][50] == 0.5f);  CHECK(next[1][50] == 0.0f);
 }
 TEST_CASE("a gap reports what ended, what started and a stop inside it; a gap running out empty reports nothing", "[follow]") {
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     auto a = e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.1});   // 4800 samples
     std::uint64_t b = 0, c = 0;
     renderOffline(e, 2, 16000, 512, {
@@ -130,7 +130,7 @@ TEST_CASE("a gap reports what ended, what started and a stop inside it; a gap ru
     }
 }
 TEST_CASE("following on allocates and frees nothing on the audio thread", "[follow]") {
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     std::vector<std::shared_ptr<const PreparedSong>> songs;
     for (int i = 0; i < 6; ++i) songs.push_back(share(testSong("s", 1000, 0.5f, i == 2 ? 1 : 0)));
     std::vector<std::weak_ptr<const PreparedSong>> watch(songs.begin(), songs.end());
@@ -167,7 +167,7 @@ TEST_CASE("status is one snapshot: its fields never come from different moments"
     constexpr int kSongs = 20000;
     constexpr SamplePos kLength = 100;
     constexpr int kBlock = 7;
-    Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     auto song = share(testSong("s", kLength, 0.5f));
 
     std::atomic<bool> done{false};
