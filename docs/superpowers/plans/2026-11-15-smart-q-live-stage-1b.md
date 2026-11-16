@@ -113,13 +113,18 @@ git add -A && git commit -m "feat: remember this computer's band folders, rig an
 
 **Files:**
 - Create: `src/app/SongCache.h`, `src/app/SongCache.cpp`
-- Test: `tests/app/SongCacheTest.cpp`
+- Modify (Stage 1a): `src/model/FileNames.h`, `src/model/FileNames.cpp` (`isPathInsideFolder` refuses Windows device names)
+- Test: `tests/app/SongCacheTest.cpp`, `tests/model/BasicsTest.cpp`
 
 **Interfaces:**
-- Consumes: `model::loadPartAudio`, `model::bytesInMemory`, `model::BandFolder::audioFile`, `model::SongDoc`.
+- Consumes: `model::loadPartAudio`, `model::bytesInMemory`, `model::SongDoc`. The tests also use `model::createDemoBand` and `model::BandFolder::audioFile` to make the files they hand over; the cache itself never sees a `BandFolder`.
 - Produces:
 
 ```cpp
+struct WantedSong {
+    model::SongDoc doc;
+    std::map<juce::String, juce::File> files;                      // each part's audio file by part id, resolved on the message thread
+};
 struct LoadedSong {
     juce::String songId;
     double sampleRate = 48000.0;
@@ -131,11 +136,14 @@ struct LoadedSong {
 class SongCache : private juce::Thread, private juce::AsyncUpdater {
 public:
     enum class State { NotLoaded, Loading, Ready, Failed };       // Failed = no part could be loaded
-    SongCache(const model::BandFolder&, std::int64_t budgetBytes);
+    explicit SongCache(std::int64_t budgetBytes);                 // keeps no BandFolder: the loader reads only what setWanted hands it
     ~SongCache() override;
     static std::int64_t defaultBudgetBytes();                     // half of juce::SystemStats::getMemorySizeInMegabytes()
+    std::int64_t budgetBytes() const;
     void setSampleRate(double);                                   // a change drops everything loaded
-    void setWanted(std::vector<model::SongDoc> inPriorityOrder);  // copies: the loader never reads the model
+    void setWanted(std::vector<WantedSong> inPriorityOrder);      // copies: the loader never reads the model or the BandFolder
+    void setPaused(bool);                                         // for tests and screenshots: while paused the loader starts nothing,
+                                                                  // and a kept song that isn't Ready reports Loading at progress 0
     State state(const juce::String& songId) const;
     double progress(const juce::String& songId) const;            // 0..1 while Loading
     std::shared_ptr<const LoadedSong> loaded(const juce::String& songId) const;   // nullptr unless Ready
@@ -147,15 +155,34 @@ public:
 
 - [ ] **Step 1: Write the failing tests**
 
-Each test makes the demo band in a `TempDir` with `model::createDemoBand`, loads it, and builds the cache on its folder.
+Each test runs on this fixture: the demo band in a `TempDir`, loaded, its setlist's songs as `a`, `b`, `c`, and `wanted(doc)` to hand a song over with its files.
 
 ```cpp
-TEST_CASE("wanted songs are loaded in order and reported", "[cache]") {
-    // demo band → docs a, b, c (setlist order)
-    SongCache cache(folder, SongCache::defaultBudgetBytes());
+namespace {
+struct CacheFixture {
+    juce::ScopedJuceInitialiser_GUI gui;                          // onChanged arrives through an AsyncUpdater
+    sqlive::test::TempDir t;
+    model::BandFolder folder{makeDemo(t)};
+    model::BandModel band;
+    model::SongDoc a, b, c;                                       // the demo setlist's songs, in order
+    CacheFixture() {
+        folder.load(band);
+        auto& e = band.setlist(band.setlistIds()[0])->entries;
+        a = *band.song(e[0].songId);  b = *band.song(e[1].songId);  c = *band.song(e[2].songId);
+    }
+    WantedSong wanted(const model::SongDoc& s) const {
+        WantedSong w{s, {}};
+        for (auto& p : s.parts) w.files[p.id] = folder.audioFile(s, p);
+        return w;
+    }
+    static juce::File makeDemo(const sqlive::test::TempDir& t) { auto root = t.dir().getChildFile("Demo"); model::createDemoBand(root); return root; }
+};
+}
+TEST_CASE_METHOD(CacheFixture, "wanted songs are loaded in order and reported", "[cache]") {
+    SongCache cache(SongCache::defaultBudgetBytes());
     juce::StringArray changed; cache.onChanged = [&](const juce::String& id) { changed.addIfNotAlreadyThere(id); };
     CHECK(cache.state(a.id) == SongCache::State::NotLoaded);
-    cache.setWanted({a, b});
+    cache.setWanted({wanted(a), wanted(b)});
     REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.state(a.id) == SongCache::State::Ready);  CHECK(cache.state(b.id) == SongCache::State::Ready);
     CHECK(cache.state(c.id) == SongCache::State::NotLoaded);
@@ -169,24 +196,25 @@ TEST_CASE("wanted songs are loaded in order and reported", "[cache]") {
     CHECK(loaded->bytes == model::bytesInMemory(a, 48000.0));
     CHECK(changed.contains(a.id));
 }
-TEST_CASE("songs that are no longer wanted are let go, and the budget is kept", "[cache]") {
+TEST_CASE_METHOD(CacheFixture, "songs that are no longer wanted are let go, and the budget is kept", "[cache]") {
     auto one = model::bytesInMemory(a, 48000.0);
-    SongCache cache(folder, one);                                // room for one song only
-    cache.setWanted({a, b, c});
+    SongCache cache(one);                                        // room for one song only
+    CHECK(cache.budgetBytes() == one);
+    cache.setWanted({wanted(a), wanted(b), wanted(c)});
     REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.state(a.id) == SongCache::State::Ready);
     CHECK(cache.state(b.id) == SongCache::State::Ready);         // the first two are always loaded: the song playing and the next
     CHECK(cache.state(c.id) == SongCache::State::NotLoaded);     // the third doesn't fit
-    cache.setWanted({c});
+    cache.setWanted({wanted(c)});
     REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.state(a.id) == SongCache::State::NotLoaded);
     CHECK(cache.state(c.id) == SongCache::State::Ready);
 }
-TEST_CASE("a missing part is a problem, not a failure; no parts at all is a failure", "[cache]") {
+TEST_CASE_METHOD(CacheFixture, "a missing part is a problem, not a failure; no parts at all is a failure", "[cache]") {
     folder.audioFile(a, a.parts[0]).deleteFile();
     for (auto& part : b.parts) folder.audioFile(b, part).deleteFile();
-    SongCache cache(folder, SongCache::defaultBudgetBytes());
-    cache.setWanted({a, b});
+    SongCache cache(SongCache::defaultBudgetBytes());
+    cache.setWanted({wanted(a), wanted(b)});
     REQUIRE(cache.waitUntilIdle(20000));
     REQUIRE(cache.state(a.id) == SongCache::State::Ready);
     CHECK(cache.loaded(a.id)->audio.count(a.parts[0].id) == 0);
@@ -194,39 +222,66 @@ TEST_CASE("a missing part is a problem, not a failure; no parts at all is a fail
     CHECK(cache.state(b.id) == SongCache::State::Failed);
     CHECK(cache.loaded(b.id) == nullptr);
 }
-TEST_CASE("a new sample rate or a forgotten song loads again", "[cache]") {
-    SongCache cache(folder, SongCache::defaultBudgetBytes());
-    cache.setWanted({a});  REQUIRE(cache.waitUntilIdle(20000));
+TEST_CASE_METHOD(CacheFixture, "a new sample rate or a forgotten song loads again", "[cache]") {
+    SongCache cache(SongCache::defaultBudgetBytes());
+    cache.setWanted({wanted(a)});  REQUIRE(cache.waitUntilIdle(20000));
     auto first = cache.loaded(a.id);
     cache.setSampleRate(44100.0);
     CHECK(cache.state(a.id) != SongCache::State::Ready);
-    cache.setWanted({a});  REQUIRE(cache.waitUntilIdle(20000));
+    cache.setWanted({wanted(a)});  REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.loaded(a.id)->sampleRate == 44100.0);
     const auto& id0 = a.parts[0].id;
     CHECK(cache.loaded(a.id)->audio.at(id0)->left.size() < first->audio.at(id0)->left.size());
     cache.forget(a.id);
     CHECK(cache.state(a.id) != SongCache::State::Ready);
+    cache.setPaused(true);  cache.setWanted({wanted(a)});
+    CHECK(cache.state(a.id) == SongCache::State::Loading);       // wanted, but the loader is paused
+    CHECK(cache.progress(a.id) == 0.0);
+    cache.setPaused(false);  REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.state(a.id) == SongCache::State::Ready);
+}
+```
+
+And in `tests/model/BasicsTest.cpp`:
+
+```cpp
+TEST_CASE("a path through a Windows device name is not inside the folder", "[basics]") {
+    CHECK_FALSE(isPathInsideFolder("audio/CON.wav"));
+    CHECK_FALSE(isPathInsideFolder("nul"));
+    CHECK_FALSE(isPathInsideFolder("aux/Keys.wav"));
+    CHECK_FALSE(isPathInsideFolder("audio/com1"));
+    CHECK_FALSE(isPathInsideFolder("audio/Lpt9.txt"));
+    CHECK_FALSE(isPathInsideFolder("audio/prn.tar.gz"));
+    CHECK(isPathInsideFolder("audio/Console.wav"));
+    CHECK(isPathInsideFolder("audio/COM10.wav"));
+    CHECK(isPathInsideFolder("audio/Keys.wav"));
 }
 ```
 
 - [ ] **Step 2: Run and see it fail**
 
-Run: `powershell -File scripts/build.ps1 -Test "[cache]"`. Expected: `app/SongCache.h` not found.
+Run: `powershell -File scripts/build.ps1 -Test "[cache],[basics]"`. Expected: `app/SongCache.h` not found.
 
-- [ ] **Step 3: Implement `SongCache`**
+- [ ] **Step 3: Make `isPathInsideFolder` refuse Windows device names**
+
+In `src/model/FileNames.cpp`, `isPathInsideFolder` also returns false when any step of the path is a Windows reserved device name: CON, PRN, AUX, NUL, COM1–COM9, LPT1–LPT9, ignoring case, with or without an extension (the stem before the first dot is what counts). Reuse the file's `isReservedWindowsName` on each step's stem. Add "no Windows device name in any step" to the comment in `FileNames.h`.
+
+- [ ] **Step 4: Implement `SongCache`**
 
 - One background `juce::Thread` named "Smart Q Live loader". State lives behind a `juce::CriticalSection` that is never held while reading a file.
+- **The loader reads only what `setWanted` handed it:** each `WantedSong`'s document copy and its files. It never touches a `BandFolder` (the message thread changes one while songs are imported, moved or trashed).
 - **Which songs are kept:** walk the wanted list in order, adding each song's `bytesInMemory`; keep the first two whatever they cost, then keep each next one while the total stays within the budget, and stop at the first that doesn't fit. Loaded songs outside that set are dropped at once. Loading follows the same order; a song whose turn is overtaken by a new `setWanted` is abandoned through `keepGoing`.
-- Problems per part, in these words: `"<part>: the audio file is missing."`, `"<part>: the audio file couldn't be read."`. `BandFolder::audioFile` returns `{}` for a part whose `file` points outside the song's folder; that is "missing" too.
+- Problems per part, in these words: `"<part>: the audio file is missing."`, `"<part>: the audio file couldn't be read."`. A part with no entry in `files`, or an empty `juce::File` there (what `BandFolder::audioFile` returns for a part whose `file` points outside the song's folder), is "missing" too.
+- `setPaused(true)` lets a load already running finish but starts no other; `setPaused(false)` carries on. Only tests and `renderScreen` (Task 19) pause it.
 - `audio` holds each loaded part's audio under its part id, the shape `model::buildPreparedSong` takes (`audioByPartId`), so audio can never land on the wrong part when the part list changes between loading and playing.
 - The overview: for each of 1200 equal slices of the longest part, the minimum and maximum of the sum of all loaded parts (mono parts counted once, stereo parts as the mean of their sides), each part scaled by its own `gainDb`.
 - `onChanged` is delivered on the message thread through the `AsyncUpdater`, once per song whose state or progress changed.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 5: Run the tests**
 
-Run: `powershell -File scripts/build.ps1 -Test "[cache]"`. Expected: 4 test cases pass.
+Run: `powershell -File scripts/build.ps1 -Test "[cache],[basics]"`. Expected: the 4 `[cache]` test cases and every `[basics]` case pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "feat: load songs into memory ahead of time, within a budget" && git push origin main
@@ -242,13 +297,14 @@ git add -A && git commit -m "feat: load songs into memory ahead of time, within 
 - Test: `tests/app/SessionTest.cpp`
 
 **Interfaces:**
-- Consumes: `Settings`, `SongCache`, `model::BandFolder`, `BandModel`, `CommandLayer`, `registerCoreCommands`, `Autosaver`, `buildMixSetup`, `buildPreparedSong`, `engine::Engine`.
+- Consumes: `Settings` (`rigFor`, `setRigFor`, `setlistFor`, `setSetlistFor`, `save`), `SongCache`, `WantedSong`, `model::BandFolder`, `BandModel`, `CommandLayer`, `registerCoreCommands`, `Autosaver`, `buildMixSetup`, `buildPreparedSong`, `engine::Engine`.
 - Produces:
 
 ```cpp
 enum class Mode { Edit, Show };
 enum class Action { Start, Stop, NextSongLater, NextSongEarlier, ToggleView };
 enum class Readiness { None, Loading, Ready, Failed };
+enum class SaveState { Saved, Saving, Failed };
 struct NowPlaying {
     bool playing = false, stopping = false, inGap = false, interrupted = false;
     int playingIndex = -1, nextIndex = -1, entryCount = 0;       // places in the setlist; -1 = none
@@ -263,9 +319,15 @@ public:
     Session(Settings&, juce::File bandRoot, std::int64_t cacheBudgetBytes = SongCache::defaultBudgetBytes());
     ~Session() override;                                         // flushes the autosaver
 
-    const model::BandModel& model() const;  model::CommandLayer& commands();  model::BandFolder& folder();
-    SongCache& cache();  engine::Engine& engine();  Settings& settings();
+    const model::BandModel& model() const;
+    model::CommandLayer& commands();        const model::CommandLayer& commands() const;    // const: canUndo, undoName
+    model::BandFolder& folder();            const model::BandFolder& folder() const;        // const: audioFile, root
+    SongCache& cache();                     const SongCache& cache() const;                 // const: state, progress, loaded, budgetBytes
+    Settings& settings();                   const Settings& settings() const;               // const: computerName, showMemory
+    engine::Engine& engine();
     const model::LoadReport& loadReport() const;
+    SaveState saveState() const;            // Saving while the autosaver has changes pending; Failed after a flush that failed
+    juce::String saveError() const;         // the failed flush's message; "" otherwise
     juce::ChangeBroadcaster& changes();                          // fires when anything a view shows has changed
 
     juce::String rigId() const;        void chooseRig(const juce::String& rigId);       // remembered in Settings
@@ -280,12 +342,13 @@ public:
     void playSong(const juce::String& songId, double fromSeconds);   // Edit mode: play one song from a place
     void setEditFocus(const juce::String& songId);               // the song open in an Edit page: kept loaded first
 
-    void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events
+    void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
+                                                                 // never while a real device runs (Task 6 adds the check)
     void flushNow();                                             // autosave immediately
 };
 ```
 
-- `tests/support/DemoSession.h`: `struct sqlive::test::DemoSession { TempDir dir; std::unique_ptr<app::Settings> settings; std::unique_ptr<app::Session> session; DemoSession(); void settle(); /* waits for the cache, then runs pending message-thread work */ const model::SetlistDoc& setlist() const; };` Its constructor makes the demo band, a settings file in the temp folder, the session, calls `setDevice(48000.0, 2)`, and settles. Each test using it holds a `juce::ScopedJuceInitialiser_GUI`.
+- `tests/support/DemoSession.h`: `struct sqlive::test::DemoSession { juce::ScopedJuceInitialiser_GUI gui; TempDir dir; std::unique_ptr<app::Settings> settings; std::unique_ptr<app::Session> session; DemoSession(); void settle(); /* waits for the cache, then runs pending message-thread work */ const model::SetlistDoc& setlist() const; };` The GUI initialiser is the first member, so it is made first and destroyed last: the session's timer, `ChangeBroadcaster` and the cache's `AsyncUpdater` need the message manager. Its constructor makes the demo band, a settings file in the temp folder, the session, calls `setDevice(48000.0, 2)`, and settles.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -391,7 +454,9 @@ TEST_CASE("Edit mode can play one song from a place, and edits are saved", "[ses
     CHECK(s.now().seconds == Catch::Approx(4.01).margin(0.02));
     s.perform(Action::Stop);  s.advanceWithoutDevice(4800);
     s.commands().run("band.rename", params({{"name", "Renamed"}}));
+    CHECK(s.saveState() == SaveState::Saving);
     s.flushNow();
+    CHECK(s.saveState() == SaveState::Saved);  CHECK(s.saveError().isEmpty());
     CHECK(s.folder().root().getChildFile("band.json").loadFileAsString().contains("Renamed"));
 }
 ```
@@ -402,19 +467,20 @@ Run: `powershell -File scripts/build.ps1 -Test "[session]"`. Expected: `app/Sess
 
 - [ ] **Step 3: Implement `Session`**
 
-- **Opening.** Load the folder; register the core commands; wire `commands().onChanged` to the autosaver and to a refresh. Choose the rig from `Settings::rigFor`, falling back to the first rig; the setlist from `Settings::setlistFor`, falling back to the first. Prepare the engine with `engine.prepare(48000.0, 512)` (prepare takes no channel count; `process` renders into however many channels it is given, up to `engine::kMaxDeviceChannels`) until `setDevice` is called. With a device, `AudioHost` prepares the engine, not the session (Task 6).
-- **Prepared songs.** For each setlist entry near the playhead, when the cache has it `Ready`, build a `PreparedSong` with `buildPreparedSong(song, band, loaded->audio, rate)`: `LoadedSong::audio` is already by part id. Keep it with a map from part id to its index in the prepared song, made from each `PreparedPart::partId` (`prepared.parts[i].partId` is the part at engine index `i`; a part that was left out has no index). Rebuild it when its song document changes.
-- **What the cache is asked for,** in order: the Edit focus song (Edit mode only), the playing song, the next song, the entry before the next, then the entries after the next in order, then the remaining ones.
-- **Cueing.** Whenever the next entry, its readiness or its prepared song changes, call `engine.cue` with it, or `clearCue` when there is none or it isn't ready. The follow-on is `Stop` in song-by-song mode; in continuous mode it is the playing entry's transition.
+- **Opening.** Load the folder; register the core commands; wire `commands().onChanged` to the autosaver and to a refresh. Choose the rig from `Settings::rigFor`, falling back to the first rig; the setlist from `Settings::setlistFor`, falling back to the first. Write the choice back with `Settings::setRigFor` and `setSetlistFor` and call `Settings::save`, so a fallback is remembered too (`chooseRig` and `chooseSetlist` do the same). Prepare the engine with `engine.prepare(48000.0, 512)` (prepare takes no channel count; `process` renders into however many channels it is given, up to `engine::kMaxDeviceChannels`) until `setDevice` is called. With a device, `AudioHost` prepares the engine, not the session (Task 6).
+- **Prepared songs.** For each setlist entry near the playhead, when the cache has it `Ready`, build a `PreparedSong` with `buildPreparedSong(song, band, loaded->audio, rate)`: `LoadedSong::audio` is already by part id. Keep it with a map from part id to its index in the prepared song, made from each `PreparedPart::partId` (`prepared.parts[i].partId` is the part at engine index `i`; a part that was left out has no index). `PreparedPart::partId` is a `std::string`: convert it with `juce::String(partId)` for the map's `juce::String` keys. Rebuild it when its song document changes.
+- **What the cache is asked for,** in order: the Edit focus song (Edit mode only), the playing song, the next song, the entry before the next, then the entries after the next in order, then the remaining ones. Each goes to `SongCache::setWanted` as a `WantedSong`: a copy of the document and each part's file from `folder().audioFile(song, part)`, worked out here on the message thread.
+- **Cueing.** Whenever the next entry, its readiness or its prepared song changes, call `engine.cue` with it, or `clearCue` when there is none or it isn't ready. The follow-on is `Stop` in song-by-song mode; in continuous mode it is the playing entry's transition. `cue` returns 0 when its queue is full: that cue was not taken, so record no serial for it and try again on the next timer tick.
 - **Events.** A 30 Hz timer (and `advanceWithoutDevice`) pops the engine's events and calls `collectGarbage`:
   - `Started`: the playing entry is the one whose cue had that serial (looked up by entry id, so reordering is harmless); the next entry becomes the one after it, or none.
   - `Ended`: nothing plays. The next entry stays as it is.
   - `Stopped`: nothing plays, and the next entry becomes the one that was playing, if it is still in the setlist. A `Stopped` with `inGap` set came during a gap: the song it names had already ended and the next entry is already the one after it, so the next entry is left alone.
 - **Indices.** Keep entry ids, not indices; work the indices out when asked. If the next entry is removed, the entry now in its place takes over, or the last one, or none.
+- **The arrows.** `NextSongLater` moves the next entry one on (nothing after the last). `NextSongEarlier` moves it one back (the first stays the first). With no next entry, Earlier chooses the entry before the playing one (or the last entry when nothing plays), and Later does nothing.
 - **Position.** `now()` reads `engine.status()` and converts `songTime` with the playing song's tempo map. When nothing plays it describes the next song at bar 1.
 - `perform(Action::Start)` does nothing unless the engine is stopped and the next song is `Ready`.
 - `playSong` cues that song alone and calls `startAt`; when it ends or is stopped, the setlist's next entry is cued again.
-- The same timer flushes the autosaver once 300 ms have passed since the last change.
+- The same timer flushes the autosaver once 300 ms have passed since the last change. `saveState()` is `Saving` while `Autosaver::hasPending()`, `Failed` (with `saveError()` set) after an `onSaved` failure until the next successful flush, and `Saved` otherwise; a change of it fires `changes()`.
 
 - [ ] **Step 4: Run the tests**
 
@@ -439,10 +505,14 @@ git add -A && git commit -m "feat: add the session that runs a setlist through t
 - Produces:
 
 ```cpp
+// Tonight.h (Session.h includes it)
 struct LevelTarget {
     enum class Kind { Part, SongClick, Mix, OutputTrim, BandClick, BandCues, BandPad } kind;
     juce::String songId, partId, outputId, roleId;                // whichever the kind needs
-    auto operator<=>(const LevelTarget&) const = default;
+    bool operator==(const LevelTarget&) const = default;
+    // Written by hand, like model::DocKey's: juce::String has no <=>, so a defaulted one would be deleted.
+    // Compares kind, then songId, partId, outputId, roleId with juce::String::compare.
+    std::strong_ordering operator<=>(const LevelTarget&) const;
 };
 // Tonight.h: the levels changed in Show mode. Plain data with JSON, so it survives a restart.
 class Tonight {
@@ -477,7 +547,7 @@ public:
 namespace { LevelTarget part(const juce::String& song, const juce::String& p) { return {LevelTarget::Kind::Part, song, p, {}, {}}; } }
 TEST_CASE("in Edit mode a level change is an ordinary, undoable edit", "[levels]") {
     DemoSession d; auto& s = *d.session;
-    auto& song = *s.model().song(d.setlist().entries[0].songId);
+    const auto song = *s.model().song(d.setlist().entries[0].songId);            // a copy: the levels before any change
     auto target = part(song.id, song.parts[0].id);
     CHECK(s.level(target) == song.parts[0].gainDb);
     s.setLevel(target, -12.0f, "drag-1");  s.setLevel(target, -14.0f, "drag-1");
@@ -488,7 +558,7 @@ TEST_CASE("in Edit mode a level change is an ordinary, undoable edit", "[levels]
 }
 TEST_CASE("in Show mode a level change is for tonight only", "[levels]") {
     DemoSession d; auto& s = *d.session;
-    auto& song = *s.model().song(d.setlist().entries[0].songId);
+    const auto song = *s.model().song(d.setlist().entries[0].songId);            // a copy: the levels before any change
     auto& rig = *s.model().rig(s.rigId());
     auto target = part(song.id, song.parts[0].id);
     LevelTarget click{LevelTarget::Kind::BandClick, {}, {}, {}, {}};
@@ -516,11 +586,14 @@ TEST_CASE("tonight's changes are heard at once", "[levels]") {
     s.advanceWithoutDevice(48000);
     std::vector<float> l(512), r(512); float* out[2] = {l.data(), r.data()};
     s.engine().process(out, 2, 512);
-    CHECK(*std::max_element(l.begin(), l.end()) < 0.001f);                       // everything is silent now
+    float peak = 0.0f;
+    for (float x : l) peak = std::max(peak, std::abs(x));
+    for (float x : r) peak = std::max(peak, std::abs(x));
+    CHECK(peak < 0.001f);                                                        // everything is silent now
 }
 TEST_CASE("leaving Show mode keeps or drops tonight's changes", "[levels]") {
     DemoSession d; auto& s = *d.session;
-    auto& song = *s.model().song(d.setlist().entries[0].songId);
+    const auto song = *s.model().song(d.setlist().entries[0].songId);            // a copy: the levels before any change
     auto target = part(song.id, song.parts[0].id);
     s.enterShow();  s.setLevel(target, -20.0f, "g");
     s.perform(Action::Start);  s.advanceWithoutDevice(4800);
@@ -548,6 +621,11 @@ TEST_CASE("a restart goes back into the show with tonight's levels", "[levels]")
     CHECK(d.session->now().nextIndex == 2);
     CHECK(d.session->level(target) == -20.0f);
     CHECK(d.session->stageView() == stage);
+    d.session->leaveShow();  d.session.reset();                                  // closed before tonight's question was answered
+    d.session = std::make_unique<app::Session>(*d.settings, root);  d.session->setDevice(48000.0, 2);  d.settle();
+    CHECK(d.session->mode() == Mode::Edit);
+    CHECK(d.session->hasTonightChanges());                                       // so the question is asked again
+    CHECK(d.session->level(target) == -20.0f);
 }
 TEST_CASE("Tonight survives its own JSON and ignores what no longer exists", "[levels]") {
     Tonight t; t.setLevel({LevelTarget::Kind::BandClick, {}, {}, {}, {}}, -2.0f);  t.setLevel({LevelTarget::Kind::Part, "gone", "p", {}, {}}, -3.0f);
@@ -566,11 +644,11 @@ Run: `powershell -File scripts/build.ps1 -Test "[levels]"`. Expected: `app/Tonig
 - [ ] **Step 3: Implement `Tonight` and the session's level methods**
 
 - **Edit mode:** `setLevel` runs the matching command with `gestureId` as the coalesce key: `part.set` (`gainDb`), `song.setClick` (`offsetDb`), `mix.setLevel`, `output.set` (`trimDb`), `band.setLevel`. `setMute` runs `part.set`.
-- **Show mode:** the same calls write to `Tonight` instead, then save it into `Settings::setShowMemory` and call `Settings::save`. A `Mix` change that `model::mayRoute` forbids is ignored.
+- **Show mode:** the same calls write to `Tonight` instead and put it into `Settings::setShowMemory` at once. The settings file itself is written by `Settings::save` with the session's 300 ms flush (the same timer that flushes the autosaver), in `flushNow`, and in `~Session`, never on every fader step. A `Mix` change that `model::mayRoute` forbids is ignored.
 - **Heard at once, in both modes:** a part's level or mute goes to `Engine::setPartGain` / `setPartMute` for the playing song (through the part-id map from Task 3); a click level to `setClickGain`; anything in the rig rebuilds the mix from `rigAsHeard()` and calls `setMix`. Songs prepared later are built from `songAsHeard`.
 - `enterShow` sets the mode and saves the show memory; from then on every change of the next entry or the view also saves it. `leaveShow` refuses while `now().playing`; otherwise it sets Edit mode and clears `inShow` in the show memory, keeping `tonightJson` until the user answers.
-- `keepTonightChanges` runs every command from `Tonight::asCommands` with one shared coalesce key, so undo takes them back together, then clears. `dropTonightChanges` clears and pushes the document levels back to the engine.
-- **On opening:** if the show memory says `inShow`, the session starts in Show mode with that setlist, next entry, view and `Tonight`.
+- `keepTonightChanges` runs every command from `Tonight::asCommands` with one shared coalesce key, so undo takes them back together, then clears. The key is fresh each time (`juce::Uuid().toString()`): `CommandLayer` merges into the top undo step whenever its key matches, so a reused key would fold tonight's changes into an edit made before the show. `dropTonightChanges` clears and pushes the document levels back to the engine. Both clear `tonightJson` in the show memory.
+- **On opening:** if the show memory says `inShow`, the session starts in Show mode with that setlist, next entry, view and `Tonight`. If it doesn't, but `tonightJson` is kept (the app closed after leaving Show mode, before the question was answered), the session starts in Edit mode with that `Tonight`: `hasTonightChanges()` is true, the levels are heard, and the shell asks the question again (Task 18).
 
 - [ ] **Step 4: Run the tests**
 
@@ -698,7 +776,7 @@ git add -A && git commit -m "feat: handle Show-mode keys so a slip never stops o
 - Test: `tests/app/AudioHostTest.cpp`
 
 **Interfaces:**
-- Consumes: `engine::Engine`, `Session::setDevice`.
+- Consumes: `engine::Engine` (`prepare`, `process`, `sampleRate`), `Session::setDevice`, `Session::settings()` (`Settings::computerName`), `model::RigDoc::computers` (keyed by computer id).
 - Produces:
 
 ```cpp
@@ -711,10 +789,11 @@ public:
     juce::StringArray devicesOfType(const juce::String& type);
     juce::Result open(const DeviceChoice&);                       // every output channel the device has; no inputs
     juce::Result openFromRig();                                   // the rig's binding for this computer; fails with a plain reason when there is none
+    bool hasBindingForThisComputer() const;                       // the rig has a device named for settings().computerName()
     void close();
     bool isOpen() const;  bool isLost() const;                    // lost = it was open and went away
     juce::String deviceName() const;  double sampleRate() const;  int bufferSize() const;  int outputChannels() const;  int outputLatencySamples() const;
-    void setTestTone(int channel);                                // -1 = off; a 440 Hz sine at -20 dB on that channel
+    void setTestTone(int channel);                                // -1 = off; a 440 Hz sine at -20 dB on that channel, at Engine::sampleRate()
     std::function<void()> onChanged;                              // message thread
     void renderBlock(float* const* out, int numChannels, int frames) noexcept;   // what the callback does; public for tests
     void deviceStarting(double sampleRate, int bufferSize);       // what audioDeviceAboutToStart does on its own thread: engine.prepare
@@ -723,6 +802,7 @@ public:
 // Added to Session:
     void audioInterrupted();          // stops at once and sets now().interrupted, remembering the bar
     void clearInterrupted();          // called by the next Start or song choice
+    void setDeviceRunning(bool);      // AudioHost: true while a real device is open; advanceWithoutDevice jasserts it is false
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -780,10 +860,14 @@ TEST_CASE("an interface that comes back different is taken as it is", "[audiohos
 }
 TEST_CASE("opening from a rig with no device for this computer says so", "[audiohost]") {
     DemoSession d; app::AudioHost host(*d.session);
+    CHECK_FALSE(host.hasBindingForThisComputer());
     auto result = host.openFromRig();
     CHECK(result.failed());
     CHECK(result.getErrorMessage() == "This rig hasn't been set up on this computer yet.");
     CHECK_FALSE(host.isOpen());
+    d.session->commands().run("rig.setDevice", params({{"rigId", d.session->rigId()}, {"computerId", d.session->settings().computerName()},
+                                                         {"deviceType", "Windows Audio"}, {"deviceName", "Speakers"}}));
+    CHECK(host.hasBindingForThisComputer());                      // keyed by this computer's name; nothing is opened here
 }
 ```
 
@@ -793,11 +877,12 @@ Run: `powershell -File scripts/build.ps1 -Test "[audiohost]"`. Expected: `app/Au
 
 - [ ] **Step 3: Implement `AudioHost`**
 
-- It owns a `juce::AudioDeviceManager`. `open` sets the device type and an `AudioDeviceSetup` with the output device name, sample rate, buffer size, no input, and every output channel active. On success it calls `Session::setDevice(rate, channels)` and `onChanged`.
-- `audioDeviceIOCallbackWithContext` calls `renderBlock`, which calls `Engine::process` and then adds the test tone.
-- `audioDeviceAboutToStart`, on every start, first calls `deviceStarting(rate, block)` right there, synchronously: it calls `engine.prepare(rate, block)` before the first callback, while `process` cannot run (that is the only time `Engine::prepare` may be called; see `Engine.h`). So a device that comes back always starts stopped and silent, at its own rate. Then it calls `deviceBack` on the message thread with the device's rate and active output count. `audioDeviceStopped` and `audioDeviceError`, when not caused by `close`, call `deviceLost` on the message thread.
-- `deviceLost` marks it lost, calls `Session::audioInterrupted`, and starts a 2 s timer that tries `open` with the last choice until it works. `deviceBack` clears the flag and calls `Session::setDevice`.
-- `Session::audioInterrupted`: remember the bar and beat, stop the engine, set `interrupted`, and make the interrupted entry the next one. While `interrupted`, `now()` reports the remembered bar. `Start`, `chooseNext` and the arrow actions clear it. `Session::setDevice` never calls `Engine::prepare` (the host already has): with a new rate it calls `SongCache::setSampleRate`; it always rebuilds the mix; and it cues the next entry again. `prepare` at a new rate dropped the old cue, and `start` ignores a song made for another rate, so nothing made for the old rate can play.
+- It owns a `juce::AudioDeviceManager`. `open` sets the device type and an `AudioDeviceSetup` with the output device name, sample rate, buffer size, no input, and every output channel active. On success it remembers the choice as the last one, calls `Session::setDeviceRunning(true)`, `Session::setDevice(rate, channels)` and `onChanged`. `close`, and a device that is lost, call `Session::setDeviceRunning(false)`. The test hooks `deviceStarting`, `deviceLost` and `deviceBack` never set it to true, so tests can keep calling `advanceWithoutDevice`.
+- **This computer** is `settings().computerName()`: `openFromRig` looks up `rig.computers[settings().computerName()]`, and `hasBindingForThisComputer` is true when that entry exists with a device name. The same key is the `computerId` every `rig.setDevice` command is given (Tasks 10 and 15).
+- `audioDeviceIOCallbackWithContext` calls `renderBlock`, which calls `Engine::process` and then adds the test tone. The tone's channel and its phase are atomics (set on the message thread, read on the audio thread), and its phase step uses `Engine::sampleRate()`, never an assumed 48 kHz.
+- `audioDeviceAboutToStart`, on every start, first calls `deviceStarting(rate, block)` right there, synchronously: it calls `engine.prepare(rate, block)` before the first callback, while `process` cannot run (that is the only time `Engine::prepare` may be called; see `Engine.h`). So a device that comes back always starts stopped and silent, at its own rate. Then it calls `deviceBack` on the message thread with the device's rate and active output count. `audioDeviceStopped` and `audioDeviceError` call `deviceLost` on the message thread, except when `close` or `open` itself caused them (`open` stops the old device when it switches).
+- `deviceLost` marks it lost, calls `Session::audioInterrupted`, then calls `onChanged`, all synchronously. It starts a 2 s timer that tries `open` with the last choice until it works, but only when there is a last choice (something was opened through `open` or `openFromRig`); with none, no timer starts. Tests never open a device, so they never start it. `deviceBack` clears the flag and calls `Session::setDevice`.
+- `Session::audioInterrupted`: remember the bar and beat, stop the engine, set `interrupted`, and make the interrupted entry the next one. From this call on `now()` reports `playing == false` and `interrupted == true`, though the engine still reports Playing until a block runs (and, once `prepare` has run, never sends `Stopped`). While `interrupted`, `now()` reports the remembered bar. `Start`, `chooseNext` and the arrow actions clear it. `Session::setDevice` never calls `Engine::prepare` (the host already has): with a new rate it calls `SongCache::setSampleRate`; it always rebuilds the mix; and it cues the next entry again. `prepare` at a new rate dropped the old cue, and `start` ignores a song made for another rate, so nothing made for the old rate can play.
 
 - [ ] **Step 4: Run the tests**
 
@@ -814,15 +899,23 @@ git add -A && git commit -m "feat: connect the engine to an audio interface and 
 ### Task 7: The pre-show check
 
 **Files:**
-- Create: `src/app/PreShowCheck.h`, `src/app/PreShowCheck.cpp`, `src/app/Power.h`, `src/app/Power_windows.cpp`, `src/app/Power_posix.cpp`
-- Modify: `CMakeLists.txt` (the platform-file rule from stage 1a Task 15 already covers `*_windows.cpp` / `*_posix.cpp`)
+- Create: `src/app/PreShowCheck.h`, `src/app/PreShowCheck.cpp`, `src/app/PartFiles.h`, `src/app/PartFiles.cpp`, `src/app/Power.h`, `src/app/Power_windows.cpp`, `src/app/Power_posix.cpp`
+- No CMake change: `CMakeLists.txt` already globs `src/app/*.cpp` and keeps only this platform's `*_windows.cpp` / `*_posix.cpp`.
 - Test: `tests/app/PreShowCheckTest.cpp`
 
 **Interfaces:**
-- Consumes: `model::checkRig`, `filesNotOnThisComputer`, `findConflictCopies`, `Session`.
+- Consumes: `model::checkRig`, `model::isOnThisComputer`, `model::findConflictCopies`, `Session` through a `const Session&`: `model()`, `folder() const` (`audioFile`, `root`), `setlistId()`, `rigAsHeard()`.
 - Produces:
 
 ```cpp
+// PartFiles.h: the one place that decides which of a song's audio files are missing or still in the cloud.
+// Tasks 11, 13 and 18 use it too.
+struct PartFileProblem { juce::String partId, partName; juce::File file; bool inCloud = false; };
+std::vector<PartFileProblem> partFileProblems(const Session&, const juce::String& songId);
+    // in part order. Missing (inCloud false): folder().audioFile is {} or the file doesn't exist.
+    // In the cloud (inCloud true): the file exists but model::isOnThisComputer says it isn't here.
+    // So "in the cloud" never counts a missing file, though model::filesNotOnThisComputer does.
+
 struct PowerState { bool known = false; bool onBattery = false; int percent = 100; };
 PowerState powerState();                                          // Power_*.cpp
 struct CheckItem { enum class Level { Ok, Warning, Blocker } level; juce::String id, title, detail, fixLabel; };
@@ -836,11 +929,13 @@ Items, in this order. A line is left out when it has nothing to say.
 | id | Ok | Warning | Blocker |
 |---|---|---|---|
 | `audio` | "Audio interface" · "<name>, 48 kHz, 512 samples" | rate differs from the band's: detail adds "Songs are converted to <rate> kHz as they load." | not open: "No audio interface" · "Choose one in Setup, or plug yours in." |
-| `routing` | "Routing" · "Click and cues only reach in-ear outputs" | each non-blocking `RoutingProblem`, title "Routing", its message | each blocking problem |
-| `files` | "Files" · "Every audio file is on this laptop" | parts whose file doesn't exist: "1 part has no audio file" / "<n> parts have no audio file" · the first three names | cloud placeholders: "<n> audio files are still in the cloud" · "They haven't been downloaded to this laptop yet (<song>: <parts>…)." `fixLabel` "Download now" |
+| `routing` | "Routing" · "click and cues only reach in-ear outputs" | each non-blocking `RoutingProblem`, title "Routing", its message | each blocking problem |
+| `files` | "Files" · "Every audio file is on this laptop" | missing files: "1 part has no audio file" / "<n> parts have no audio file" · the first three part names | files in the cloud: "1 audio file is still in the cloud" / "<n> audio files are still in the cloud" · "OneDrive hasn't downloaded them to this laptop (<song>: <part>, <part>, <part>)." (`it` for one file). `fixLabel` "Download now" |
 | `setlist` | "Setlist" · "<n> songs" | | no entries: "This setlist is empty" · "Add songs to it first." |
 | `conflicts` | | "<n> files have conflict copies" · "Two computers changed the same file. Open Setup to choose which to keep." | |
 | `power` | | on battery: "Running on battery" · "<percent>% left. Plug the laptop in." | |
+
+The `files` line comes from `partFileProblems` for each song of the setlist, and there is at most one: the Blocker when any file is in the cloud, otherwise the Warning when any file is missing, otherwise Ok. The cloud sentence follows the mockup's (screen 5) and is filled from the real data: the songs in setlist order, each as "<song title>: <part names>", songs joined with "; ", at most three parts named in all, then "…" before the ")" when there are more.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -852,7 +947,7 @@ TEST_CASE("a healthy show passes with plain lines", "[preshow]") {
     auto items = runPreShowCheck(*d.session, good());
     CHECK(mayEnterShow(items));
     CHECK(find(items, "audio")->detail == "Test device, 48 kHz, 512 samples");
-    CHECK(find(items, "routing")->detail == "Click and cues only reach in-ear outputs");
+    CHECK(find(items, "routing")->detail == "click and cues only reach in-ear outputs");
     CHECK(find(items, "files")->level == CheckItem::Level::Ok);
     CHECK(find(items, "setlist")->detail == "3 songs");
     CHECK(find(items, "conflicts") == nullptr);  CHECK(find(items, "power") == nullptr);
@@ -862,21 +957,28 @@ TEST_CASE("what would go wrong on stage is caught", "[preshow]") {
     auto inputs = good(); inputs.deviceOpen = false; inputs.power = {true, true, 64};
     auto& song = *s.model().song(d.setlist().entries[0].songId);
     s.folder().audioFile(song, song.parts[0]).deleteFile();
+    auto problems = partFileProblems(s, song.id);
+    REQUIRE(problems.size() == 1);
+    CHECK(problems[0].partId == song.parts[0].id);  CHECK_FALSE(problems[0].inCloud);       // missing, not in the cloud
     auto items = runPreShowCheck(s, inputs);
     CHECK_FALSE(mayEnterShow(items));
     CHECK(find(items, "audio")->level == CheckItem::Level::Blocker);
+    CHECK(std::count_if(items.begin(), items.end(), [](auto& i) { return i.id == "files"; }) == 1);
     CHECK(find(items, "files")->level == CheckItem::Level::Warning);
     CHECK(find(items, "files")->title == "1 part has no audio file");
     CHECK(find(items, "power")->detail == "64% left. Plug the laptop in.");
-    for (auto& e : d.setlist().entries) s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", e.id}}));
+    auto entries = d.setlist().entries;                                           // a copy: removing changes the setlist
+    for (auto& e : entries) s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", e.id}}));
     CHECK(find(runPreShowCheck(s, good()), "setlist")->level == CheckItem::Level::Blocker);
 }
-TEST_CASE("a different sample rate is a warning and an overlapping output a blocker", "[preshow]") {
+TEST_CASE("a different sample rate is a warning and an overlapping in-ear output a blocker", "[preshow]") {
     DemoSession d; auto& s = *d.session;
     auto inputs = good(); inputs.deviceRate = 44100.0;
     CHECK(find(runPreShowCheck(s, inputs), "audio")->level == CheckItem::Level::Warning);
-    s.commands().run("output.add", params({{"rigId", s.rigId()}, {"name", "PA"}, {"firstChannel", 2}, {"stereo", true}, {"label", "foh"}}));
-    auto items = runPreShowCheck(s, good());
+    auto pa = s.commands().run("output.add", params({{"rigId", s.rigId()}, {"name", "PA"}, {"firstChannel", 2}, {"stereo", true}, {"label", "foh"}}));
+    CHECK_FALSE(pa.ok);                                           // a PA output may never share a channel: the command refuses it
+    s.commands().run("output.add", params({{"rigId", s.rigId()}, {"name", "Drummer"}, {"firstChannel", 2}, {"stereo", true}, {"label", "monitor"}}));
+    auto items = runPreShowCheck(s, good());                      // two in-ear outputs may overlap; checkRig blocks the show
     CHECK_FALSE(mayEnterShow(items));
     CHECK(std::any_of(items.begin(), items.end(), [](auto& i) { return i.id == "routing" && i.level == CheckItem::Level::Blocker; }));
 }
@@ -888,7 +990,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[preshow]"`. Expected: `app/PreS
 
 - [ ] **Step 3: Implement**
 
-`Power_windows.cpp` uses `GetSystemPowerStatus` (`ACLineStatus == 0` is battery; `BatteryLifePercent == 255` is unknown). `Power_posix.cpp` returns `known = false`. The check looks at the songs of the session's setlist and at `rigAsHeard()`.
+`Power_windows.cpp` uses `GetSystemPowerStatus` (`ACLineStatus == 0` is battery; `BatteryLifePercent == 255` is unknown). `Power_posix.cpp` returns `known = false`. The check looks at the songs of the session's setlist (their files through `partFileProblems`) and at `rigAsHeard()`.
 
 - [ ] **Step 4: Run the tests**
 
@@ -919,13 +1021,16 @@ inline const juce::Colour field{0x12ffffff}, hairline{0x1cffffff};
 inline const juce::Colour text{0xfff5f2f6}, mid{0xffc9c2cf}, dim{0xff9a90a2};
 inline const juce::Colour ember{0xfff29a78}, mint{0xff6ff0c8}, danger{0xffff6f7d}, caution{0xffffb547};
 inline const juce::Colour onAccent{0xff0e0c11};                  // text on a mint or ember fill
-juce::Font font(float size, bool bold = false);                  // the UI typeface at that pixel size
+juce::Font font(float size, bool bold = false);                  // the UI typeface at that pixel size, made from juce::FontOptions
+                                                                 // (juce::Font(float) and Font::getStringWidthFloat are deprecated in JUCE 8;
+                                                                 // measure text with juce::GlyphArrangement::getStringWidth)
 void paintAppBackground(juce::Graphics&, juce::Rectangle<int>);  // the vertical gradient with the glow at the top
 void paintPanel(juce::Graphics&, juce::Rectangle<float>, float radius = 10.0f);   // panel fill and hairline border
 
 // Format.h, namespace sqlive::ui
 juce::String formatTime(double seconds);        // "4:52", "0:07", "-0:02"
-juce::String formatDb(float db);                // "+3", "0", "-6", "-2.5", "off" at -60 or below
+juce::String formatDb(float db);                // "+3", "0", "-6", "-2.5", "off" at -60 or below (routing cells)
+juce::String formatStripDb(float db);           // "+3.0", "0.0", "-6.0", "-5.5", "off" at -60 or below (mixer strips, as the mockup writes them)
 juce::String formatBpm(double bpm);             // "128", "92.5"
 juce::String formatChannels(int firstChannel, bool stereo);   // "3/4", "5"
 juce::String shorten(const juce::String&, const juce::Font&, float width);   // ends with "…" when cut
@@ -951,21 +1056,29 @@ class BeatLights : public juce::Component { public: void set(int beatsInBar, int
 void drawLogo(juce::Graphics&, juce::Rectangle<float>, bool withWordmark);   // the Q mark from assets/smart-q-logo.svg, then "SMART Q" and "LIVE" in ember
 ```
 
-- `tests/support/Pixels.h`: `juce::Image sqlive::test::snapshot(juce::Component&, int w, int h)` (sets bounds, returns `createComponentSnapshot`), `bool hasColour(const juce::Image&, juce::Colour, int tolerance = 12)`, `double fractionNotBackground(const juce::Image&)`.
+- `tests/support/Pixels.h`, namespace `sqlive::test`:
+  - `juce::Image snapshot(juce::Component&, int w, int h)`: sets bounds, returns `createComponentSnapshot`.
+  - `bool hasColour(const juce::Image&, juce::Colour, int tolerance = 12)`.
+  - `double fractionNotBackground(const juce::Image&)`: the fraction of pixels farther than 12 (in every channel) from all of the background colours: fully transparent, `theme::bg1`, `bg2`, `glow` and `panel`.
+  - `bool childrenInside(const juce::Component&)`: every visible child lies within its parent's bounds, checked down the whole tree, except inside a `juce::Viewport`, whose content may be larger than it because it scrolls (the viewport itself is checked).
+  - `struct ScopedLook { ui::LiveLookAndFeel look; ScopedLook() { juce::LookAndFeel::setDefaultLookAndFeel(&look); } ~ScopedLook() { juce::LookAndFeel::setDefaultLookAndFeel(nullptr); } };` Every test that needs the look declares `sqlive::test::ScopedLook look;` after its `DemoSession` or GUI initialiser, so the default is cleared even when a `REQUIRE` fails.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```cpp
 TEST_CASE("numbers are written the way the mockups write them", "[format]") {
+    juce::ScopedJuceInitialiser_GUI gui;                          // fonts need it
     CHECK(formatTime(292.0) == "4:52");  CHECK(formatTime(7.4) == "0:07");  CHECK(formatTime(-2.0) == "-0:02");  CHECK(formatTime(3600.0) == "60:00");
     CHECK(formatDb(3.0f) == "+3");  CHECK(formatDb(0.0f) == "0");  CHECK(formatDb(-6.0f) == "-6");  CHECK(formatDb(-2.5f) == "-2.5");
     CHECK(formatDb(-60.0f) == "off");  CHECK(formatDb(-0.04f) == "0");
+    CHECK(formatStripDb(3.0f) == "+3.0");  CHECK(formatStripDb(0.0f) == "0.0");  CHECK(formatStripDb(-6.0f) == "-6.0");
+    CHECK(formatStripDb(-5.5f) == "-5.5");  CHECK(formatStripDb(-60.0f) == "off");  CHECK(formatStripDb(-0.04f) == "0.0");
     CHECK(formatBpm(128.0) == "128");  CHECK(formatBpm(92.5) == "92.5");
     CHECK(formatChannels(3, true) == "3/4");  CHECK(formatChannels(5, false) == "5");
     auto f = theme::font(14.0f);
     auto cut = shorten("A very long song title that will not fit", f, 80.0f);
     CHECK(cut.endsWith(juce::String::fromUTF8("…")));
-    CHECK(f.getStringWidthFloat(cut) <= 80.0f);
+    CHECK(juce::GlyphArrangement::getStringWidth(f, cut) <= 80.0f);
     CHECK(shorten("Short", f, 200.0f) == "Short");
 }
 TEST_CASE("the fader's travel puts 0 dB three quarters of the way up", "[widgets]") {
@@ -975,7 +1088,7 @@ TEST_CASE("the fader's travel puts 0 dB three quarters of the way up", "[widgets
     for (float db : {-60.0f, -24.0f, -6.0f, 0.0f, 3.0f, 6.0f}) CHECK(LevelFader::dbAtFraction(LevelFader::fractionForDb(db)) == Catch::Approx(db).margin(0.05f));
 }
 TEST_CASE("widgets draw in the theme's colours and report gestures", "[widgets]") {
-    juce::ScopedJuceInitialiser_GUI gui; ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    juce::ScopedJuceInitialiser_GUI gui;  sqlive::test::ScopedLook look;
     PillButton primary("Create song", PillButton::Style::Primary);
     CHECK(hasColour(snapshot(primary, 120, 30), theme::mint));
     StatusPill pill; pill.set("Audio lost", StatusPill::Level::Bad);
@@ -984,14 +1097,19 @@ TEST_CASE("widgets draw in the theme's colours and report gestures", "[widgets]"
     CHECK(hasColour(snapshot(fader, 40, 200), theme::caution));               // the cap turns amber
     std::vector<float> seen; fader.onDrag = [&](float db, bool, bool) { seen.push_back(db); };
     fader.setBounds(0, 0, 40, 200);
-    auto at = [&](float y) { return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), {20.0f, y}, {}, 1.0f, 0, 0, 0, 0, &fader, &fader, juce::Time::getCurrentTime(), {20.0f, y}, juce::Time::getCurrentTime(), 1, false); };
-    fader.mouseDown(at(100.0f)); fader.mouseDrag(at(60.0f)); fader.mouseUp(at(60.0f));
+    auto now = juce::Time::getCurrentTime();
+    // Every event of the gesture carries where the mouse went down (y = 100), as JUCE's own events do,
+    // so a fader that measures from the drag start (getDistanceFromDragStartY) sees the movement.
+    auto at = [&](float y, bool dragged) { return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), {20.0f, y}, {}, 1.0f, 0, 0, 0, 0, &fader, &fader, now, {20.0f, 100.0f}, now, 1, dragged); };
+    fader.mouseDown(at(100.0f, false)); fader.mouseDrag(at(60.0f, true)); fader.mouseUp(at(60.0f, true));
     REQUIRE(seen.size() >= 2);
     CHECK(seen.back() > seen.front());                                         // dragging up raises the level
     Segmented seg; seg.setItems({"This song", "PA", "Drummer"}, 0); int chosen = -1; seg.onChange = [&](int i) { chosen = i; };
     seg.setBounds(0, 0, 300, 28); seg.mouseDown(juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), {250.0f, 14.0f}, {}, 1.0f, 0, 0, 0, 0, &seg, &seg, {}, {250.0f, 14.0f}, {}, 1, false));
     CHECK(chosen == 2);
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    juce::Component parent, child;  parent.setBounds(0, 0, 100, 100);  parent.addAndMakeVisible(child);
+    child.setBounds(10, 10, 50, 50);  CHECK(childrenInside(parent));
+    child.setBounds(80, 10, 50, 50);  CHECK_FALSE(childrenInside(parent));      // the test helper catches a child cut off
 }
 ```
 
@@ -1020,12 +1138,12 @@ git add -A && git commit -m "feat: add Smart Q Live's look and its shared widget
 ### Task 9: The window, the top bar and starting up
 
 **Files:**
-- Create: `src/ui/MainWindow.h`, `src/ui/MainWindow.cpp`, `src/ui/AppShell.h`, `src/ui/AppShell.cpp`, `src/ui/TopBar.h`, `src/ui/TopBar.cpp`, `src/app/App.h`, `src/app/App.cpp`
+- Create: `src/ui/MainWindow.h`, `src/ui/MainWindow.cpp`, `src/ui/AppShell.h`, `src/ui/AppShell.cpp`, `src/ui/TopBar.h`, `src/ui/TopBar.cpp`, `src/ui/KeyboardBanner.h`, `src/ui/KeyboardBanner.cpp`, `src/ui/Pages.h`, `src/ui/Pages.cpp`, `src/app/App.h`, `src/app/App.cpp`
 - Modify: `src/Main.cpp`
 - Test: `tests/ui/AppShellTest.cpp`
 
 **Interfaces:**
-- Consumes: `Session`, `AudioHost`, `ShowController`, `Settings`, the widgets.
+- Consumes: `Session` (through a `const Session&` for the state: `now()`, `mode()`, `model()`, `loadReport()`, `commands() const` for `canUndo` / `undoName`), `AudioHost` (`isOpen`, `isLost`, `openFromRig`, `hasBindingForThisComputer`), `ShowController` (`holdProgress`, `keyboardLost`, the `KeyListener`), `Settings` (`recentBandFolders`, `noteOpened`, `save`), the widgets, `tests/support/Pixels.h` (`ScopedLook`).
 - Produces:
 
 ```cpp
@@ -1036,42 +1154,54 @@ struct TopBarState {
     juce::StringArray chips;                                      // {"128 BPM", "4/4", "Key E"}
     int beatsInBar = 4, beatNow = 0;
     bool playing = false, canUndo = false;  juce::String undoTip; // "Undo: rename the band"
+    double holdProgress = 0.0;                                    // ShowController::holdProgress(): the ▶ button's ring
     struct Pill { juce::String text; StatusPill::Level level; };  std::vector<Pill> pills;
 };
-TopBarState makeTopBarState(const Session&, const AudioHost*, Page);
+TopBarState makeTopBarState(const Session&, const AudioHost*, const ShowController*, Page, bool keyboardElsewhere = false);
+    // AudioHost and ShowController may be nullptr (tests): no device, no hold
 class TopBar : public juce::Component { public: explicit TopBar(Session&); void setState(const TopBarState&);
     std::function<void(Page)> onPage;  std::function<void(Mode)> onMode;  std::function<void(Action)> onAction;  std::function<void()> onUndo; … };
+// KeyboardBanner.h: mockup screen 5, the amber one
+class KeyboardBanner : public juce::Component { public: KeyboardBanner(); std::function<void()> onClick; … };
 class AppShell : public juce::Component, private juce::ChangeListener {
 public:
     AppShell(Session&, AudioHost*);
+    void setShowController(ShowController*);                      // MainWindow's; the top bar's ▶ ring reads it. nullptr in tests
     void showPage(Page);  Page page() const;
-    void requestMode(Mode);                                       // Edit → Show runs the pre-show dialog (Task 18); Show → Edit asks first
-    void setPageComponent(Page, std::unique_ptr<juce::Component>);    // later tasks plug their pages in here
+    void requestMode(Mode);                                       // Edit → Show: calls Session::enterShow (Task 18 puts the pre-show
+                                                                  // dialog in front of it); Show → Edit asks first
+    void setPageComponent(Page, std::unique_ptr<juce::Component>);    // later tasks plug their pages in here, through plugInPages
     void setShowComponents(std::unique_ptr<juce::Component> mainView, std::unique_ptr<juce::Component> stageView);
     juce::Component* currentContent() const;
-    void setKeyboardElsewhere(bool);                              // shows or hides the amber banner
+    void setKeyboardElsewhere(bool);                              // shows or hides the KeyboardBanner and the "Keyboard elsewhere" pill
     …
 };
+// Pages.h: the one place every page and Show view is made and wired to the shell, for MainWindow and for Screens (Task 19).
+// In this task it plugs in nothing; Tasks 11-17 each add theirs here.
+void plugInPages(AppShell&, Session&, AudioHost*, ShowController*);
 class MainWindow : public juce::DocumentWindow { public: MainWindow(Session&, AudioHost*); void setKioskAllowed(bool); … };
+    // owns the ShowController (made from the session); hands it to AppShell::setShowController and plugInPages
 // App.h: what Main.cpp runs
 class App { public: App(juce::File settingsFile, const juce::StringArray& commandLine); bool wantsWindow() const; … };
 ```
 
-Pills in stage 1: "Audio" (`Ok` when open; "No audio" `Bad` when not; "Audio lost" `Bad` when lost) and, only when the session's load report or conflict copies have something, "Check files" (`Warning`). The undo tip uses these names: `band.rename` → "rename the band"; any `part.*` → "change a part"; `mix.setLevel`, `output.*` → "change the routing"; `setlist.*` → "change the setlist"; `song.add` → "add a song"; `song.remove` → "remove a song"; other `song.*` → "change the song"; `rig.*` → "change the rig"; `role.*` → "change the roles"; anything else → "the last change".
+Pills in stage 1, in this order: "Keyboard elsewhere" (`Warning`, only while `keyboardElsewhere`, as mockup screen 5 shows it), "Audio" (`Ok` when open; "No audio" `Bad` when not; "Audio lost" `Bad` when lost) and, only when the session's load report has notes, "Check files" (`Warning`). Conflict copies join the "Check files" pill in Task 18b, from a list the session keeps; nothing here scans the band folder, because `makeTopBarState` runs 30 times a second. The undo tip uses these names: `band.rename` → "rename the band"; any `part.*` → "change a part"; `mix.setLevel`, `output.*` → "change the routing"; `setlist.*` → "change the setlist"; `song.add` → "add a song"; `song.remove` → "remove a song"; other `song.*` → "change the song"; `rig.*` → "change the rig"; `role.*` → "change the roles"; anything else → "the last change".
 
 - [ ] **Step 1: Write the failing tests**
 
 ```cpp
 TEST_CASE("the top bar says what is playing in the mockup's words", "[shell]") {
     DemoSession d; auto& s = *d.session;
-    auto idle = makeTopBarState(s, nullptr, Page::Setlists);
+    auto idle = makeTopBarState(s, nullptr, nullptr, Page::Setlists);
     CHECK(idle.mode == Mode::Edit);  CHECK(idle.clock.isEmpty());
     CHECK(idle.pills[0].text == "No audio");  CHECK(idle.pills[0].level == StatusPill::Level::Bad);
-    CHECK_FALSE(idle.canUndo);
+    CHECK_FALSE(idle.canUndo);  CHECK(idle.holdProgress == 0.0);
     s.commands().run("band.rename", params({{"name", "New"}}));
-    CHECK(makeTopBarState(s, nullptr, Page::Setlists).undoTip == "Undo: rename the band");
+    CHECK(makeTopBarState(s, nullptr, nullptr, Page::Setlists).undoTip == "Undo: rename the band");
+    auto away = makeTopBarState(s, nullptr, nullptr, Page::Setlists, true);
+    CHECK(away.pills[0].text == "Keyboard elsewhere");  CHECK(away.pills[0].level == StatusPill::Level::Warning);
     s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 12);     // 2.4 s of count-in, then 9.6 s: bar 5
-    auto playing = makeTopBarState(s, nullptr, Page::Setlists);
+    auto playing = makeTopBarState(s, nullptr, nullptr, Page::Setlists);
     CHECK(playing.clock == "00:09");
     CHECK(playing.clockSub == "of 0:38 · bar 5.1");
     CHECK(playing.chips == juce::StringArray{"100 BPM", "4/4"});               // no key set on the demo song: no key chip
@@ -1080,7 +1210,7 @@ TEST_CASE("the top bar says what is playing in the mockup's words", "[shell]") {
 }
 TEST_CASE("the shell shows Edit pages by tab and Show views by Tab", "[shell]") {
     DemoSession d; auto& s = *d.session;
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::AppShell shell(s, nullptr);  shell.setBounds(0, 0, 1280, 760);
     auto setlists = std::make_unique<juce::Component>(); auto* setlistsPtr = setlists.get();
     auto mixer = std::make_unique<juce::Component>(); auto* mixerPtr = mixer.get();
@@ -1096,10 +1226,10 @@ TEST_CASE("the shell shows Edit pages by tab and Show views by Tab", "[shell]") 
     auto before = shell.currentContent();
     s.perform(Action::ToggleView);  d.settle();
     CHECK(shell.currentContent() != before);
+    CHECK_FALSE(hasColour(snapshot(shell, 1280, 760), theme::caution));       // no amber before the keyboard goes
     shell.setKeyboardElsewhere(true);
     CHECK(hasColour(snapshot(shell, 1280, 760), theme::caution));
     shell.setKeyboardElsewhere(false);
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
 ```
 
@@ -1109,15 +1239,17 @@ Run: `powershell -File scripts/build.ps1 -Test "[shell]"`. Expected: `ui/AppShel
 
 - [ ] **Step 3: Implement the top bar and the shell**
 
-- **Top bar**, 62 px high, laid out as the mockup's `.top`. Edit mode: logo, the four tabs, a gap, "↶ Undo" (disabled look when nothing to undo), the EDIT/SHOW switch with EDIT in mint. Show mode, main view: logo, clock, chips, beat lights, the transport buttons (⏮ earlier song, ▶ start, ⏭ later song), status pills, the switch with SHOW in ember. Show mode, stage view: logo, a gap, pills, the switch. While a song plays, the ▶ button shows a ring that fills with `ShowController::holdProgress()` and its tooltip is "Hold to stop".
+- **Top bar**, 62 px high, laid out as the mockup's `.top`. Edit mode: logo, the four tabs, a gap, "↶ Undo" (disabled look when nothing to undo), the EDIT/SHOW switch with EDIT in mint. Show mode, main view: logo, clock, chips, beat lights, the transport buttons (⏮ earlier song, ▶ start, ⏭ later song), status pills, the switch with SHOW in ember. Show mode, stage view: logo, a gap, pills, the switch. While a song plays, the ▶ button shows a ring that fills with `TopBarState::holdProgress` (the shell's `ShowController::holdProgress()`, 0 when it has none) and its tooltip is "Hold to stop".
 - The clock is `mm:ss` of the time since bar 1 ("00:00" through the count-in); `clockSub` is `"of <length> · bar <bar>.<beat>"`, with "count-in" in place of the bar during a count-in. The key chip appears only when the song has a key.
-- **Shell.** The top bar, then the content, then banners over the content's top edge. It listens to `Session::changes()` and to a 30 Hz timer for the clock. The keyboard-elsewhere banner uses the words in mockup screen 5.
-- `requestMode(Mode::Edit)` from Show: if a song plays, show "Stop the song before leaving Show mode." and stay; otherwise ask "Leave Show mode?" with "Stay in Show" and "Leave". (Task 18 adds the pre-show dialog and the tonight question.)
+- **Shell.** The top bar, then the content, then banners over the content's top edge. It listens to `Session::changes()` and to a 30 Hz timer for the clock, and builds the top bar's state with `makeTopBarState(session, host, showController, page, keyboardElsewhere)`.
+- **`KeyboardBanner`** (one class, its own file pair): the amber banner of mockup screen 5 with the mockup's two sentences. Clicking it calls `onClick`; the shell brings the window to the front and takes the keyboard. `setKeyboardElsewhere(true)` shows it and the "Keyboard elsewhere" pill; `false` hides both.
+- `requestMode(Mode::Show)` from Edit calls `Session::enterShow` directly in this task; Task 18 puts the pre-show dialog in front of it. `requestMode(Mode::Edit)` from Show: if a song plays, show "Stop the song before leaving Show mode." and stay; otherwise ask "Leave Show mode?" with "Stay in Show" and "Leave". (Task 18 adds the tonight question.)
+- **`plugInPages`** is made now, empty, so that `MainWindow` and Task 19's `renderScreen` build the same app: Tasks 11-17 each add their page or view, and the callbacks that join pages (open a song in the editor, open the New song dialog), there and nowhere else.
 
 - [ ] **Step 4: Implement `MainWindow`, `App` and `Main.cpp`**
 
-- `MainWindow`: native title bar, resizable, minimum 1100 × 680, starts at 1280 × 800 centred; content is an `AppShell`. In Show mode it registers the `ShowController` as key listener, takes kiosk mode with `juce::Desktop::setKioskModeComponent` (when allowed) and turns the screen saver off; leaving Show undoes all three. `activeWindowStatusChanged` calls `ShowController::keyboardLost` and `AppShell::setKeyboardElsewhere(true)` when the window stops being active in Show mode, and clears it when it is active again.
-- `App`: reads `Settings`; if the command line has `--band <folder>` that folder is used, else the newest recent folder; with no folder it shows the Welcome page (Task 10). With a folder: make the `Session`, the `AudioHost`, try `openFromRig` (failure leads to the New computer page, Task 10), then the `MainWindow`. Closing the window flushes the session and quits.
+- `MainWindow`: native title bar, resizable, minimum 1100 × 680, starts at 1280 × 800 centred; content is an `AppShell`. It owns the `app::ShowController` (made from the session), passes it to `AppShell::setShowController`, and calls `plugInPages(shell, session, host, &controller)`. In Show mode it registers the `ShowController` as key listener, takes kiosk mode with `juce::Desktop::setKioskModeComponent` (when allowed) and turns the screen saver off; leaving Show undoes all three. `activeWindowStatusChanged` calls `ShowController::keyboardLost` and `AppShell::setKeyboardElsewhere(true)` when the window stops being active in Show mode, and clears it when it is active again.
+- `App`: reads `Settings`; if the command line has `--band <folder>` that folder is used, else the newest recent folder; with no folder it shows the Welcome page (Task 10). With a folder: make the `Session`, the `AudioHost`, try `openFromRig` (failure leads to the New computer page, Task 10), then the `MainWindow`. After every band folder that opens (from the command line, the recent list, or Task 10's Welcome page), call `Settings::noteOpened(root)` and `Settings::save`. Closing the window flushes the session and quits.
 - `Main.cpp` is `START_JUCE_APPLICATION` around a `juce::JUCEApplication` that owns an `App` and installs `LiveLookAndFeel` as the default.
 - Clicking the logo in Edit mode opens a small "About" panel: the logo, `sqlive::buildLine(sqlive::buildInfo())`, the band folder's path with "Show in Explorer", and "Open another band folder…", which goes back to the Welcome page.
 
@@ -1142,11 +1274,14 @@ git add -A && git commit -m "feat: add the window, the top bar and the start-up 
 - Test: `tests/ui/WelcomeTest.cpp`
 
 **Interfaces:**
+- Consumes: `Settings` (`recentBandFolders`, `computerName`, `noteOpened`), `Session` (`model()`, `settings() const`, `rigId`, `chooseRig`, `commands()`), `AudioHost` (`deviceTypes`, `devicesOfType`, `open`, `openFromRig`, `hasBindingForThisComputer`, `setTestTone`), `model::BandFolder::create`.
 - Produces:
 
 ```cpp
 struct WelcomeState { struct Recent { juce::File folder; juce::String name, detail; };  std::vector<Recent> recent; };
 WelcomeState makeWelcomeState(const Settings&);                   // detail: "<parent> › <folder> · 23 songs, 3 setlists"
+    // reads only each folder's band.json (for the name); songs are counted from the songs/ subfolders and setlists from the
+    // .json files in setlists/, without reading them, so a cloud folder isn't downloaded just to be listed
 class WelcomePage : public juce::Component { public: explicit WelcomePage(Settings&);
     std::function<void(juce::File)> onOpen;                       // an existing band folder was chosen
     std::function<void(juce::File root, juce::String name)> onCreate;   // "Start a new band folder…" was completed
@@ -1165,9 +1300,7 @@ TEST_CASE("the welcome page lists band folders with what is in them", "[welcome]
     REQUIRE(state.recent.size() == 1);
     CHECK(state.recent[0].name == "Demo band");
     CHECK(state.recent[0].detail.endsWith("3 songs, 1 setlist"));
-    juce::File created; juce::String createdName;
     ui::WelcomePage page(*d.settings);
-    page.onCreate = [&](juce::File f, juce::String n) { created = f; createdName = n; };
     CHECK(fractionNotBackground(snapshot(page, 630, 580)) > 0.02);
 }
 TEST_CASE("a new computer needs a rig and a device before it can finish", "[welcome]") {
@@ -1187,8 +1320,8 @@ Run: `powershell -File scripts/build.ps1 -Test "[welcome]"`. Expected: `ui/Welco
 - [ ] **Step 3: Implement both pages as mockup screen 6 shows them**
 
 - **Welcome.** The large logo, "Open your band folder to get started.", one row per recent folder with an "Open" button (the first one primary), then "Open another folder…" (a folder chooser; a folder without `band.json` gets "That folder isn't a band folder. Choose the folder that has band.json in it."), "Start a new band folder…" (asks for the band's name, then where to put it, then `BandFolder::create`), and "Try the demo band" (makes it under the user's documents folder in `Smart Q Live demo`, or opens it if it is already there). The closing hint is the mockup's sentence.
-- **New computer.** Title "Set up this computer", the mockup's sentence naming the computer, then a panel: Rig (a `Choice` of the band's rigs), Audio interface (two `Choice`s: driver type, then device), and the hint line describing the rig's outputs: "<n> outputs: <first three output names>…". No MIDI table in this stage. Buttons: "Test tone" (holds a tone on the rig's first output while pressed) and "Done" (primary; enabled when a device is chosen), which runs `rig.setDevice` for this computer, `Session::chooseRig`, and `AudioHost::openFromRig`; a failure is shown under the panel in `danger`.
-- `App` shows Welcome when there is no folder, New computer when `openFromRig` fails for want of a binding, and the main window otherwise. A device that is bound but can't be opened is not a reason for the New computer page: the app opens with the "No audio" pill.
+- **New computer.** Title "Set up this computer", the mockup's sentence naming the computer, then a panel: Rig (a `Choice` of the band's rigs), Audio interface (two `Choice`s: driver type, then device), and the hint line describing the rig's outputs: "<n> outputs: <first three output names>…". No MIDI table in this stage. Whenever the device choice changes, the page opens that device with `AudioHost::open` (a failure is shown under the panel in `danger`), so "Test tone" has a device to play on before "Done". Buttons: "Test tone" (holds a tone on the rig's first output while pressed, with `AudioHost::setTestTone`) and "Done" (primary; enabled when a device is chosen), which runs `rig.setDevice` with `computerId` = `settings().computerName()` (the key `openFromRig` looks up), `Session::chooseRig`, and `AudioHost::openFromRig`; a failure is shown under the panel in `danger`.
+- `App` shows Welcome when there is no folder, New computer when `!AudioHost::hasBindingForThisComputer()`, and the main window otherwise (it never compares error messages). A device that is bound but can't be opened is not a reason for the New computer page: the app opens with the "No audio" pill. A folder opened from Welcome is noted with `Settings::noteOpened` and saved, like every other (Task 9).
 
 - [ ] **Step 4: Run the tests**
 
@@ -1206,17 +1339,20 @@ git add -A && git commit -m "feat: add the welcome page and first-time set-up of
 
 **Files:**
 - Create: `src/ui/SetlistsPage.h`, `src/ui/SetlistsPage.cpp`
-- Modify: `src/ui/MainWindow.cpp` (plug it into `Page::Setlists`)
+- Modify: `src/ui/Pages.cpp` (`plugInPages` puts it in `Page::Setlists`)
 - Test: `tests/ui/SetlistsPageTest.cpp`
 
 **Interfaces:**
+- Consumes: `Session` (`model()`, `setlistId`, `chooseSetlist`, `commands()`), `app::partFileProblems` (Task 7), `plugInPages` (Task 9), `tests/support/Pixels.h` (`ScopedLook`, `childrenInside`).
 - Produces:
 
 ```cpp
 struct SetlistsState {
     struct ListItem { juce::String id, name, detail; bool selected; };            // detail "7 songs · 27:45"
     struct Row { juce::String entryId, songId; int number; juce::String title, sub, length, then, warning; };
-        // sub "128 BPM · E · count-in 1 bar" ("no count-in"); then "Stop", "Gap 4 s", "Seamless", "end of the set"
+        // sub "128 BPM · E · count-in 1 bar" ("no count-in")
+        // then: what the THEN column shows. Song by song: "Stop" in every row. Continuous: "Stop", "Gap 4 s" or "Seamless".
+        // The last row: "end of the set" in both modes.
     struct LibraryItem { juce::String songId, title, note; bool inThisSet; };     // note "4:02" or "in this set"
     std::vector<ListItem> lists;  juce::String title, summary;  bool continuous = false;
     std::vector<Row> rows;  std::vector<LibraryItem> library;  juce::String search;
@@ -1224,7 +1360,10 @@ struct SetlistsState {
 SetlistsState makeSetlistsState(const Session&, const juce::String& search);
 class SetlistsPage : public juce::Component { public: explicit SetlistsPage(Session&);
     std::function<void(const juce::String& songId)> onOpenSong;   // double-click a row or a library song: open it in the Song editor
-    std::function<void()> onNewSong; … };
+    std::function<void(juce::Array<juce::File>)> onNewSong;       // "+ New song" (no files) or files dropped on the page
+    const juce::Viewport& tableViewport() const;                  // for tests: the scrolling table of rows
+    juce::String drawnTitle(int row) const;                       // for tests: the row's title as laid out, shortened with "…" to fit
+    … };
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -1247,8 +1386,11 @@ TEST_CASE("the setlists page describes the setlist in the mockup's words", "[set
     CHECK(state.library[0].title == "First Light");  CHECK(state.library[0].inThisSet);  CHECK(state.library[0].note == "in this set");
     CHECK(makeSetlistsState(s, "tide").library.size() == 1);
     s.commands().run("setlist.setTransition", params({{"setlistId", s.setlistId()}, {"entryId", state.rows[0].entryId}, {"kind", "gap"}, {"seconds", 4}}));
+    CHECK(makeSetlistsState(s, {}).rows[0].then == "Stop");      // song by song: every row stops, whatever its transition
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
     s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", state.rows[1].entryId}}));
     auto after = makeSetlistsState(s, {});
+    CHECK(after.continuous);
     CHECK(after.rows[0].then == "Gap 4 s");
     CHECK(after.library[1].note == "0:30");  CHECK_FALSE(after.library[1].inThisSet);
     auto& song = *s.model().song(after.rows[0].songId);
@@ -1257,19 +1399,25 @@ TEST_CASE("the setlists page describes the setlist in the mockup's words", "[set
 }
 TEST_CASE("the setlists page lays out when empty and when full", "[setlists]") {
     DemoSession d; auto& s = *d.session;
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::SetlistsPage page(s);
     CHECK(fractionNotBackground(snapshot(page, 1280, 698)) > 0.05);
     for (auto& row : makeSetlistsState(s, {}).rows) s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", row.entryId}}));
     d.settle();
     CHECK(makeSetlistsState(s, {}).summary == "No songs yet");
-    CHECK_NOTHROW(snapshot(page, 1100, 618));
+    auto empty = snapshot(page, 1100, 618);
+    CHECK(childrenInside(page));                                  // nothing overlaps the edge at the smallest size
+    CHECK(fractionNotBackground(empty) > 0.02);                   // the empty-state sentence and the library are drawn
     auto id = s.model().songIds()[0];
     for (int i = 0; i < 40; ++i) s.commands().run("setlist.addSong", params({{"setlistId", s.setlistId()}, {"songId", id}}));
     s.commands().run("song.setInfo", params({{"songId", id}, {"title", juce::String::repeatedString("Long title ", 8)}}));
     d.settle();
-    CHECK_NOTHROW(snapshot(page, 1100, 618));                     // 40 rows scroll; the long title is shortened
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    snapshot(page, 1100, 618);
+    CHECK(childrenInside(page));
+    auto& table = page.tableViewport();
+    REQUIRE(table.getViewedComponent() != nullptr);
+    CHECK(table.getViewedComponent()->getHeight() > table.getViewHeight());   // 40 rows scroll
+    CHECK(page.drawnTitle(0).endsWith(juce::String::fromUTF8("…")));         // the long title is shortened
 }
 ```
 
@@ -1282,8 +1430,9 @@ Run: `powershell -File scripts/build.ps1 -Test "[setlists]"`. Expected: `ui/Setl
 - **Left column (200 px):** "SETLISTS", one item per setlist (click to `Session::chooseSetlist`; right-click for Rename and Remove), and "+ New setlist".
 - **Middle:** the title and summary, then "After each song" with a `Segmented` of "Carry on (continuous)" and "Stop (song by song)" (`setlist.set`). The table has the columns `#`, SONG, LENGTH, THEN. (ARRANGEMENT and PAD come in later stages.) THEN is a `Choice` of "Stop", "Gap…" and "Seamless"; choosing "Gap…" asks for the seconds. In song-by-song mode the THEN column is dimmed and reads "Stop" in every row. Rows are dragged by their grip to reorder (`setlist.moveEntry`), removed with Delete or a right-click, and scroll when there are many. The last row reads "end of the set". An empty setlist shows, centred: "Drag songs here from the list on the right, or drop a folder of stems to add a new song."
 - **Right column (240 px):** "ALL SONGS · <n>", a search box, the songs (those already in the set dimmed, with "in this set"), dragged into the table to add (`setlist.addSong` at the drop position; double-click adds at the end), right-click for "Remove from the band…" (asks first; `song.remove`), and "+ New song".
-- **Dropping files or a folder** from the system anywhere on the page calls `onNewSong` with them (Task 12).
-- A row's `warning` is "<n> file missing" / "<n> files missing" for parts whose file doesn't exist, or "<n> files still in the cloud" for placeholders, in `caution`.
+- **Dropping files or a folder** from the system anywhere on the page calls `onNewSong` with them; "+ New song" calls it with an empty array. (Task 12 wires it to the New song dialog in `plugInPages`.)
+- A row's `warning`, in `caution`, comes from `app::partFileProblems` for the row's song: "1 file still in the cloud" / "<n> files still in the cloud" when any part's file is in the cloud, otherwise "1 file missing" / "<n> files missing" when any is missing, otherwise empty.
+- **`plugInPages`:** make the page, put it in `Page::Setlists`, and wire `onOpenSong` to show `Page::SongEditor` with that song once Task 13 has made the editor (until then it does nothing).
 
 - [ ] **Step 4: Run the tests**
 
@@ -1301,14 +1450,19 @@ git add -A && git commit -m "feat: add the Setlists page" && git push origin mai
 
 **Files:**
 - Create: `src/ui/NewSongDialog.h`, `src/ui/NewSongDialog.cpp`
-- Modify: `src/ui/MainWindow.cpp`
+- Modify: `src/app/Session.h`, `src/app/Session.cpp` (the import steps that touch the band folder), `src/ui/Pages.cpp` (`plugInPages` opens the dialog)
 - Test: `tests/ui/NewSongDialogTest.cpp`
 
 **Interfaces:**
-- Consumes: `model::inspectFiles`, `ImportPlan`, `importTitle`, `BandFolder::reserveSongFolder`, `convertSongFiles`, `ConvertedSong`, `commitImportedSong`. (Not `importSong`: it does everything on the calling thread.)
+- Consumes: `model::inspectFiles`, `ImportPlan`, `importTitle`, `BandFolder::reserveSongFolder`, `convertSongFiles`, `ConvertedSong`, `ImportResult`, `commitImportedSong`, `SongCache::budgetBytes` (through `Session::cache() const`), `SetlistsPage::onNewSong` (Task 11), `SongEditorPage` once Task 13 has made it, `plugInPages` (Task 9), `tests/support/Pixels.h` (`ScopedLook`). (Not `importSong`: it does everything on the calling thread.)
 - Produces:
 
 ```cpp
+// Added to Session: the steps of an import that touch the BandFolder, on the message thread, so no view reaches into it.
+    juce::File reserveImportFolder(const model::ImportPlan&);     // BandFolder::reserveSongFolder(model::importTitle(plan)); {} if it can't be made
+    void releaseImportFolder(const juce::File&);                  // an import that never started: deletes the reserved folder if it is still empty
+    model::ImportResult commitImport(model::ConvertedSong);       // model::commitImportedSong(std::move(c), folder(), commands())
+
 struct NewSongState {
     struct Row { juce::String file, role, heardIn, mark; bool needsRole, leftOut, hasProblem; };
         // heardIn "PA and 5 in-ears", "2 in-ears", "nowhere yet"; mark "✓", "?", "–"
@@ -1331,14 +1485,14 @@ TEST_CASE("the new-song dialog shows what was found and what still needs an answ
     writeSine(dir.getChildFile("HTL_Keys.wav"), 48000.0, 2, 1.0, 440.0, 0.3f);
     writeSine(dir.getChildFile("HTL_Audio 07.wav"), 48000.0, 1, 1.0, 220.0, 0.3f);
     writeSine(dir.getChildFile("HTL_Click.wav"), 48000.0, 1, 1.0, 1000.0, 0.3f);
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::NewSongDialog dialog(s, {dir});
     auto state = makeNewSongState(dialog.plan(), s);
     CHECK(state.title == "Hold The Line");
     REQUIRE(state.rows.size() == 3);
     CHECK(state.rows[0].file == "HTL_Audio 07.wav");  CHECK(state.rows[0].needsRole);  CHECK(state.rows[0].mark == "?");
     CHECK(state.rows[1].leftOut);  CHECK(state.rows[1].mark == juce::String::fromUTF8("–"));
-    CHECK(state.rows[2].role == "Keys");  CHECK(state.rows[2].heardIn == "1 in-ears");  CHECK(state.rows[2].mark == juce::String::fromUTF8("✓"));
+    CHECK(state.rows[2].role == "Keys");  CHECK(state.rows[2].heardIn == "1 in-ear");  CHECK(state.rows[2].mark == juce::String::fromUTF8("✓"));
     CHECK(state.waiting == "1 file needs a role");  CHECK_FALSE(state.canCreate);
     dialog.setLeftOut(0, true);
     CHECK(makeNewSongState(dialog.plan(), s).canCreate);
@@ -1350,7 +1504,21 @@ TEST_CASE("the new-song dialog shows what was found and what still needs an answ
     REQUIRE(made.isNotEmpty());
     CHECK(s.model().song(made)->parts.size() == 2);
     CHECK(fractionNotBackground(snapshot(dialog, 1040, 520)) > 0.05);
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+}
+TEST_CASE("the session reserves, releases and commits an import's folder", "[newsong]") {
+    DemoSession d; auto& s = *d.session; sqlive::test::TempDir files;
+    writeSine(files.dir().getChildFile("Keys.wav"), 48000.0, 2, 1.0, 440.0, 0.3f);
+    auto plan = model::inspectFiles({files.dir()}, s.model().band());
+    auto reserved = s.reserveImportFolder(plan);
+    REQUIRE(reserved.isDirectory());
+    s.releaseImportFolder(reserved);
+    CHECK_FALSE(reserved.exists());                               // no empty song folder is left behind
+    auto folder = s.reserveImportFolder(plan);
+    auto converted = model::convertSongFiles(plan, folder, s.model().band().sampleRate, [](double) { return true; });
+    auto result = s.commitImport(std::move(converted));
+    REQUIRE(result.result.wasOk());
+    REQUIRE(s.model().song(result.songId) != nullptr);
+    CHECK(s.folder().songFolder(result.songId) == folder);
 }
 ```
 
@@ -1361,16 +1529,17 @@ Run: `powershell -File scripts/build.ps1 -Test "[newsong]"`. Expected: `ui/NewSo
 - [ ] **Step 3: Implement the dialog as mockup screen 8 shows it**
 
 - Shown over a dimmed app (the mockup's `.veil`), 1040 px wide or the window's width minus 80 if that is less. Header "New song" with an editable title field. The drop strip adds more files to the plan.
-- The table: FILE, PREVIEW (a small waveform drawn from a quick scan of the file), ROLE (a `Choice` of the band's part roles, plus "Choose a role…" in `caution` when empty, plus "Leave out" at the end), HEARD IN (from the current rig: count the outputs whose mix has that role: "PA and <n> in-ears" when a FOH output is among them, "<n> in-ears" otherwise, "nowhere yet" for none), and the mark. A click file shows "Leave out" and "The app makes its own click". A file with a problem shows the problem in `danger`.
+- The table: FILE, PREVIEW (a small waveform drawn from a quick scan of the file), ROLE (a `Choice` of the band's part roles, plus "Choose a role…" in `caution` when empty, plus "Leave out" at the end), HEARD IN (from the current rig: count the outputs whose mix has that role: "PA and <n> in-ears" when a FOH output is among them, "<n> in-ears" otherwise, "nowhere yet" for none; "1 in-ear" when n is 1, so "PA and 1 in-ear"), and the mark. A click file shows "Leave out" and "The app makes its own click". A file with a problem shows the problem in `danger`.
 - The right-hand panel is left out in this stage (it shows what came from a MIDI file, which stage 2 adds). In its place, under the table: "Tempo and sections are set in the Song editor after this."
 - Footer: a tick box "Add this song to “<current setlist>”" (on by default), the `waiting` text in `caution`, "Cancel", and "Create song" (primary; enabled when `canCreate`). While importing: a progress bar and "Cancel"; a failure shows its reason and leaves the dialog open.
-- **Creating runs in three steps,** because the model and the band folder belong to the message thread. On the message thread, `create` takes a copy of the plan and calls `s.folder().reserveSongFolder(model::importTitle(plan))`. A background thread (a `juce::Thread` the dialog owns, stopped and joined in its destructor) runs `model::convertSongFiles(plan, folder, bandRate, keepGoing)`, where `keepGoing` posts the progress to the message thread and returns false once Cancel is pressed; it touches neither the model nor the `BandFolder`. When it finishes it posts the `ConvertedSong` back, and on the message thread `model::commitImportedSong(std::move(converted), s.folder(), s.commands())` registers the folder and runs `song.add` (a failure or a cancel has already deleted the folder; the commit deletes it if `song.add` fails). If the dialog closes, or Cancel is pressed, before the conversion has started, the dialog deletes the reserved folder itself (`reserveSongFolder` creates it empty), so no empty song folder is left behind to be reported as "still syncing" on every load.
-- After creating: when the tick box is on, run `setlist.addSong`; then `onCreated`. `MainWindow` opens the new song in the Song editor.
-- **A song too big for this computer** is said here, not on stage: when the kept files would take more than half of the cache's budget in memory, the footer shows in `caution`: "This song needs <x> GB of memory. This computer keeps <y> GB for songs, so it may load slowly or not at all." The song can still be created.
+- **Creating runs in three steps,** because the model and the band folder belong to the message thread, and the dialog (a view) never touches the `BandFolder` itself. On the message thread, `create` takes a copy of the plan and the band's sample rate and calls `s.reserveImportFolder(plan)`. If that returns `{}`, the dialog shows "Couldn't make a folder for this song." in `danger` and stays open. Otherwise a background thread (a `juce::Thread` the dialog owns, stopped and joined in its destructor) runs `model::convertSongFiles(plan, folder, bandRate, keepGoing)` on those copies, where `keepGoing` posts the progress to the message thread and returns false once Cancel is pressed; it touches neither the model nor the `BandFolder`. When it finishes it posts the `ConvertedSong` back, and on the message thread `s.commitImport(std::move(converted))` registers the folder and runs `song.add` (a failure or a cancel has already deleted the folder; the commit deletes it if `song.add` fails). If the dialog closes, or Cancel is pressed, before the conversion has started, the dialog calls `s.releaseImportFolder(folder)` (`reserveSongFolder` creates it empty), so no empty song folder is left behind to be reported as "still syncing" on every load.
+- After creating: when the tick box is on, run `setlist.addSong`; then `onCreated`.
+- **`plugInPages`:** `SetlistsPage::onNewSong(files)` opens `NewSongDialog(session, files)` over the shell (the `.veil`); its `onCreated` opens the new song in the Song editor once Task 13 has made it (until then it shows the Setlists page), and `onCancelled` closes it.
+- **A song too big for this computer** is said here, not on stage: when the kept files would take more than half of `s.cache().budgetBytes()` in memory, the footer shows in `caution`: "This song needs <x> GB of memory. This computer keeps <y> GB for songs, so it may load slowly or not at all." The song can still be created.
 
 - [ ] **Step 4: Run the tests**
 
-Run: `powershell -File scripts/build.ps1 -Test "[newsong]"`. Expected: 1 test case passes.
+Run: `powershell -File scripts/build.ps1 -Test "[newsong]"`. Expected: 2 test cases pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1383,15 +1552,16 @@ git add -A && git commit -m "feat: add the New song dialog" && git push origin m
 ### Task 13: The Song editor page, first version
 
 **Files:**
-- Create: `src/ui/SongEditorPage.h`, `src/ui/SongEditorPage.cpp`, `src/ui/BarRuler.h`, `src/ui/BarRuler.cpp`, `src/ui/TapTempo.h`
-- Modify: `src/ui/MainWindow.cpp`
+- Create: `src/ui/SongEditorPage.h`, `src/ui/SongEditorPage.cpp`, `src/ui/BarScale.h`, `src/ui/BarScale.cpp`, `src/ui/BarRuler.h`, `src/ui/BarRuler.cpp`, `src/ui/TapTempo.h`
+- Modify: `src/ui/Pages.cpp` (`plugInPages` puts it in `Page::SongEditor`)
 - Test: `tests/ui/SongEditorPageTest.cpp`
 
 **Interfaces:**
+- Consumes: `Session` (`model()`, `cache() const` for `state` / `progress` / `loaded`, `saveState`, `saveError`, `playSong`, `setEditFocus`, `commands()`), `app::partFileProblems` (Task 7), `engine::TempoMap`, `engine::BarBeat`, `engine::buildClickTicks`, `SetlistsPage::onOpenSong` and `NewSongDialog` (Tasks 11, 12, wired in `plugInPages`), `tests/support/Pixels.h` (`ScopedLook`, `childrenInside`).
 - Produces:
 
 ```cpp
-// BarRuler.h: the shared horizontal scale every timeline lane uses, in this stage and later ones.
+// BarScale.h: the shared horizontal scale every timeline lane uses, in this stage and later ones.
 class BarScale {
 public:
     BarScale(const engine::TempoMap&, double startSeconds, double endSeconds, float widthPixels);
@@ -1400,6 +1570,8 @@ public:
     engine::BarBeat snap(float x, int divisionsPerBeat /* 0 = whole bars */) const;
     std::vector<int> labelledBars(float minimumGapPixels) const;  // every 1, 2, 4, 8, 16… bars, whichever keeps labels apart
 };
+// BarRuler.h: the BARS ruler row, drawn on a BarScale
+class BarRuler : public juce::Component { public: void setScale(const BarScale&); … };
 // TapTempo.h
 class TapTempo { public: std::optional<double> tap(double nowSeconds); };   // the BPM once there are 3 taps less than 2 s apart; older taps are forgotten
 struct SongEditorState {
@@ -1423,9 +1595,10 @@ TEST_CASE("the bar scale maps bars to pixels and snaps", "[editor]") {
     ui::BarScale scale(tempo, 0.0, 32.0, 800.0f);                 // 16 bars across 800 px
     CHECK(scale.xAtBar(1) == 0.0f);  CHECK(scale.xAtBar(9) == Catch::Approx(400.0f));
     CHECK(scale.secondsAtX(400.0f) == Catch::Approx(16.0));
-    auto snapped = scale.snap(412.0f, 1);                         // 12 px past bar 9 is 0.48 beats: beat 1 is nearest
+    // 50 px a bar, 12.5 px a beat
+    auto snapped = scale.snap(404.0f, 1);                         // 4 px past bar 9 is 0.32 of a beat: beat 1 is nearest
     CHECK(snapped.bar == 9);  CHECK(snapped.beat == 1.0);
-    CHECK(scale.snap(440.0f, 1).beat == 2.0);
+    CHECK(scale.snap(414.0f, 1).beat == 2.0);                     // 1.12 beats past bar 9: beat 2 is nearest
     CHECK(scale.snap(440.0f, 0).bar == 10);                       // whole bars: 40 px is nearer bar 10
     auto labels = scale.labelledBars(40.0f);                      // 50 px a bar: every bar fits
     CHECK(labels.front() == 1);  CHECK(labels[1] == 2);
@@ -1448,14 +1621,19 @@ TEST_CASE("the song editor shows a song's basics and edits them through commands
     CHECK(state.parts[0].name == "Keys");  CHECK(state.parts[0].role == "Keys");  CHECK_FALSE(state.parts[0].missing);
     CHECK(state.footerBar == "3.1");  CHECK(state.footerTime == "0:04");
     CHECK(state.songs.size() == 3);  CHECK(state.selectedSong == 0);
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(id);
-    CHECK(fractionNotBackground(snapshot(page, 1280, 698)) > 0.05);
-    CHECK(hasColour(snapshot(page, 1280, 698), s.model().band().roles[3].colour));   // the Keys waveform in its role's colour
+    auto image = snapshot(page, 1280, 698);
+    CHECK(fractionNotBackground(image) > 0.05);
+    // The lane area only (right of the 200 px song list and the 150 px header column, left of the 290 px panel),
+    // so the role dot in the header doesn't count: the Keys waveform in its role's colour.
+    CHECK(hasColour(image.getClippedImage({350, 0, 1280 - 350 - 290, 698}), s.model().band().roles[3].colour));
     page.setCursorSeconds(4.8);
     CHECK(page.cursorSeconds() == 4.8);
-    CHECK_NOTHROW(ui::SongEditorPage(s));                         // no song open: the empty state
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    ui::SongEditorPage empty(s);                                  // no song open: the empty state
+    auto blank = snapshot(empty, 1100, 618);
+    CHECK(childrenInside(empty));
+    CHECK(fractionNotBackground(blank) > 0.01);                   // the song list, the sentence and "+ New song"
 }
 ```
 
@@ -1469,12 +1647,13 @@ Build the frame the later stages fill in. In this stage it has no arrangement ro
 
 - **Left (200 px):** "ALL SONGS", every song by title, the open one outlined in mint, and "+ New song". Opening a song calls `Session::setEditFocus`.
 - **The bar under the top bar:** the title (click to rename), then chips that are edited in place: BPM (type a number, or click "Tap" beside it and tap), time signature (a small menu: 2/4, 3/4, 4/4, 5/4, 6/8, 7/8, 9/8, 12/8), "Key" (a menu of the 12 major and 12 minor keys, and "–"), "Count-in" (None, 1 bar, 2 bars, 4 bars). BPM and signature edit the first tempo point with `song.setTempo`, leaving any later points alone. On the right: "▶ Play" / "■ Stop", which plays from the cursor with `Session::playSong`.
-- **The timeline:** a 150 px header column and the lane area on a `BarScale` from the song's start (the count-in included) to its end. Rows: the BARS ruler (26 px); one 44 px row per part, with its role dot, name, and its own waveform in its role's colour (drawn from the loaded audio, 1 point per pixel, min and max); and a 36 px Click row drawn as ticks from `engine::buildClickTicks`, taller on downbeats. A part whose audio is missing shows "The audio file is missing" in `caution` instead of a waveform. A song that is still loading shows "Loading…" and its progress.
+- **The timeline:** a 150 px header column and the lane area on a `BarScale` from the song's start (the count-in included) to its end. Rows: the BARS ruler (26 px); one 44 px row per part, with its role dot, name, and its own waveform in its role's colour (drawn from the loaded audio, 1 point per pixel, min and max); and a 36 px Click row drawn as ticks from `engine::buildClickTicks`, taller on downbeats. A part whose audio is missing shows "The audio file is missing" in `caution` instead of a waveform; `PartRow::missing` comes from `app::partFileProblems` (a problem that isn't `inCloud`). A song that is still loading shows "Loading…" and its progress.
 - **The cursor:** a white line. Click or drag in the ruler or lanes to move it (snapped to the beat; hold Alt for no snap). While the song plays it follows the playhead. Space in Edit mode starts and stops from the cursor.
 - **Part header menu** (click the name): Rename, Role (the band's part roles), Remove (asks first).
 - **Right (290 px):** a "SONG" panel with "Bar 1 starts at" (seconds, with "Set to the cursor"), and a "CLICK" panel: on/off, sound (Wood block, Beep, Rim), subdivision (None, 8ths, Triplets, 16ths), "Accent the first beat".
-- **Footer:** "Bar <bar.beat>", the time, the key hints "Space play from the cursor" and "Ctrl+Z undo", and "Saved ✓" (or "Saving…" while the autosaver has changes pending, or the failure in `danger`).
+- **Footer:** "Bar <bar.beat>", the time, the key hints "Space play from the cursor" and "Ctrl+Z undo", and, from `Session::saveState()`: "Saved ✓" (`Saved`), "Saving…" (`Saving`), or `Session::saveError()` in `danger` (`Failed`).
 - With no song: centred, "Choose a song on the left, or add one." and a "+ New song" button.
+- **`plugInPages`:** make the page, put it in `Page::SongEditor`; `SetlistsPage::onOpenSong` and `NewSongDialog::onCreated` now call `openSong` and show `Page::SongEditor`; the page's `onNewSong` opens the New song dialog with no files.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1492,27 +1671,36 @@ git add -A && git commit -m "feat: add the first version of the Song editor" && 
 
 **Files:**
 - Create: `src/ui/MixerPanel.h`, `src/ui/MixerPanel.cpp`, `src/ui/MixerPage.h`, `src/ui/MixerPage.cpp`
-- Modify: `src/ui/MainWindow.cpp`
+- Modify: `src/ui/Pages.cpp` (`plugInPages` puts it in `Page::Mixer`)
+- Modify, only if the measurement in Step 5 says so (Stage 1a): `src/model/CommandLayer.h`, `src/model/CommandLayer.cpp`, `src/model/BandModel.h`, `src/model/BandModel.cpp`
 - Test: `tests/ui/MixerTest.cpp`
 
 **Interfaces:**
-- Consumes: `Session::level`, `setLevel`, `setMute`, `muted`, `changedTonight`, `LevelTarget`, `LevelFader`.
+- Consumes: `Session::level`, `setLevel`, `setMute`, `muted`, `changedTonight`, `LevelTarget`, `LevelFader`, `formatStripDb`, `Segmented`, `plugInPages` (Task 9), `tests/support/Pixels.h` (`ScopedLook`, `childrenInside`).
 - Produces:
 
 ```cpp
 struct MixerState {
-    struct Choice { juce::String id, name; };                     // id "" = "This song"; otherwise an output id
-    std::vector<Choice> choices;  int chosen = 0;
+    struct Option { juce::String id, name; };                     // id "" = "This song"; otherwise an output id
+    std::vector<Option> options;  int chosen = 0;                 // (not "Choice": that is the dropdown widget)
     struct Strip { LevelTarget target; juce::String name, value, footer; juce::Colour colour;
                    std::optional<float> db; bool muted, canMute, inEarsOnly, changedTonight, footerIsWarning; int group; };
         // group 0 = click and cues, 1 = parts, 2 = pad: a thin divider is drawn between groups
     std::vector<Strip> strips;
-    juce::String panelTitle, panelText;                           // the side panel's heading and sentence
+    juce::String panelTitle, panelLabel, panelChannels, panelText;
+        // the side panel's heading, drawn as the mockup's "DRUMMER · [In-ears] OUT 3/4": the output's name in capitals,
+        // its label as the label pill, and its channels; then the sentence. For "This song": "THIS SONG", "", "", and
+        // "How loud each part is in this song, for everyone."
 };
 MixerState makeMixerState(const Session&, const juce::String& songId, const juce::String& outputId);
 class MixerPanel : public juce::Component { public: explicit MixerPanel(Session&);    // just the strips; used by the Mixer page and the main view
-    void show(const juce::String& songId, const juce::String& outputId);  void setCompact(bool); … };
-class MixerPage : public juce::Component { public: explicit MixerPage(Session&); void openSong(const juce::String& songId); … };
+    void show(const juce::String& songId, const juce::String& outputId);  void setCompact(bool);
+    const juce::Viewport& viewport() const;                       // for tests: the row of strips, which scrolls sideways
+    … };
+class MixerPage : public juce::Component { public: explicit MixerPage(Session&); void openSong(const juce::String& songId);
+    void chooseOutput(const juce::String& outputId);              // "" = "This song"; what the "Levels for" switch does
+    MixerPanel& panel();
+    … };
 ```
 
 **What the strips are:**
@@ -1525,7 +1713,9 @@ class MixerPage : public juce::Component { public: explicit MixerPage(Session&);
 
 In this stage there is no Cues or Pad strip: those roles are skipped until their stages add them.
 
-Strip texts. `value` is `formatDb` of the level ("off" when not sent). Footers: a part in "This song" shows its role name when the name differs from the part's, else nothing; Click in Edit mode shows "<band level> dB for the band"; a strip changed tonight shows the change, "+2 dB", with `footerIsWarning`.
+Strip texts follow the mockup (screen 10) word for word. `value` is `formatStripDb` of the level: one decimal, "-6.0", "0.0", "+3.0", and "off" when not sent. (`formatDb` stays for the routing grid's cells.) Footers: a part in "This song" shows its role name when the name differs from the part's, else nothing; Click in Edit mode shows the song's click sound by name ("Wood block" for `wood`, "Beep" for `beep`, "Rim" for `rim`); a strip changed tonight shows the change, "+2 dB", with `footerIsWarning`.
+
+The side panel's sentence for an output follows the mockup's "What the drummer hears: plenty of click, no percussion. This mix is the same in every song.", filled from that output's mix: "What the <output name in lower case> hears: " then, joined with ", ", "plenty of <role>" for each role above 0 dB and "no <role>" for each role it may carry but isn't sent (role names in lower case, in the band's order), then ". This mix is the same in every song." With nothing to list, it is only "This mix is the same in every song."
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1535,21 +1725,24 @@ TEST_CASE("the mixer shows the song's levels, or one output's mix", "[mixer]") {
     auto& song = *s.model().song(d.setlist().entries[0].songId);
     auto& rig = *s.model().rig(s.rigId());
     auto here = makeMixerState(s, song.id, {});
-    REQUIRE(here.choices.size() == 2);
-    CHECK(here.choices[0].name == "This song");  CHECK(here.choices[1].name == "Headphones");
+    REQUIRE(here.options.size() == 2);
+    CHECK(here.options[0].name == "This song");  CHECK(here.options[1].name == "Headphones");
     REQUIRE(here.strips.size() == 4);
     CHECK(here.strips[0].name == "Click");  CHECK(here.strips[0].group == 0);  CHECK(here.strips[0].inEarsOnly);  CHECK_FALSE(here.strips[0].canMute);
     CHECK(here.strips[0].target.kind == LevelTarget::Kind::SongClick);
-    CHECK(here.strips[0].footer == "-6 dB for the band");
-    CHECK(here.strips[1].name == "Keys");  CHECK(here.strips[1].canMute);  CHECK(here.strips[1].value == formatDb(song.parts[0].gainDb));
+    CHECK(here.strips[0].value == "0.0");  CHECK(here.strips[0].footer == "Wood block");
+    CHECK(here.strips[1].name == "Keys");  CHECK(here.strips[1].canMute);  CHECK(here.strips[1].value == formatStripDb(song.parts[0].gainDb));
+    CHECK(here.panelTitle == "THIS SONG");
     auto output = makeMixerState(s, song.id, rig.outputs[0].id);
     CHECK(output.chosen == 1);
     CHECK(output.strips.size() == 10);                            // every role but Cues and Pad
     CHECK(output.strips[0].target.kind == LevelTarget::Kind::Mix);
-    CHECK(output.panelTitle == "HEADPHONES · IN-EARS · OUT 1/2");
-    CHECK(output.panelText == "This mix is the same in every song.");
+    CHECK(output.panelTitle == "HEADPHONES");  CHECK(output.panelLabel == "In-ears");  CHECK(output.panelChannels == "OUT 1/2");
+    CHECK(output.panelText == "This mix is the same in every song.");   // every role at 0 dB: nothing to point out
     s.commands().run("mix.setLevel", params({{"rigId", rig.id}, {"outputId", rig.outputs[0].id}, {"roleId", s.model().band().roles[3].id}, {"db", juce::var()}}));
-    CHECK(makeMixerState(s, song.id, rig.outputs[0].id).strips[1].value == "off");
+    auto off = makeMixerState(s, song.id, rig.outputs[0].id);
+    CHECK(off.strips[1].value == "off");
+    CHECK(off.panelText == "What the headphones hears: no keys. This mix is the same in every song.");
     s.commands().run("output.add", params({{"rigId", rig.id}, {"name", "PA"}, {"firstChannel", 3}, {"stereo", true}, {"label", "foh"}}));
     auto pa = makeMixerState(s, song.id, s.model().rig(rig.id)->outputs[1].id);
     CHECK(pa.strips[0].name == "Keys");                           // the click can't be in a PA mix, so it has no strip there
@@ -1563,10 +1756,10 @@ TEST_CASE("in Show mode the mixer changes tonight's levels and says so", "[mixer
     s.setLevel(before.strips[0].target, -4.0f, "g");
     auto after = makeMixerState(s, song.id, {});
     CHECK(after.strips[0].changedTonight);  CHECK(after.strips[0].footer == "+2 dB");  CHECK(after.strips[0].footerIsWarning);
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    CHECK(after.strips[0].value == "-4.0");
+    sqlive::test::ScopedLook look;
     ui::MixerPanel panel(s);  panel.show(song.id, {});
     CHECK(hasColour(snapshot(panel, 900, 300), theme::caution));
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
 TEST_CASE("a mixer with thirty strips still lays out", "[mixer]") {
     DemoSession d; auto& s = *d.session;
@@ -1574,10 +1767,30 @@ TEST_CASE("a mixer with thirty strips still lays out", "[mixer]") {
     auto& rig = *s.model().rig(s.rigId());
     for (auto& role : s.model().band().roles) if (role.kind == model::RoleKind::Part)
         s.commands().run("mix.setLevel", params({{"rigId", rig.id}, {"outputId", rig.outputs[0].id}, {"roleId", role.id}, {"db", 0}}));
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
-    ui::MixerPage page(s);  page.openSong(d.setlist().entries[0].songId);
-    CHECK_NOTHROW(snapshot(page, 1100, 618));                     // strips keep a minimum width of 56 px and the row scrolls sideways
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    REQUIRE(makeMixerState(s, d.setlist().entries[0].songId, rig.outputs[0].id).strips.size() == 34);   // Click and 33 part roles
+    sqlive::test::ScopedLook look;
+    ui::MixerPage page(s);  page.openSong(d.setlist().entries[0].songId);  page.chooseOutput(rig.outputs[0].id);
+    snapshot(page, 1100, 618);
+    CHECK(childrenInside(page));
+    auto& row = page.panel().viewport();
+    REQUIRE(row.getViewedComponent() != nullptr);
+    CHECK(row.getViewedComponent()->getWidth() >= 34 * 56);      // strips keep a minimum width of 56 px
+    CHECK(row.getViewedComponent()->getWidth() > row.getViewWidth());   // and the row scrolls sideways
+}
+TEST_CASE("a fader step stays quick in a band of 50 songs", "[benchmark]") {
+    DemoSession d; auto& s = *d.session;
+    const auto song = *s.model().song(d.setlist().entries[0].songId);
+    for (int i = 0; i < 47; ++i) {
+        auto copy = song;  copy.id = model::newId();  copy.title = "Copy " + juce::String(i);
+        s.commands().run("song.add", params({{"song", model::toVar(copy)}}));
+    }
+    REQUIRE(s.model().songIds().size() == 50);
+    LevelTarget target{LevelTarget::Kind::Part, song.id, song.parts[0].id, {}, {}};
+    auto start = juce::Time::getMillisecondCounterHiRes();
+    for (int i = 0; i < 100; ++i) s.setLevel(target, -20.0f + 0.1f * (float) i, "drag");   // one drag: every step coalesces
+    auto each = (juce::Time::getMillisecondCounterHiRes() - start) / 100.0;
+    WARN("one fader step takes " << each << " ms");
+    CHECK(each < 2.0);
 }
 ```
 
@@ -1589,14 +1802,19 @@ Run: `powershell -File scripts/build.ps1 -Test "[mixer]"`. Expected: `ui/MixerPa
 
 - **A strip,** top to bottom: the name (with a small ◉ in `dim` when `inEarsOnly`), the value, the `LevelFader` in the strip's colour, the "M" button when `canMute` (red when on), the footer. Minimum width 56 px; when the strips don't fit, the row scrolls sideways. Dragging a fader calls `Session::setLevel` with one gesture id per drag.
 - **Compact** (used by the main view): no value line, and the footer only when it is a warning.
-- **The page:** in the top bar's free space, "Levels for" and a `Segmented` of the choices, then a `Choice` of songs. Below, the `MixerPanel` on the left and a 300 px side panel on the right. For "This song" the side panel says "THIS SONG" and "How loud each part is in this song, for everyone." For an output it has the title and sentence from the state, then "Overall level" with the output's trim (drag to change, `OutputTrim`). (The loudest-moment list comes in stage 4.)
+- **The page:** in the top bar's free space, "Levels for" and a `Segmented` of the state's `options` (choosing one calls `chooseOutput`), then a `Choice` of songs. Below, the `MixerPanel` on the left and a 300 px side panel on the right. For "This song" the side panel says "THIS SONG" and "How loud each part is in this song, for everyone." For an output it has the title (with the label pill) and the sentence from the state, then "Overall level" with the output's trim (drag to change, `OutputTrim`). (The loudest-moment list comes in stage 4.)
 - While the song plays, each strip's fader shows a meter: the session exposes nothing new for this; draw the level fill at the fader's own level, as the mockup does.
+- **`plugInPages`:** make the page and put it in `Page::Mixer`.
 
 - [ ] **Step 4: Run the tests**
 
 Run: `powershell -File scripts/build.ps1 -Test "[mixer]"`. Expected: 3 test cases pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Measure a fader step in a big band**
+
+Run: `powershell -File scripts/build.ps1 -Test "[benchmark]"` and read the "one fader step takes … ms" line: 100 coalesced `Session::setLevel` steps (the mixer's per-step call, a `part.set` each) in a band of 50 songs. If one takes more than 2 ms on average, make the command layer serialise only the document a command changed instead of every document (Stage 1a's `CommandLayer` and `BandModel::beginChanges` / `endChanges`), keep `tests/model/CommandLayerTest.cpp` passing, and measure again. Put the number, before and after any change, in the commit message and the task report either way.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "feat: add the mixer, for a song's levels and for each output's mix" && git push origin main
@@ -1608,10 +1826,11 @@ git add -A && git commit -m "feat: add the mixer, for a song's levels and for ea
 
 **Files:**
 - Create: `src/ui/SetupPage.h`, `src/ui/SetupPage.cpp`, `src/ui/RoutingGrid.h`, `src/ui/RoutingGrid.cpp`
-- Modify: `src/ui/MainWindow.cpp`
+- Modify: `src/ui/Pages.cpp` (`plugInPages` puts it in `Page::Setup`)
 - Test: `tests/ui/RoutingGridTest.cpp`
 
 **Interfaces:**
+- Consumes: `Session` (`model()`, `rigId`, `chooseRig`, `commands()`, `settings() const` for `computerName`), `AudioHost` (`deviceName`, `sampleRate`, `bufferSize`, `outputChannels`, `isOpen`, `open`, `openFromRig`, `setTestTone`, `deviceTypes`, `devicesOfType`), `model::checkRig`, `model::mayRoute`, `model::whyNot`, `formatDb`, `plugInPages` (Task 9), `tests/support/Pixels.h` (`ScopedLook`, `childrenInside`).
 - Produces:
 
 ```cpp
@@ -1627,7 +1846,10 @@ RoutingState makeRoutingState(const Session&, const AudioHost*);
 class RoutingGrid : public juce::Component { public: explicit RoutingGrid(Session&);
     void clickCell(int row, int column);                          // not sent → 0 dB; sent → not sent
     void dragCell(int row, int column, float deltaDb, const juce::String& gestureId);
-    juce::String lastMessage() const; … };                        // why the last gesture was refused, shown under the grid for 4 s
+        // deltaDb is from the level the cell had when the gesture began (the first call with this gestureId), not from the last call
+    juce::String lastMessage() const;                             // why the last gesture was refused, shown under the grid for 4 s
+    const juce::Viewport& viewport() const;                       // for tests: the scrolling area of output columns
+    … };
 class SetupPage : public juce::Component { public: SetupPage(Session&, AudioHost*); … };
 ```
 
@@ -1651,7 +1873,7 @@ TEST_CASE("the routing grid is the rig, with forbidden cells marked", "[routing-
 TEST_CASE("clicking and dragging cells edits the mixes through commands", "[routing-ui]") {
     DemoSession d; auto& s = *d.session; auto rigId = s.rigId();
     s.commands().run("output.add", params({{"rigId", rigId}, {"name", "PA"}, {"firstChannel", 3}, {"stereo", true}, {"label", "foh"}}));
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::RoutingGrid grid(s);  grid.setBounds(0, 0, 1000, 500);
     grid.clickCell(1, 1);                                         // Keys → PA
     CHECK(makeRoutingState(s, nullptr).rows[1].cells[1].text == "0");
@@ -1667,8 +1889,13 @@ TEST_CASE("clicking and dragging cells edits the mixes through commands", "[rout
     CHECK(grid.lastMessage() == "Click can only go to in-ear outputs.");
     CHECK_FALSE(makeRoutingState(s, nullptr).rows[0].cells[1].sent);
     for (int i = 0; i < 14; ++i) s.commands().run("output.add", params({{"rigId", rigId}, {"name", "Out " + juce::String(i)}, {"firstChannel", 5 + i * 2}, {"stereo", true}, {"label", "monitor"}}));
-    CHECK_NOTHROW(snapshot(grid, 1000, 500));                     // 16 columns: each keeps 72 px and the grid scrolls sideways
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    REQUIRE(makeRoutingState(s, nullptr).columns.size() == 16);
+    snapshot(grid, 1000, 500);
+    CHECK(childrenInside(grid));
+    auto& area = grid.viewport();
+    REQUIRE(area.getViewedComponent() != nullptr);
+    CHECK(area.getViewedComponent()->getWidth() >= 16 * 72);     // 16 columns: each keeps 72 px
+    CHECK(area.getViewedComponent()->getWidth() > area.getViewWidth());   // and the grid scrolls sideways
 }
 ```
 
@@ -1679,11 +1906,12 @@ Run: `powershell -File scripts/build.ps1 -Test "[routing-ui]"`. Expected: `ui/Ro
 - [ ] **Step 3: Implement the page as mockup screen 11 shows it**
 
 - **Sub-tabs on the left:** only "Audio & routing" in this stage (later stages add theirs).
-- **The top panel:** RIG (a `Choice` of rigs; choosing one calls `Session::chooseRig` and reopens the device), AUDIO INTERFACE (driver type and device, as on the New computer page; a change runs `rig.setDevice` and reopens), SAMPLE RATE (44.1, 48, 88.2, 96 kHz), BUFFER (64 to 2048, with "· safest" after 512 and above), the connection pill, "Duplicate rig" (asks for a name), "New rig", "Rename", "Remove" under a "⋯" menu, and "Test tone" (click an output's header while it is on to hear a tone there).
+- **The top panel:** RIG (a `Choice` of rigs; choosing one calls `Session::chooseRig` and reopens the device), AUDIO INTERFACE (driver type and device, as on the New computer page; a change runs `rig.setDevice` with `computerId` = `settings().computerName()` and reopens), SAMPLE RATE (44.1, 48, 88.2, 96 kHz), BUFFER (64 to 2048, with "· safest" after 512 and above), the connection pill, "Duplicate rig" (asks for a name), "New rig", "Rename", "Remove" under a "⋯" menu, and "Test tone" (click an output's header while it is on to hear a tone there).
 - **The grid:** the first column holds the role names with their colour bars. Each output column header shows the name, the channels, and the label pill; click it for a menu: Rename, Outputs (first channel and mono/stereo), Label (In-ears, PA, Timecode, Not used), Remove. A cell is: a mint pill with the level when sent (brighter when above 0); a faint "·" when allowed but not sent; a short dash when not allowed, with `whyNot` as its tooltip. Click toggles; a vertical drag changes the level, 0.5 dB for every 2 px; double-click types a value. The last row is "Overall level" with each output's trim.
 - Under the grid: "+ Add a role" (asks for a name), "+ Add an output" (name, first channel, stereo, label), "One output per role" (asks first: it replaces this rig's outputs with one stereo in-ear output per part role, plus one mono in-ear output for the click, in channel order), and the mockup's hint sentence.
 - `problems` are listed above the grid in `caution`, or `danger` for the ones that block a show.
 - Role rows have a right-click menu: Rename, Colour, Remove.
+- **`plugInPages`:** make `SetupPage(session, host)` and put it in `Page::Setup`.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1701,10 +1929,11 @@ git add -A && git commit -m "feat: add Setup's audio and routing page with a mix
 
 **Files:**
 - Create: `src/ui/ShowState.h`, `src/ui/ShowState.cpp`, `src/ui/SetlistStrip.h`, `src/ui/SetlistStrip.cpp`, `src/ui/SongMapView.h`, `src/ui/SongMapView.cpp`, `src/ui/MainView.h`, `src/ui/MainView.cpp`
-- Modify: `src/ui/MainWindow.cpp`
+- Modify: `src/ui/Pages.cpp` (`plugInPages` hands the Show views to the shell)
 - Test: `tests/ui/MainViewTest.cpp`
 
 **Interfaces:**
+- Consumes: `Session` (`now()`, `model()`, `setlistId`, `stageView`, `chooseNext`, `cache() const` for `loaded` / `state` / `progress`), `LoadedSong::overviewMin/Max`, `MixerPanel` (`show`, `setCompact`), `AppShell::setShowComponents` and `plugInPages` (Task 9), `tests/support/Pixels.h` (`ScopedLook`, `childrenInside`).
 - Produces:
 
 ```cpp
@@ -1725,10 +1954,14 @@ struct ShowState {                                                 // everything
     struct After { juce::String text; enum class Kind { Played, Next, Later } kind; };  std::vector<After> after;
     juce::StringArray hints;                                       // the key hints along the bottom
 };
-ShowState makeShowState(const Session&);
-class SetlistStrip : public juce::Component { public: explicit SetlistStrip(Session&); … };     // clicking a card chooses it as next
+ShowState makeShowState(const Session&);                           // the hints follow Session::stageView(): which view is showing
+class SetlistStrip : public juce::Component { public: explicit SetlistStrip(Session&);          // clicking a card chooses it as next
+    juce::String drawnTitle(int card) const;                       // for tests: the card's title as laid out, shortened with "…" to fit
+    … };
 class SongMapView : public juce::Component { public: explicit SongMapView(Session&); … };       // the waveform and playhead; later stages add to it
-class MainView : public juce::Component { public: explicit MainView(Session&); … };
+class MainView : public juce::Component { public: explicit MainView(Session&);
+    SetlistStrip& strip();                                         // for tests: the strip, to crop to it and read its cards
+    … };
 ```
 
 **Texts,** exactly:
@@ -1739,7 +1972,7 @@ class MainView : public juce::Component { public: explicit MainView(Session&); �
 - `nextLabel`: `"NEXT SONG · ✓ READY"`, `"NEXT SONG · LOADING 62%"`, `"NEXT SONG · CAN'T PLAY"`; `nextTitle` `"4 · Long Way Down"`; `nextInfo` is `"132 BPM · Key A"` (the key part only when set), then on a second line `"after this song stops"`, `"after a 4 s gap"` or `"straight after this song"`. With nothing next: `nextLabel` `"END OF THE SET"`, the rest empty, and `endOfSet` true.
 - Between songs: `upLabel` `"UP NEXT · 4 OF 7"`; `action` `"Press Space to start"`; `actionDetail` `"2 bars of count-in, then bar 1."` (`"1 bar of count-in, then bar 1."`, or `"Starts straight away."` with no count-in); `pill` `"✓ READY"`. Loading: `action` `"Loading Ballad…"`, `actionDetail` `"Space will work as soon as this says Ready."`, `pill` `"LOADING 62%"`. Failed: `action` `"Ballad can't be played"`, `actionDetail` the first problem, `pill` `"CAN'T PLAY"`. Interrupted: `action` `"Press Space to start again from the top"`.
 - `after`: the song just played (`"✓ 3 Hold The Line · played"`, `Played`), the next (`"4 Long Way Down"`, `Next`), then up to three more (`Later`).
-- `hints`, main view: `"← → next song"`, `"hold Space stop"`, `"Tab stage view"`. Stage view while playing: `"← → next song"`, `"hold Space stop"`, `"Tab main view"`. Stage view between songs: `"Space start"`, `"← → choose a different song"`, `"Tab main view"`.
+- `hints` (the set is chosen by `Session::stageView()`), main view: `"← → next song"`, `"hold Space stop"`, `"Tab stage view"`. Stage view while playing: `"← → next song"`, `"hold Space stop"`, `"Tab main view"`. Stage view between songs: `"Space start"`, `"← → choose a different song"`, `"Tab main view"`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1795,19 +2028,22 @@ TEST_CASE("the show state says when the next song isn't ready", "[show]") {
 }
 TEST_CASE("the main view draws the mockup's parts and survives extremes", "[show]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::MainView view(s);
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 12);  d.settle();
     auto image = snapshot(view, 1280, 698);
     CHECK(hasColour(image, theme::mint));                         // the playing card and the played part of the waveform
-    CHECK(hasColour(image, theme::ember));                        // the next card
+    // The next card, looked for in the strip only: the compact mixer's Click strip is ember too (the mockup paints it so).
+    CHECK(hasColour(image.getClippedImage(view.getLocalArea(&view.strip(), view.strip().getLocalBounds())), theme::ember));
     s.perform(Action::Stop);  s.advanceWithoutDevice(9600);
-    auto id = s.model().songIds()[0];
+    auto id = d.setlist().entries[0].songId;                      // the first card's song
     s.commands().run("song.setInfo", params({{"songId", id}, {"title", juce::String::repeatedString("Very long title ", 5)}}));
     for (int i = 0; i < 30; ++i) s.commands().run("setlist.addSong", params({{"setlistId", s.setlistId()}, {"songId", id}}));
     d.settle();
-    CHECK_NOTHROW(snapshot(view, 1100, 618));
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    auto full = snapshot(view, 1100, 618);
+    CHECK(childrenInside(view));                                  // 33 cards and a long title: nothing overlaps or is cut off
+    CHECK(view.strip().drawnTitle(0).endsWith(juce::String::fromUTF8("…")));
+    CHECK(fractionNotBackground(full) > 0.05);
 }
 ```
 
@@ -1817,7 +2053,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[show]"`. Expected: `ui/ShowStat
 
 - [ ] **Step 3: Implement `makeShowState`**
 
-It is a pure function of `Session::now()`, the setlist, the songs and the play mode, following the texts above.
+It is a pure function of `Session::now()`, `Session::stageView()` (for the hints), the setlist, the songs and the play mode, following the texts above.
 
 - [ ] **Step 4: Implement the three components as mockup screen 1 shows them**
 
@@ -1825,6 +2061,7 @@ It is a pure function of `Session::now()`, the setlist, the songs and the play m
 - **`SongMapView`:** the waveform of the playing song, or of the next song when nothing plays, drawn from `LoadedSong::overviewMin/Max`: the part already played in mint at 90%, the rest in the mockup's grey; a white playhead with a soft glow. 112 px high in this stage. (Section blocks and the MIDI and cue lanes are added above and below it by stages 2 and 3; leave no gap for them.)
 - **`MainView`:** the strip, the song map, then the bottom row: a compact `MixerPanel` showing "This song" for the playing (or next) song under the caption "LEVELS ARE LIVE · AMBER = CHANGED TONIGHT", and a 250 px side column with the "NEXT SONG" panel (title, then the readiness and what follows) and the hints panel. A small `Choice` at the right end of the caption switches the panel between "This song" and each output.
 - Refresh on `Session::changes()` and on a 30 Hz timer while playing.
+- **`plugInPages`:** `shell.setShowComponents(MainView, a plain empty juce::Component)`; Task 17 replaces the empty one with the stage view.
 
 - [ ] **Step 5: Run the tests**
 
@@ -1842,19 +2079,25 @@ git add -A && git commit -m "feat: add the main view for a show" && git push ori
 
 **Files:**
 - Create: `src/ui/StageView.h`, `src/ui/StageView.cpp`
-- Modify: `src/ui/MainWindow.cpp`
+- Modify: `src/ui/Pages.cpp` (`plugInPages` hands it to the shell)
 - Test: `tests/ui/StageViewTest.cpp`
 
 **Interfaces:**
-- Consumes: `ShowState`, `makeShowState`, `BeatLights`, `ShowController::holdProgress`.
-- Produces: `class StageView : public juce::Component { public: StageView(Session&, ShowController*); … };`
+- Consumes: `ShowState`, `makeShowState`, `BeatLights`, `ShowController::holdProgress`, `shorten`, `AppShell::setShowComponents` and `plugInPages` (Task 9; its `ShowController*` argument is the one to pass), `MainView` (Task 16), `tests/support/Pixels.h` (`ScopedLook`, `childrenInside`).
+- Produces:
+
+```cpp
+class StageView : public juce::Component { public: StageView(Session&, ShowController*);     // nullptr: no hold ring (tests)
+    juce::String drawnTitle() const;  float drawnTitleSize() const;   // for tests: the title as last laid out, and its font size
+    … };
+```
 
 - [ ] **Step 1: Write the failing tests**
 
 ```cpp
 TEST_CASE("the stage view between songs is one clear instruction", "[stage]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::StageView view(s, nullptr);
     auto ready = snapshot(view, 1280, 698);
     CHECK(hasColour(ready, theme::mint));                         // the Space key and the READY pill
@@ -1865,22 +2108,24 @@ TEST_CASE("the stage view between songs is one clear instruction", "[stage]") {
     auto failed = snapshot(view, 1280, 698);
     CHECK(hasColour(failed, theme::danger));
     CHECK_FALSE(hasColour(failed, theme::mint, 4));               // nothing invites a start
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
 TEST_CASE("the stage view while playing is big and lays out at every size", "[stage]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::StageView view(s, nullptr);
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 12);  d.settle();
     for (auto size : {std::pair{1100, 618}, {1280, 698}, {1920, 1018}}) {
         auto image = snapshot(view, size.first, size.second);
         CHECK(hasColour(image, theme::mint));
         CHECK(fractionNotBackground(image) > 0.04);
+        CHECK(childrenInside(view));
     }
     s.commands().run("song.setInfo", params({{"songId", s.now().playingSongId}, {"title", juce::String::repeatedString("Very long title ", 5)}}));
     d.settle();
-    CHECK_NOTHROW(snapshot(view, 1100, 618));                     // the title shrinks, then shortens with "…"
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    snapshot(view, 1100, 618);                                    // the title shrinks to its smallest, then shortens with "…"
+    CHECK(view.drawnTitleSize() == Catch::Approx(44.0f * 1100.0f / 1280.0f).margin(0.5f));   // 44 px at this window's scale
+    CHECK(view.drawnTitle().endsWith(juce::String::fromUTF8("…")));
+    CHECK(childrenInside(view));
 }
 ```
 
@@ -1896,6 +2141,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[stage]"`. Expected: `ui/StageVi
 - **When a stop is being held,** the progress ring from `ShowController::holdProgress()` is drawn around the beat lights with "Keep holding to stop".
 - **End of the set:** "END OF THE SET" in place of the next-song box while the last song plays; when it has ended, the title area reads the setlist's name and under it "That was the last song."
 - Refresh on `Session::changes()` and a 30 Hz timer.
+- **`plugInPages`:** replace Task 16's empty stage component: `shell.setShowComponents(MainView, StageView(session, controller))`, with the `ShowController*` `plugInPages` was given.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1912,22 +2158,24 @@ git add -A && git commit -m "feat: add the stage view for the drum throne" && gi
 ### Task 18: Entering and leaving a show
 
 **Files:**
-- Create: `src/ui/PreShowDialog.h`, `src/ui/PreShowDialog.cpp`, `src/ui/Banners.h`, `src/ui/Banners.cpp`
-- Modify: `src/ui/AppShell.cpp`, `src/ui/MainWindow.cpp`
+- Create: `src/ui/PreShowDialog.h`, `src/ui/PreShowDialog.cpp`, `src/ui/InterruptedBanner.h`, `src/ui/InterruptedBanner.cpp`
+- Modify: `src/ui/AppShell.h`, `src/ui/AppShell.cpp`, `src/ui/MainWindow.cpp`
 - Test: `tests/ui/ShowFlowTest.cpp`
 
 **Interfaces:**
-- Consumes: `runPreShowCheck`, `mayEnterShow`, `powerState`, `model::startDownload`, `Session::enterShow`, `leaveShow`, `keepTonightChanges`, `dropTonightChanges`.
+- Consumes: `runPreShowCheck`, `mayEnterShow`, `powerState`, `app::partFileProblems` (Task 7), `model::startDownload`, `Session::enterShow`, `leaveShow`, `hasTonightChanges`, `keepTonightChanges`, `dropTonightChanges`, `Session::changes()`, `AppShell` and `KeyboardBanner` (Task 9: the amber banner is already there), `tests/support/Pixels.h` (`ScopedLook`).
 - Produces:
 
 ```cpp
 class PreShowDialog : public juce::Component, private juce::Timer { public: PreShowDialog(Session&, AudioHost*);
     const std::vector<CheckItem>& items() const;  void recheck();
+    bool canGo() const;                                                     // "Go to Show mode" is enabled: mayEnterShow(items())
     std::function<void()> onGo;  std::function<void()> onBack; … };       // the check runs again every second while it is open
-class InterruptedBanner : public juce::Component { … };                    // mockup screen 5, the red one
-class KeyboardBanner : public juce::Component { … };                       // mockup screen 5, the amber one
+// InterruptedBanner.h: mockup screen 5, the red one
+class InterruptedBanner : public juce::Component { public: explicit InterruptedBanner(Session&); … };
 // AppShell:
     bool showingPreShowDialog() const;
+    bool showingInterruptedBanner() const;
     bool showingTonightQuestion() const;
     void answerTonightQuestion(bool keep);
 ```
@@ -1937,21 +2185,21 @@ class KeyboardBanner : public juce::Component { … };                       // 
 ```cpp
 TEST_CASE("going to Show mode runs the check first", "[showflow]") {
     DemoSession d; auto& s = *d.session; app::AudioHost host(*d.session);
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
     shell.requestMode(Mode::Show);
     CHECK(shell.showingPreShowDialog());
-    CHECK(s.mode() == Mode::Edit);                                // no device is open: the check blocks
+    CHECK(s.mode() == Mode::Edit);                                // the dialog waits for an answer
     ui::PreShowDialog dialog(s, &host);
     CHECK_FALSE(mayEnterShow(dialog.items()));
+    CHECK_FALSE(dialog.canGo());                                  // no device is open: the check blocks the way in
     CHECK(hasColour(snapshot(dialog, 580, 420), theme::danger));
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
 TEST_CASE("leaving Show mode asks about tonight's levels", "[showflow]") {
     DemoSession d; auto& s = *d.session;
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::AppShell shell(s, nullptr);  shell.setBounds(0, 0, 1280, 760);
-    auto& song = *s.model().song(d.setlist().entries[0].songId);
+    const auto song = *s.model().song(d.setlist().entries[0].songId);            // a copy: the levels before any change
     LevelTarget target{LevelTarget::Kind::Part, song.id, song.parts[0].id, {}, {}};
     s.enterShow();  s.setLevel(target, -20.0f, "g");
     s.leaveShow();  d.settle();
@@ -1960,18 +2208,21 @@ TEST_CASE("leaving Show mode asks about tonight's levels", "[showflow]") {
     CHECK(s.level(target) == song.parts[0].gainDb);
     s.enterShow();  s.leaveShow();  d.settle();
     CHECK_FALSE(shell.showingTonightQuestion());                  // nothing changed: no question
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
 TEST_CASE("the interrupted banner appears and goes", "[showflow]") {
     DemoSession d; auto& s = *d.session; app::AudioHost host(*d.session);
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
+    // Only the 52 px banner strip under the 62 px top bar: the top bar's "No audio" pill is red the whole time.
+    const juce::Rectangle<int> bannerArea{0, 62, 1280, 52};
     s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    CHECK_FALSE(shell.showingInterruptedBanner());
     host.deviceLost();  d.settle();
-    CHECK(hasColour(snapshot(shell, 1280, 760), theme::danger));
+    CHECK(shell.showingInterruptedBanner());
+    CHECK(hasColour(snapshot(shell, 1280, 760).getClippedImage(bannerArea), theme::danger));
     host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  s.perform(Action::Start);  s.advanceWithoutDevice(4800);  d.settle();
-    CHECK_FALSE(hasColour(snapshot(shell, 1280, 760), theme::danger, 4));
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    CHECK_FALSE(shell.showingInterruptedBanner());
+    CHECK_FALSE(hasColour(snapshot(shell, 1280, 760).getClippedImage(bannerArea), theme::danger, 4));
 }
 ```
 
@@ -1981,11 +2232,11 @@ Run: `powershell -File scripts/build.ps1 -Test "[showflow]"`. Expected: `ui/PreS
 
 - [ ] **Step 3: Implement**
 
-- **`PreShowDialog`** (mockup screen 5, left): title "Ready for the show?", on the right the setlist and rig names; one line per `CheckItem` with ✓ in mint, ! in `caution`, ✕ in `danger`; a `fixLabel` is a link ("Download now" calls `model::startDownload` for each placeholder file). Footer: the legend "✕ must be fixed · ! is your call", "Back to Edit", and "Go to Show mode" (primary, enabled when `mayEnterShow`). It rechecks once a second, so a fixed problem clears by itself.
-- **`AppShell::requestMode(Mode::Show)`** shows the dialog over the page; `onGo` calls `Session::enterShow`. When the session starts already in Show mode (a restart during a show), no dialog is shown.
-- **Leaving:** after `Session::leaveShow()` succeeds, if `hasTonightChanges()`, ask: "Keep tonight's level changes?" with the sentence "<n> levels were changed during the show." and the buttons "Keep them" (primary) and "Drop them".
-- **`InterruptedBanner`:** shown while `now().interrupted`: "⚠ Audio interface disconnected" and "Paused at bar <n>. Waiting for it to come back.", or, once the device is back, "The audio interface is back. Press Space to start the song again from the top." It is 52 px high, across the top of the content.
-- **`KeyboardBanner`:** the amber one with the mockup's two sentences; clicking it brings the window to the front and takes the keyboard.
+- **`PreShowDialog`** (mockup screen 5, left): title "Ready for the show?", on the right the setlist and rig names; one line per `CheckItem` with ✓ in mint, ! in `caution`, ✕ in `danger`; a `fixLabel` is a link ("Download now" works out the files again, with `app::partFileProblems` for each song of the setlist, and calls `model::startDownload` for each file that is `inCloud`; `CheckItem` carries no files). Footer: the legend "✕ must be fixed · ! is your call", "Back to Edit", and "Go to Show mode" (primary, enabled when `mayEnterShow`, which `canGo()` reports). It rechecks once a second, so a fixed problem clears by itself.
+- **`AppShell::requestMode(Mode::Show)`** now shows the dialog over the page instead of entering Show mode at once (Task 9); `onGo` calls `Session::enterShow`. When the session starts already in Show mode (a restart during a show), no dialog is shown.
+- **The tonight question.** Whenever the shell sees, on `Session::changes()`, the mode go from Show to Edit while `hasTonightChanges()`, it asks: "Keep tonight's level changes?" with the sentence "<n> levels were changed during the show." and the buttons "Keep them" (primary, `keepTonightChanges`) and "Drop them" (`dropTonightChanges`). So it asks whoever called `Session::leaveShow()`, the shell's own Show → Edit or anything else. It also asks when it is made while the session is in Edit mode with `hasTonightChanges()`: the app closed before the question was answered, and the session kept tonight's changes (Task 4).
+- **`InterruptedBanner`** (one class, its own file pair): shown while `now().interrupted`: "⚠ Audio interface disconnected" and "Paused at bar <n>. Waiting for it to come back.", or, once the device is back, "The audio interface is back. Press Space to start the song again from the top." It is 52 px high, across the top of the content (just under the 62 px top bar). `showingInterruptedBanner()` says whether it is up.
+- **`KeyboardBanner`** comes from Task 9, unchanged.
 
 - [ ] **Step 4: Run the tests**
 
@@ -2004,13 +2255,18 @@ git add -A && git commit -m "feat: check before a show, ask about tonight's leve
 **Files:**
 - Create: `src/app/FolderWatch.h`, `src/app/FolderWatch.cpp`, `src/ui/FilesDialog.h`, `src/ui/FilesDialog.cpp`
 - Modify: `src/app/Session.h`, `src/app/Session.cpp`, `src/ui/AppShell.cpp`, `src/ui/TopBar.cpp`
-- Test: `tests/app/FolderWatchTest.cpp`
+- Modify (Stage 1a): `src/model/Autosaver.h`, `src/model/Autosaver.cpp`
+- Test: `tests/app/FolderWatchTest.cpp`, `tests/model/AutosaverTest.cpp`
 
 **Interfaces:**
-- Consumes: `model::BandFolder::fileFor`, `model::findConflictCopies`, `model::fromJson`, `CommandLayer`.
+- Consumes: `model::BandFolder::fileFor`, `model::BandFolder::adoptSongFolder`, `model::findConflictCopies`, `model::fromJson`, `BandModel::applyText`, `CommandLayer`, `registerCoreCommands`, `Autosaver`, `makeTopBarState` (Task 9: the "Check files" pill).
 - Produces:
 
 ```cpp
+// Added to Stage 1a's model::Autosaver:
+    std::function<void(const DocKey&)> onWrote;                   // called by flush for each document it wrote (or moved to trash/)
+    void forget(const std::vector<DocKey>&);                      // drops these from pending: they are not written back
+
 struct OutsideChange { model::DocKey key; juce::String name; enum class Kind { Changed, Added, Removed } kind; };
 class FolderWatch {
 public:
@@ -2022,8 +2278,8 @@ public:
     std::vector<OutsideChange> outsideChanges() const;            // waiting for the user's answer
     void takeOutsideChanges();                                    // load them from disk, as one undoable step
     void keepMine();                                              // write this app's version over them
-    std::vector<model::ConflictCopy> conflictCopies() const;
-    juce::Result resolveConflict(const model::ConflictCopy&, bool keepTheCopy);   // the loser goes to trash/
+    std::vector<model::ConflictCopy> conflictCopies() const;      // the list as of the last poll (or resolveConflict); never a fresh scan
+    juce::Result resolveConflict(const model::ConflictCopy&, bool keepTheCopy);   // the loser goes to trash/; refreshes the list
 // command "folder.reload" {documents: {"<kind>:<id>": JSON text, or "" for a removed one}}
 ```
 
@@ -2064,6 +2320,8 @@ TEST_CASE("a conflict copy is resolved by keeping one and trashing the other", "
     auto original = s.folder().fileFor({model::DocKind::Song, song});
     auto copy = original.getSiblingFile("song-DESKTOP-7Q.json");
     copy.replaceWithText(original.loadFileAsString().replace("First Light", "First Light, edited elsewhere"));
+    CHECK(s.conflictCopies().empty());                                             // not until the next poll
+    s.advanceWithoutDevice(0);
     REQUIRE(s.conflictCopies().size() == 1);
     REQUIRE(s.resolveConflict(s.conflictCopies()[0], true).wasOk());               // keep the copy
     CHECK(s.model().song(song)->title == "First Light, edited elsewhere");
@@ -2073,19 +2331,43 @@ TEST_CASE("a conflict copy is resolved by keeping one and trashing the other", "
 }
 ```
 
+And in `tests/model/AutosaverTest.cpp`, set up as its other cases are:
+
+```cpp
+TEST_CASE("the autosaver says what it wrote and can forget a pending document", "[autosave]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    CommandLayer commands(model); registerCoreCommands(commands);
+    Autosaver saver(folder, model);
+    commands.onChanged = [&](const std::vector<DocKey>& keys) { saver.noteChanged(keys); };
+    std::vector<DocKey> wrote; saver.onWrote = [&](const DocKey& key) { wrote.push_back(key); };
+    commands.run("band.rename", params({{"name", "One"}}));
+    CHECK(saver.flush().wasOk());
+    REQUIRE(wrote.size() == 1);  CHECK(wrote[0] == DocKey{DocKind::Band, {}});
+    commands.run("band.rename", params({{"name", "Two"}}));
+    saver.forget({DocKey{DocKind::Band, {}}});
+    CHECK_FALSE(saver.hasPending());
+    CHECK(saver.flush().wasOk());
+    CHECK(wrote.size() == 1);                                     // nothing more was written
+    CHECK(root.getChildFile("band.json").loadFileAsString().contains("\"One\""));
+}
+```
+
 - [ ] **Step 2: Run and see it fail**
 
-Run: `powershell -File scripts/build.ps1 -Test "[folderwatch]"`. Expected: `app/FolderWatch.h` not found.
+Run: `powershell -File scripts/build.ps1 -Test "[folderwatch],[autosave]"`. Expected: `app/FolderWatch.h` not found.
 
 - [ ] **Step 3: Implement**
 
-- `FolderWatch` remembers each document file's modification time and size after loading and after each of this app's own writes. `poll` compares them with the disk, and also notices document files that appeared or vanished. A new file holding a document whose id is already loaded is a conflict copy, not an outside change; `conflictCopies()` reports it. The session polls every 2 s in Edit mode (and whenever `advanceWithoutDevice` is called), and not at all in Show mode; leaving Show mode polls at once.
-- `takeOutsideChanges` reads the changed files and runs `folder.reload`, which applies each document's text with `BandModel::applyText`; the autosaver is told not to write those documents back. A file that can't be read is left as an outside change and reported.
-- **In the app:** when there are outside changes, a banner in Edit mode: "<names> changed on another computer." with "Load the changes" and "Keep mine". When there are conflict copies or load-report notes, the top bar shows the "Check files" pill; clicking it opens `FilesDialog`: the load report's notes, then one row per conflict: "<song or document> was changed on two computers", each version's time, and the buttons "Keep this one" under each.
+- **`Autosaver` (Stage 1a), extended:** `flush` calls `onWrote(key)` after each document it saved; `forget(keys)` erases those keys from the pending set. Its existing tests keep passing.
+- `FolderWatch` remembers each document file's modification time and size after loading and after each of this app's own writes: the session wires `Autosaver::onWrote` to `FolderWatch::noteOwnWrite`. `poll` compares them with the disk, and also notices document files that appeared or vanished. A new file holding a document whose id is already loaded is a conflict copy, not an outside change. The session polls every 2 s in Edit mode (and whenever `advanceWithoutDevice` is called), and not at all in Show mode; leaving Show mode polls at once. Each poll also refreshes the session's list of conflict copies with `model::findConflictCopies`, which `conflictCopies()` returns; `resolveConflict` refreshes it too. Nothing else scans for them.
+- The session registers the `folder.reload` command right after `registerCoreCommands`. `takeOutsideChanges` reads the changed files and runs `folder.reload`, which applies each document's text with `BandModel::applyText`. A song document that was `Added` lives in a folder this app hasn't seen: `takeOutsideChanges` calls `BandFolder::adoptSongFolder(songId, its folder)` before the command applies it. The command's `onChanged` notes those documents to the autosaver like any change, so the session then calls `Autosaver::forget` with them, and tells `FolderWatch` the files on disk are now what it has: they are not written back. Undo of the reload is an ordinary change and is saved. A file that can't be read is left as an outside change and reported.
+- `keepMine` notes the outside-changed documents to the autosaver and flushes at once, so this app's version is written over them.
+- **In the app:** when there are outside changes, a banner in Edit mode: "<names> changed on another computer." with "Load the changes" and "Keep mine". When there are conflict copies (from `Session::conflictCopies()`) or load-report notes, the top bar shows the "Check files" pill (`makeTopBarState` now counts both); clicking it opens `FilesDialog`: the load report's notes, then one row per conflict: "<song or document> was changed on two computers", each version's time, and the buttons "Keep this one" under each.
 
 - [ ] **Step 4: Run the tests**
 
-Run: `powershell -File scripts/build.ps1 -Test "[folderwatch],[session]"`. Expected: all pass.
+Run: `powershell -File scripts/build.ps1 -Test "[folderwatch],[session],[autosave],[shell]"`. Expected: all pass.
 
 - [ ] **Step 5: Commit and push**
 
@@ -2103,22 +2385,24 @@ git add -A && git commit -m "feat: offer changes made on another computer and se
 - Test: `tests/ui/ScreensTest.cpp`
 
 **Interfaces:**
+- Consumes: `plugInPages` (Task 9, with every page Tasks 11-17 added), `AppShell`, `Settings`, `Session`, `ShowController`, `SongCache::setPaused` and `forget` (Task 2), `model::createDemoBand`, `tests/support/Pixels.h` (`ScopedLook`).
 - Produces:
 
 ```cpp
 juce::StringArray screenNames();
-juce::Image renderScreen(const juce::String& name, int width = 1280, int height = 760);   // makes its own demo band in a temp folder
+juce::Image renderScreen(const juce::String& name, int width = 1280, int height = 760);
+    // makes its own demo band and its own settings file in a temp folder, and deletes the folder when done
 juce::Result renderScreens(const juce::File& folder);                                      // one PNG per name
 ```
 
-Names and what each shows: `main-view` (Show, the first demo song 12 s in, the click raised 2 dB tonight), `stage-playing`, `stage-between` (the second song up next), `stage-loading` (a cache with no budget for the next song, caught mid-load, or the Failed state if loading is too quick to catch), `preshow-check`, `interrupted`, `welcome`, `new-computer`, `setlists`, `new-song`, `song-editor`, `mixer-song`, `mixer-output`, `routing`.
+Names and what each shows: `main-view` (Show, the first demo song 12 s in, the click raised 2 dB tonight), `stage-playing`, `stage-between` (the second song up next), `stage-loading` (the next song caught mid-load: `cache().setPaused(true)`, then `cache().forget(nextSongId)`, then the snapshot, before any `waitUntilIdle`; the loader is unpaused afterwards), `preshow-check`, `interrupted`, `welcome`, `new-computer`, `setlists`, `new-song`, `song-editor`, `mixer-song`, `mixer-output`, `routing`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```cpp
 TEST_CASE("every screen renders, and none is blank", "[screens]") {
     juce::ScopedJuceInitialiser_GUI gui;
-    ui::LiveLookAndFeel look; juce::LookAndFeel::setDefaultLookAndFeel(&look);
+    sqlive::test::ScopedLook look;
     CHECK(ui::screenNames().size() == 14);
     for (auto& name : ui::screenNames()) {
         INFO(name);
@@ -2129,7 +2413,7 @@ TEST_CASE("every screen renders, and none is blank", "[screens]") {
     sqlive::test::TempDir t;
     REQUIRE(ui::renderScreens(t.dir()).wasOk());
     CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.png") == 14);
-    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.part") == 0);
 }
 ```
 
@@ -2139,12 +2423,14 @@ Run: `powershell -File scripts/build.ps1 -Test "[screens]"`. Expected: `ui/Scree
 
 - [ ] **Step 3: Implement `Screens` and the command line**
 
-`renderScreen` builds a demo band in a temp folder, a `Session` with no device, puts it in the named state with `advanceWithoutDevice`, builds an `AppShell` with every page plugged in, and returns `createComponentSnapshot`. `Smart Q Live.exe --screenshots <folder>` calls `renderScreens`, prints the folder, and quits without opening a window.
+`renderScreen` builds a demo band in a temp folder, a `Settings` on a file in that same temp folder (never `Settings::defaultFile()`: this runs inside a test), a `Session` with no device, an `app::ShowController` for it, puts it in the named state with `advanceWithoutDevice`, builds an `AppShell`, calls `ui::plugInPages(shell, session, nullptr, &controller)` (the same wiring as `MainWindow`, written once), and returns `createComponentSnapshot`. It deletes the temp folder before returning. `Smart Q Live.exe --screenshots <folder>` calls `renderScreens`, prints the folder, and quits without opening a window.
+
+`renderScreens` writes each PNG with `juce::PNGImageFormat` to `<name>.png.part` and then moves it into place with `juce::File::moveFileTo`, so a half-written picture never has the real name. This is the one exemption from "every file write goes through `model::writeFileAtomically`": that function writes text, and a PNG isn't text.
 
 - [ ] **Step 4: Run the test, then make the screenshots**
 
 Run: `powershell -File scripts/build.ps1 -Test "[screens]"`. Expected: passes.
-Run: `powershell -File scripts/build.ps1 -Target SmartQLive`, then `& "build\SmartQLive_artefacts\Release\Smart Q Live.exe" --screenshots build\screens`.
+Run: `powershell -File scripts/build.ps1 -Target SmartQLive`, then `Start-Process -Wait -WorkingDirectory (Get-Location) -FilePath "build\SmartQLive_artefacts\Release\Smart Q Live.exe" -ArgumentList '--screenshots', 'build\screens'`. The app is a GUI-subsystem program: called with `&`, PowerShell returns at once and its printed line isn't shown, so wait with `Start-Process -Wait` and then check that `build\screens` holds 14 PNGs.
 
 - [ ] **Step 5: Compare each screenshot with its mockup and fix what differs**
 
