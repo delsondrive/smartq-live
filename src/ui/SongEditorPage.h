@@ -17,6 +17,8 @@
 
 namespace sqlive::ui {
 
+class Veil;
+
 // What the Song editor shows (the mockup's screen 9, as far as stage 1 goes), in its words.
 struct SongEditorState {
     juce::String songId, title;  juce::StringArray chips;         // {"128 BPM", "4/4", "Key E", "Count-in 1 bar"}
@@ -48,8 +50,8 @@ SongEditorState makeSongEditorState(const app::Session&, const juce::String& son
 
 // The mockup's screen 9, the frame later stages fill in: no arrangement row, no tempo, section, cue or MIDI lanes, no
 // automation. Left (200 px): every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the
-// title (click to rename), the chips edited in place (BPM typed or tapped, the time signature, the key and the count-in
-// from menus) and "▶ Play" / "■ Stop". The timeline: a 150 px header column and the lanes on a BarScale from the song's
+// title (a click: Rename…, Import a MIDI file…), the chips edited in place (BPM typed or tapped, the time signature, the
+// key and the count-in from menus) and "▶ Play" / "■ Stop". The timeline: a 150 px header column and the lanes on a BarScale from the song's
 // start (count-in included) to its end: the BARS ruler, one lane per part with its waveform in its role's colour (a click
 // on the name: Rename, Role, Remove), and the Click lane's ticks. A white cursor line, moved by a click or drag on the
 // ruler or the lanes (snapped to the beat; Alt for no snap), follows the playhead while the song plays. Right (290 px):
@@ -68,6 +70,8 @@ public:
     double cursorSeconds() const;                                 // song time: seconds from bar 1, negative in the count-in
     void setCursorSeconds(double);
     std::function<void()> onNewSong;                              // "+ New song"
+    void importMidiFile(const juce::File&);                       // the title menu's "Import a MIDI file…", once a file is chosen:
+                                                                  // the MidiImportDialog for it over the app, on a Veil
 
     // The gestures the controls make, each one command (one undo step), and nothing in Show mode or with no song open.
     void setBpm(double);                                          // the first tempo point; later points are left alone
@@ -112,7 +116,9 @@ private:
 
     // From the controls.
     void pointerAt(float laneX, juce::ModifierKeys);              // a press or drag on the ruler or a lane
+    void showTitleMenu();                                         // "Rename…" and "Import a MIDI file…"
     void renameSong();
+    void chooseMidiFile();
     void editBpm();
     void finishBpm(bool keep);
     void finishBarOne(bool keep);
@@ -153,6 +159,8 @@ private:
     juce::Rectangle<int> songsColumn_, bar_, timeline_, barsHead_, footer_, inspector_, songCard_, clickCard_, emptyCard_;
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> rowLabels_;   // the cards' row labels
     juce::ScopedMessageBox dialog_;
+    std::unique_ptr<juce::FileChooser> chooser_;
+    std::unique_ptr<Veil> midiImport_;                            // the MIDI import dialog while it is open
 };
 
 }  // namespace sqlive::ui

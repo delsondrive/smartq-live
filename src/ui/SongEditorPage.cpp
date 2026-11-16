@@ -15,8 +15,10 @@
 #include "model/SongAudio.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
+#include "ui/MidiImportDialog.h"
 #include "ui/SongEditorLanes.h"
 #include "ui/Theme.h"
+#include "ui/Veil.h"
 
 namespace sqlive::ui {
 
@@ -280,7 +282,7 @@ private:
 
 // ---- The title and the chips -------------------------------------------------------------------------------------------
 
-// The song's title, 18 px semibold, shortened with "…" to its width. A click renames the song.
+// The song's title, 18 px semibold, shortened with "…" to its width. A click opens the title menu.
 class SongEditorPage::TitleLabel : public juce::Component {
 public:
     std::function<void()> onClick;
@@ -342,7 +344,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
         addAndMakeVisible(*view);
     }
 
-    title_->onClick = [this] { renameSong(); };
+    title_->onClick = [this] { showTitleMenu(); };
     addAndMakeVisible(*title_);
     for (auto& chip : chips_) {
         chip = std::make_unique<EditChip>();
@@ -854,11 +856,51 @@ void SongEditorPage::pointerAt(float laneX, juce::ModifierKeys mods) {
     setCursorSeconds(mods.isAltDown() ? scale_->secondsAtX(x) : scale_->tempo().secondsAt(scale_->snap(x, 1)));
 }
 
+void SongEditorPage::showTitleMenu() {
+    if (!editable()) return;
+    juce::PopupMenu menu;
+    menu.addItem(1, "Rename" + kEllipsis);
+    menu.addItem(2, "Import a MIDI file" + kEllipsis);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(title_.get()),
+                       [safe = juce::Component::SafePointer<SongEditorPage>(this)](int result) {
+                           if (safe == nullptr) return;
+                           if (result == 1) safe->renameSong();
+                           else if (result == 2) safe->chooseMidiFile();
+                       });
+}
+
 void SongEditorPage::renameSong() {
     if (!editable()) return;
     askText("Rename the song", state_.title, "Rename", [this](const juce::String& title) {
         if (title.isNotEmpty()) run("song.setInfo", jsonObject({{"songId", songId_}, {"title", title}}));
     });
+}
+
+void SongEditorPage::chooseMidiFile() {
+    if (!editable()) return;
+    chooser_ = std::make_unique<juce::FileChooser>("Import a MIDI file", juce::File(), "*.mid;*.midi");
+    chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safe = juce::Component::SafePointer<SongEditorPage>(this)](const juce::FileChooser& chooser) {
+                              if (safe != nullptr && chooser.getResult() != juce::File()) safe->importMidiFile(chooser.getResult());
+                          });
+}
+
+void SongEditorPage::importMidiFile(const juce::File& file) {
+    if (!editable() || midiImport_ != nullptr) return;
+    auto dialog = std::make_unique<MidiImportDialog>(session_, songId_, file);
+    auto* d = dialog.get();
+    // Often asked from inside the dialog's own button: hidden at once, deleted once that call has returned.
+    d->onClose = [safe = juce::Component::SafePointer<SongEditorPage>(this)] {
+        if (safe == nullptr || safe->midiImport_ == nullptr) return;
+        safe->midiImport_->setVisible(false);
+        juce::MessageManager::callAsync([safe] {
+            if (safe != nullptr) safe->midiImport_.reset();
+        });
+        if (safe->isShowing()) safe->grabKeyboardFocus();
+    };
+    midiImport_ = std::make_unique<Veil>(std::move(dialog), MidiImportDialog::width, [d] { return d->idealHeight(); });
+    auto* host = getParentComponent();                            // the app shell, so the veil covers the top bar too
+    midiImport_->coverAndFollow(host != nullptr ? *host : *this);
 }
 
 void SongEditorPage::editBpm() {

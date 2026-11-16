@@ -519,8 +519,8 @@ void Session::releaseImportFolder(const juce::File& reserved) {
     if (reserved.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 0) reserved.deleteFile();
 }
 
-model::ImportResult Session::commitImport(model::ConvertedSong converted) {
-    return model::commitImportedSong(std::move(converted), folder_, commands_);
+model::ImportResult Session::commitImport(model::ConvertedSong converted, const model::MidiImportChoice* choice) {
+    return model::commitImportedSong(std::move(converted), folder_, commands_, choice);
 }
 
 // ---- Files changed on another computer ---------------------------------------------------------------------------------

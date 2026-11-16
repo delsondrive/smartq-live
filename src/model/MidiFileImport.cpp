@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -314,7 +315,7 @@ juce::Result readMidiFile(const juce::File& file, MidiFileContent& content) {
         kept += track.markers.size();
     }
     std::erase_if(content.tracks, [](const MidiFileTrack& track) { return track.markers.empty(); });
-for (auto& track : content.tracks) content.bars = std::max(content.bars, track.markers.back().bar);
+    for (auto& track : content.tracks) content.bars = std::max(content.bars, track.markers.back().bar);
     if (leftOut > 0)
         content.notes.add(juce::String(leftOut) + " places with changes were left out. Smart Q Live reads at most "
                           + juce::String((int) kMaxMarkers) + " from one file.");
@@ -365,6 +366,139 @@ juce::String suggestDeviceId(const MidiFileTrack& track, const BandDoc& band) {
         found = device.id;
     }
     return found;
+}
+
+MidiImportChoice defaultMidiChoice(const MidiFileContent& content, const BandDoc& band) {
+    MidiImportChoice choice;
+    for (size_t i = 0; i < content.tracks.size(); ++i) {
+        const auto id = suggestDeviceId(content.tracks[i], band);
+        if (id.isNotEmpty()) choice.trackToDevice[(int) i] = id;
+    }
+    return choice;
+}
+
+// ---- The var forms -----------------------------------------------------------------------------------------------------
+
+namespace {
+
+juce::var object() { return juce::var(new juce::DynamicObject()); }
+
+// A whole number in lo..hi, or the fallback when it isn't a finite number.
+int wholeIn(const juce::var& v, int lo, int hi, int fallback) {
+    if (! (v.isInt() || v.isInt64() || v.isDouble())) return fallback;
+    const double d = v;
+    return std::isfinite(d) ? (int) juce::jlimit((double) lo, (double) hi, std::round(d)) : fallback;
+}
+
+template <typename Item, typename Fn> juce::var listOf(const std::vector<Item>& items, Fn&& each) {
+    juce::Array<juce::var> out;
+    for (auto& item : items) out.add(each(item));
+    return out;
+}
+
+template <typename Fn> void forEachIn(const juce::var& list, Fn&& each) {
+    if (auto* items = list.getArray())
+        for (auto& item : *items) each(item);
+}
+
+}  // namespace
+
+juce::var toVar(const MidiFileContent& content) {
+    auto v = object();
+    auto* o = v.getDynamicObject();
+    SongDoc song; song.tempo = content.tempo;
+    o->setProperty("tempo", toVar(song).getProperty("tempo", juce::var()));
+    o->setProperty("sections", listOf(content.sections, [](const SectionDoc& s) { return toVar(s); }));
+    o->setProperty("tracks", listOf(content.tracks, [](const MidiFileTrack& t) {
+        auto tv = object();
+        auto* to = tv.getDynamicObject();
+        to->setProperty("name", t.name);
+        to->setProperty("channels", listOf(t.channels, [](int c) { return juce::var(c); }));
+        to->setProperty("programChanges", t.programChanges);
+        to->setProperty("controlChanges", t.controlChanges);
+        to->setProperty("notes", t.notes);
+        to->setProperty("markers", listOf(t.markers, [](const MarkerDoc& m) { return toVar(m); }));
+        return tv;
+    }));
+    o->setProperty("bars", content.bars);
+    juce::Array<juce::var> notes;
+    for (auto& n : content.notes) notes.add(n);
+    o->setProperty("notes", notes);
+    return v;
+}
+
+bool fromVar(const juce::var& v, MidiFileContent& content) {
+    if (v.getDynamicObject() == nullptr) return false;
+    content = {};
+    ParseNotes ignored;
+    {
+        // The tempo as a song document reads it: limited, and 120 BPM in 4/4 when there is none.
+        auto holder = object();
+        holder.getDynamicObject()->setProperty("tempo", v.getProperty("tempo", juce::var()));
+        SongDoc song;
+        if (fromVar(holder, song, ignored)) content.tempo = song.tempo;
+        if (content.tempo.empty()) content.tempo = {TempoPointDoc{}};
+    }
+    forEachIn(v.getProperty("sections", {}), [&](const juce::var& item) {
+        SectionDoc s;
+        if (fromVar(item, s, ignored)) content.sections.push_back(s);
+    });
+    forEachIn(v.getProperty("tracks", {}), [&](const juce::var& item) {
+        if (item.getDynamicObject() == nullptr) return;
+        MidiFileTrack t;
+        t.name = item.getProperty("name", {}).toString();
+        forEachIn(item.getProperty("channels", {}), [&](const juce::var& c) {
+            const int channel = wholeIn(c, 1, 16, 0);
+            if (channel > 0 && std::find(t.channels.begin(), t.channels.end(), channel) == t.channels.end()) t.channels.push_back(channel);
+        });
+        std::sort(t.channels.begin(), t.channels.end());
+        t.programChanges = wholeIn(item.getProperty("programChanges", {}), 0, std::numeric_limits<int>::max(), 0);
+        t.controlChanges = wholeIn(item.getProperty("controlChanges", {}), 0, std::numeric_limits<int>::max(), 0);
+        t.notes = wholeIn(item.getProperty("notes", {}), 0, std::numeric_limits<int>::max(), 0);
+        forEachIn(item.getProperty("markers", {}), [&](const juce::var& m) {
+            MarkerDoc marker;
+            if (fromVar(m, marker, ignored)) t.markers.push_back(std::move(marker));
+        });
+        content.tracks.push_back(std::move(t));
+    });
+    content.bars = wholeIn(v.getProperty("bars", {}), 0, kLastBar, 0);
+    forEachIn(v.getProperty("notes", {}), [&](const juce::var& n) {
+        if (n.isString()) content.notes.add(n.toString());
+    });
+    return true;
+}
+
+juce::var toVar(const MidiImportChoice& choice) {
+    auto v = object();
+    auto* o = v.getDynamicObject();
+    o->setProperty("tempo", choice.tempo);
+    o->setProperty("sections", choice.sections);
+    juce::Array<juce::var> tracks;
+    for (auto& [track, deviceId] : choice.trackToDevice) {
+        auto entry = object();
+        entry.getDynamicObject()->setProperty("track", track);
+        entry.getDynamicObject()->setProperty("deviceId", deviceId);
+        tracks.add(entry);
+    }
+    o->setProperty("tracks", tracks);
+    return v;
+}
+
+bool fromVar(const juce::var& v, MidiImportChoice& choice) {
+    if (v.getDynamicObject() == nullptr) return false;
+    choice = {};
+    const auto flag = [&](const char* key) {
+        const auto value = v.getProperty(key, true);
+        return value.isBool() ? (bool) value : true;
+    };
+    choice.tempo = flag("tempo");
+    choice.sections = flag("sections");
+    forEachIn(v.getProperty("tracks", {}), [&](const juce::var& entry) {
+        const int track = wholeIn(entry.getProperty("track", {}), -1, std::numeric_limits<int>::max(), -1);
+        const auto deviceId = entry.getProperty("deviceId", {}).toString();
+        if (track >= 0 && deviceId.isNotEmpty()) choice.trackToDevice[track] = deviceId;
+    });
+    return true;
 }
 
 }  // namespace sqlive::model

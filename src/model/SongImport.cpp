@@ -247,35 +247,51 @@ ConvertedSong convertSongFiles(const ImportPlan& plan, const juce::File& dir, do
         song.parts.push_back(part);
         song.lengthSeconds = std::max(song.lengthSeconds, f.seconds);
     }
-    return {juce::Result::ok(), std::move(song), dir};
+    return {juce::Result::ok(), std::move(song), dir, plan.midiFile};
 }
 
-ImportResult commitImportedSong(ConvertedSong converted, BandFolder& folder, CommandLayer& commands) {
+ImportResult commitImportedSong(ConvertedSong converted, BandFolder& folder, CommandLayer& commands, const MidiImportChoice* choice) {
     if (converted.result.failed()) {
         if (converted.folder != juce::File()) converted.folder.deleteRecursively();
-        return {converted.result, {}};
+        return {converted.result, {}, {}};
     }
     const auto id = converted.song.id;
     if (! folder.adoptSongFolder(id, converted.folder)) {
         converted.folder.deleteRecursively();
-        return {juce::Result::fail("Couldn't add the song's folder to the band folder."), {}};
+        return {juce::Result::fail("Couldn't add the song's folder to the band folder."), {}, {}};
     }
+    // The MIDI file is read here, on the message thread, just before the song goes in.
+    const bool withMidi = choice != nullptr && converted.midiFile != juce::File();
+    MidiFileContent midi;
+    const bool midiRead = withMidi && readMidiFile(converted.midiFile, midi).wasOk();
+    const auto step = juce::Uuid().toDashedString();             // fresh, so the song can't merge into an older step
+
     auto* params = new juce::DynamicObject();
     juce::var holder(params);
     params->setProperty("song", toVar(converted.song));
-    auto added = commands.run("song.add", holder);
+    auto added = commands.run("song.add", holder, step);
     if (! added.ok) {
         folder.forgetSongFolder(id);
         converted.folder.deleteRecursively();
-        return {juce::Result::fail(added.message), {}};
+        return {juce::Result::fail(added.message), {}, {}};
     }
-    return {juce::Result::ok(), id};
+    if (! withMidi) return {juce::Result::ok(), id, {}};
+    if (! midiRead) return {juce::Result::ok(), id, "The MIDI file couldn't be read, so the song was added without it."};
+
+    auto* midiParams = new juce::DynamicObject();
+    juce::var midiHolder(midiParams);
+    midiParams->setProperty("songId", id);
+    midiParams->setProperty("content", toVar(midi));
+    midiParams->setProperty("choice", toVar(*choice));
+    auto imported = commands.run("song.importMidi", midiHolder, step);
+    if (! imported.ok) return {juce::Result::ok(), id, "The song was added without its MIDI file. " + imported.message};
+    return {juce::Result::ok(), id, {}};
 }
 
 ImportResult importSong(const ImportPlan& plan, BandFolder& folder, CommandLayer& commands,
-                        const std::function<bool(double progress)>& keepGoing) {
+                        const std::function<bool(double progress)>& keepGoing, const MidiImportChoice* choice) {
     const auto dir = folder.reserveSongFolder(importTitle(plan));
-    return commitImportedSong(convertSongFiles(plan, dir, commands.model().band().sampleRate, keepGoing), folder, commands);
+    return commitImportedSong(convertSongFiles(plan, dir, commands.model().band().sampleRate, keepGoing), folder, commands, choice);
 }
 
 }  // namespace sqlive::model

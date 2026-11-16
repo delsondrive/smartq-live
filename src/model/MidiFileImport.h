@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <vector>
 
 #include <juce_core/juce_core.h>
@@ -31,5 +32,21 @@ juce::Result readMidiFile(const juce::File&, MidiFileContent&);
 // The band's device that a track's name points at: every word of the device's name is among the track name's words
 // ("gtr" counts as "guitar", case is ignored). "" when none fits or more than one does.
 juce::String suggestDeviceId(const MidiFileTrack&, const BandDoc&);
+
+// What to bring into a song from a MIDI file: its tempo, its sections, and which device each track's changes go to.
+struct MidiImportChoice {
+    bool tempo = true, sections = true;
+    std::map<int, juce::String> trackToDevice;             // index into MidiFileContent::tracks -> device id;
+                                                           // a track not listed is left out
+    bool operator==(const MidiImportChoice&) const = default;
+};
+
+// Tempo and sections, and each track whose suggestDeviceId isn't "" sent to that device.
+MidiImportChoice defaultMidiChoice(const MidiFileContent&, const BandDoc&);
+
+// The var forms the "song.importMidi" command takes. fromVar returns false when the var isn't an object; anything in it is
+// limited the way the documents limit it (a content's tempo is never empty).
+juce::var toVar(const MidiFileContent&);   bool fromVar(const juce::var&, MidiFileContent&);
+juce::var toVar(const MidiImportChoice&);  bool fromVar(const juce::var&, MidiImportChoice&);
 
 }  // namespace sqlive::model

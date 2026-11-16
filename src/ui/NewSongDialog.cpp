@@ -29,7 +29,8 @@ const juce::String kDownArrow = juce::String::fromUTF8("\xe2\x87\xa9");    // â‡
 const juce::String kChooseRole = "Choose a role" + kEllipsis;
 const juce::String kLeaveOut = "Leave out";
 
-// The mockup's CSS: .dlg (1040 px, 14 px corners), .dh, .dbody, .drop, th and td, .mini, .df and .check.
+// The mockup's CSS: .dlg (1040 px, 14 px corners), .dh, .dbody (the table and a 320 px column, 16 px apart), .drop, th
+// and td, .mini, .df and .check.
 constexpr int kDialogWidth = 1040;
 constexpr float kRadius = 14.0f;
 constexpr int kPadX = 18, kHeaderHeight = 58, kTitleWidth = 360, kTitleHeight = 30, kHeaderGap = 12;
@@ -37,8 +38,8 @@ constexpr int kStepPadX = 10, kStepHeight = 22, kStepGap = 6;
 constexpr int kBodyPadY = 16, kDropHeight = 42, kDropGap = 10, kDropPadX = 14;
 constexpr int kHeadHeight = 29, kRowHeight = 38, kChoiceHeight = 24, kCellPad = 8, kMinRows = 2;
 constexpr int kPreviewWidth = 120, kPreviewHeight = 18, kPreviewPoints = 120;
-constexpr int kPreviewColumn = kPreviewWidth + 2 * kCellPad, kRoleColumn = 190, kHeardColumn = 250, kMarkColumn = 36;
-constexpr int kNoteHeight = 26;
+constexpr int kPreviewColumn = kPreviewWidth + 2 * kCellPad, kRoleColumn = 160, kHeardColumn = 180, kMarkColumn = 30;
+constexpr int kPanelWidth = 320, kPanelGap = 16;                // .dbody: the table, then the MIDI panel
 constexpr int kFooterPadY = 12, kButtonHeight = 30, kLineHeight = 20, kFooterGap = 10, kTickSize = 16, kProgressHeight = 8;
 
 juce::Font titleFont() { return theme::font(18.0f, true); }
@@ -123,8 +124,10 @@ void fit(juce::Viewport& view, juce::Component& body, int idealHeight) {
 
 // ---- State -------------------------------------------------------------------------------------------------------------
 
-NewSongState makeNewSongState(const model::ImportPlan& plan, const app::Session& session) {
+NewSongState makeNewSongState(const model::ImportPlan& plan, const app::Session& session, const model::MidiFileContent* midi,
+                              const model::MidiImportChoice* choice) {
     NewSongState state;
+    state.midi = makeMidiSummary(session, plan.midiFile, midi, choice);
     const auto& model = session.model();
     const auto& band = model.band();
     const auto* rig = model.rig(session.rigId());
@@ -331,7 +334,7 @@ private:
 // ---- The dialog --------------------------------------------------------------------------------------------------------
 
 NewSongDialog::NewSongDialog(app::Session& session, juce::Array<juce::File> dropped)
-    : session_(session), rows_(std::make_unique<RowsBody>(*this)) {
+    : session_(session), rows_(std::make_unique<RowsBody>(*this)), midiPanel_(session) {
     setWantsKeyboardFocus(true);
 
     title_.setFont(theme::font(theme::sizeBase, true));
@@ -346,10 +349,19 @@ NewSongDialog::NewSongDialog(app::Session& session, juce::Array<juce::File> drop
     rowsView_.setScrollBarsShown(true, false);
     rowsView_.setScrollBarThickness(10);
 
+    midiView_.setViewedComponent(&midiPanel_, false);
+    midiView_.setScrollBarsShown(true, false);
+    midiView_.setScrollBarThickness(10);
+    midiPanel_.onChoiceChanged = [this](const model::MidiImportChoice& choice) {
+        if (importing()) return;
+        midiChoice_ = choice;
+        refresh();
+    };
+
     cancel_.onClick = [this] { cancel(); };
     create_.onClick = [this] { create(); };
 
-    for (juce::Component* child : std::initializer_list<juce::Component*>{&title_, &rowsView_, &cancel_, &create_})
+    for (juce::Component* child : std::initializer_list<juce::Component*>{&title_, &rowsView_, &midiView_, &cancel_, &create_})
         addAndMakeVisible(child);
 
     session_.changes().addChangeListener(this);
@@ -383,6 +395,13 @@ void NewSongDialog::setTitle(const juce::String& title) {
     if (importing()) return;
     plan_.title = title;
     if (title_.getText() != title) title_.setText(title, juce::dontSendNotification);
+    refresh();
+}
+
+void NewSongDialog::setTrackDevice(int track, const juce::String& deviceId) {
+    if (importing() || !midi_ || !juce::isPositiveAndBelow(track, static_cast<int>(midi_->tracks.size()))) return;
+    if (deviceId.isEmpty()) midiChoice_.trackToDevice.erase(track);
+    else midiChoice_.trackToDevice[track] = deviceId;
     refresh();
 }
 
@@ -424,6 +443,22 @@ void NewSongDialog::addFiles(const juce::Array<juce::File>& files) {
             previews_[f.file.getFullPathName()] = scanPreview(formats, f.file, kPreviewPoints);
 
     plan_ = std::move(next);
+    if (plan_.midiFile != midiFile_) {                            // a new MIDI file: read it once, here
+        midiFile_ = plan_.midiFile;
+        midi_.reset();
+        midiProblem_.clear();
+        midiChoice_ = {};
+        if (midiFile_ != juce::File()) {
+            model::MidiFileContent content;
+            const auto read = model::readMidiFile(midiFile_, content);
+            if (read.wasOk()) {
+                midiChoice_ = model::defaultMidiChoice(content, session_.model().band());
+                midi_ = std::move(content);
+            } else {
+                midiProblem_ = read.getErrorMessage();
+            }
+        }
+    }
     if (title_.getText() != plan_.title) title_.setText(plan_.title, juce::dontSendNotification);
     problem_.clear();
     refresh();
@@ -500,12 +535,18 @@ void NewSongDialog::finish() {
         refresh();
         return;
     }
-    const auto result = session_.commitImport(std::move(converted));
+    const auto result = session_.commitImport(std::move(converted), midi_ ? &midiChoice_ : nullptr);
     if (result.result.failed()) {
         problem_ = result.result.getErrorMessage();
         refresh();
         return;
     }
+    if (result.note.isNotEmpty())                                 // the song is in, without its MIDI: said after the dialog has gone
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                         .withIconType(juce::MessageBoxIconType::NoIcon)
+                                         .withTitle(result.note)
+                                         .withButton("OK"),
+                                     nullptr);
     if (addToSetlist_ && session_.model().setlist(session_.setlistId()) != nullptr) {
         const auto added = session_.commands().run("setlist.addSong", jsonObject({{"setlistId", session_.setlistId()}, {"songId", result.songId}}));
         if (!added.ok) problem_ = added.message;
@@ -516,7 +557,7 @@ void NewSongDialog::finish() {
 
 void NewSongDialog::browse() {
     if (importing()) return;
-    chooser_ = std::make_unique<juce::FileChooser>("Add files to the song", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.opus");
+    chooser_ = std::make_unique<juce::FileChooser>("Add files to the song", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.opus;*.mid;*.midi");
     chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::canSelectMultipleItems,
                           [safe = juce::Component::SafePointer<NewSongDialog>(this)](const juce::FileChooser& chooser) {
@@ -527,7 +568,7 @@ void NewSongDialog::browse() {
 void NewSongDialog::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(false); }
 
 void NewSongDialog::refresh(bool force) {
-    auto next = makeNewSongState(plan_, session_);
+    auto next = makeNewSongState(plan_, session_, midi_ ? &*midi_ : nullptr, &midiChoice_);
     if (!force && next == state_) return;                         // the session's changes come 30 times a second while a song plays
     state_ = std::move(next);
     const bool busy = importing();
@@ -535,6 +576,9 @@ void NewSongDialog::refresh(bool force) {
     create_.setEnabled(state_.canCreate && !busy && session_.mode() == app::Mode::Edit);
     create_.setVisible(!busy);
     rows_->update();
+    midiPanel_.setProblem(midiProblem_);
+    midiPanel_.setContent(midiFile_, midi_ ? &*midi_ : nullptr, midiChoice_);
+    midiPanel_.setChoicesEnabled(!busy);
     if (idealHeight() != laidOutHeight_) {                        // its parent (the veil) sizes it from idealHeight()
         laidOutHeight_ = idealHeight();
         if (auto* parent = getParentComponent()) parent->resized();
@@ -550,7 +594,8 @@ int NewSongDialog::footerHeight() const {
 
 int NewSongDialog::idealHeight() const {
     const int rows = std::max(kMinRows, static_cast<int>(state_.rows.size()));
-    return kHeaderHeight + 2 * kBodyPadY + kDropHeight + kDropGap + kHeadHeight + rows * kRowHeight + kNoteHeight + footerHeight();
+    const int table = kDropHeight + kDropGap + kHeadHeight + rows * kRowHeight;
+    return kHeaderHeight + 2 * kBodyPadY + std::max(table, midiPanel_.idealHeight(kPanelWidth)) + footerHeight();
 }
 
 void NewSongDialog::resized() {
@@ -589,11 +634,18 @@ void NewSongDialog::resized() {
         waiting_ = buttons;
     }
 
-    // The body: the drop strip, the table, and the note under it.
+    // The body: the drop strip and the table, and the MIDI panel on the right (scrolling when the dialog is too short for it).
     auto body = area.reduced(kPadX, kBodyPadY);
+    {
+        const auto right = body.removeFromRight(std::min(kPanelWidth, body.getWidth() / 2));
+        body.removeFromRight(kPanelGap);
+        const int panelHeight = midiPanel_.idealHeight(right.getWidth());
+        midiView_.setBounds(right.withHeight(std::min(right.getHeight(), panelHeight)));
+        const int panelWidth = panelHeight > midiView_.getHeight() ? right.getWidth() - midiView_.getScrollBarThickness() : right.getWidth();
+        midiPanel_.setSize(panelWidth, midiPanel_.idealHeight(panelWidth));
+    }
     drop_ = body.removeFromTop(kDropHeight);
     body.removeFromTop(kDropGap);
-    note_ = body.removeFromBottom(kNoteHeight);
     tableBox_ = body;
     body.removeFromTop(kHeadHeight);
     rowsView_.setBounds(body);
@@ -655,7 +707,7 @@ void NewSongDialog::paint(juce::Graphics& g) {
         piece(kDownArrow + "  ", bodyFont(), theme::mid);
         piece(plan_.files.empty() ? "Drop the song's files here, or " : "Drop more files here, or ", bodyFont(), theme::mid);
         piece("browse", boldFont(), theme::mint);
-        piece(". WAV, AIFF or FLAC.", bodyFont(), theme::mid);
+        piece(". WAV, AIFF or FLAC, plus one MIDI file.", bodyFont(), theme::mid);
     }
 
     // The table's head.
@@ -674,11 +726,6 @@ void NewSongDialog::paint(juce::Graphics& g) {
         g.setColour(theme::hairline);
         g.fillRect(tableBox_.getX(), headY + kHeadHeight - 1, tableBox_.getWidth(), 1);
     }
-
-    // The note in place of the MIDI panel, which stage 2 adds.
-    g.setColour(theme::dim);
-    g.setFont(hintFont());
-    g.drawText("Tempo and sections are set in the Song editor after this.", note_.toFloat(), juce::Justification::centredLeft, false);
 
     // The footer's messages.
     {

@@ -135,7 +135,8 @@ public:
     juce::File reserveImportFolder(const model::ImportPlan&);    // BandFolder::reserveSongFolder(importTitle(plan)); {} if it can't be made
     void releaseImportFolder(const juce::File&);                 // an import that never started: deletes the reserved folder if it
                                                                  // is still empty
-    model::ImportResult commitImport(model::ConvertedSong);      // model::commitImportedSong(c, folder(), commands())
+    model::ImportResult commitImport(model::ConvertedSong,       // model::commitImportedSong(c, folder(), commands(), choice):
+                                     const model::MidiImportChoice* = nullptr);   // with a choice, the MIDI file comes in too
 
     // Files another computer changed. In Edit mode the band folder is looked at every 2 s (and on each advanceWithoutDevice),
     // never in Show mode, so a show goes on with the documents it started with; leaving Show mode looks at once. What

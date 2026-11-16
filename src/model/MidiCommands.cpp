@@ -1,6 +1,7 @@
 #include "model/MidiCommands.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <tuple>
 
@@ -10,6 +11,7 @@
 #include "model/ActionNames.h"
 #include "model/CommandParams.h"
 #include "model/DocumentsJson.h"
+#include "model/MidiFileImport.h"
 
 namespace sqlive::model {
 
@@ -73,6 +75,15 @@ std::vector<MarkerDoc>& laneOf(SongDoc& song, const Params& p) {
 MarkerDoc& markerOf(std::vector<MarkerDoc>& lane, const Params& p) {
     auto id = p.id("markerId");
     return found(findIn(lane, [&](const MarkerDoc& x) { return x.id == id; }), "marker");
+}
+
+// Sections in bar order, each ending where the next starts at the latest. Two can't start at the same bar.
+void orderSections(std::vector<SectionDoc>& sections) {
+    std::stable_sort(sections.begin(), sections.end(), [](const SectionDoc& a, const SectionDoc& b) { return a.startBar < b.startBar; });
+    for (size_t i = 0; i + 1 < sections.size(); ++i) {
+        if (sections[i].startBar == sections[i + 1].startBar) refuse("Two sections can't start at the same bar.");
+        sections[i].endBar = std::min(sections[i].endBar, sections[i + 1].startBar);
+    }
 }
 
 bool sameKey(const ControlBinding& a, const ControlBinding& b) {
@@ -285,12 +296,43 @@ void registerMidiCommands(CommandLayer& layer) {
             if (section.id.isEmpty() || ! ids.insert(section.id).second) { section.id = newId(); ids.insert(section.id); }
             sections.push_back(std::move(section));
         }
-        std::stable_sort(sections.begin(), sections.end(), [](const SectionDoc& a, const SectionDoc& b) { return a.startBar < b.startBar; });
-        for (size_t i = 0; i + 1 < sections.size(); ++i) {
-            if (sections[i].startBar == sections[i + 1].startBar) refuse("Two sections can't start at the same bar.");
-            sections[i].endBar = std::min(sections[i].endBar, sections[i + 1].startBar);
-        }
+        orderSections(sections);
         songOf(m, p).sections = std::move(sections);
+        return CommandResult::success();
+    });
+
+    // --- a MIDI file
+    add("song.importMidi", [](BandModel& m, const Params& p) {
+        found(m.song(p.id("songId")), "song");
+        MidiFileContent content;
+        if (! fromVar(p.raw("content"), content)) refuse("content must be an object.");
+        MidiImportChoice choice;
+        if (! fromVar(p.raw("choice"), choice)) refuse("choice must be an object.");
+        std::map<String, std::vector<MarkerDoc>> lanes;
+        for (auto& [track, deviceId] : choice.trackToDevice) {           // in track order, so a merge keeps it at one place
+            found(deviceIn(m, deviceId), "device");
+            if (track < 0 || (size_t) track >= content.tracks.size()) refuse("That track isn't in the MIDI file.");
+            auto& lane = lanes[deviceId];
+            for (auto marker : content.tracks[(size_t) track].markers) {
+                if (marker.messages.empty()) continue;
+                marker.id = newId();
+                lane.push_back(std::move(marker));
+            }
+        }
+        std::vector<SectionDoc> sections;
+        if (choice.sections) {
+            sections = content.sections;
+            for (auto& s : sections) s.id = newId();
+            orderSections(sections);
+        }
+        auto& song = songOf(m, p);
+        if (choice.tempo) song.tempo = content.tempo;
+        if (choice.sections) song.sections = std::move(sections);
+        for (auto& [deviceId, lane] : lanes) {
+            sortLane(lane);
+            if (lane.empty()) song.midiLanes.erase(deviceId);
+            else song.midiLanes[deviceId] = std::move(lane);
+        }
         return CommandResult::success();
     });
 }

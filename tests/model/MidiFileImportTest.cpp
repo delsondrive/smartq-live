@@ -52,6 +52,7 @@ TEST_CASE("odd MIDI files are handled or refused in plain words", "[midifile]") 
     REQUIRE(readMidiFile(plain, c).wasOk());
     REQUIRE(c.tempo.size() == 1);  CHECK(c.tempo[0].bpm == 120.0);                 // no tempo in the file
     REQUIRE(c.tracks.size() == 1);  CHECK(c.tracks[0].channels == std::vector<int>{3, 4});
+    CHECK(c.tracks[0].name == "Track 1");                                           // no name of its own: its place in the file
     CHECK(c.tracks[0].markers[0].messages[0].channel == 3);                         // two channels on one track: each message keeps its own
     CHECK(c.sections.empty());
     std::vector<juce::MidiMessage> sweep; for (int i = 0; i < 1000; ++i) sweep.push_back(at(juce::MidiMessage::controllerEvent(1, 11, i % 128), i * 4));

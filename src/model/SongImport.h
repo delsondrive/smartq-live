@@ -5,6 +5,7 @@
 
 #include "model/BandFolder.h"
 #include "model/CommandLayer.h"
+#include "model/MidiFileImport.h"
 
 namespace sqlive::model {
 
@@ -36,8 +37,9 @@ juce::Result convertToBandWav(const juce::File& source, const juce::File& target
 // The song's title as an import names it: the plan's, trimmed, or "Untitled".
 juce::String importTitle(const ImportPlan&);
 
-// What convertSongFiles made: the song document and the folder it wrote, or why it couldn't (with nothing left behind).
-struct ConvertedSong { juce::Result result = juce::Result::ok(); SongDoc song; juce::File folder; };
+// What convertSongFiles made: the song document and the folder it wrote, or why it couldn't (with nothing left behind), and
+// the plan's MIDI file ({} when none), read only at commit.
+struct ConvertedSong { juce::Result result = juce::Result::ok(); SongDoc song; juce::File folder; juce::File midiFile; };
 
 // Converts each kept file into songFolder/audio/ at bandRate and returns the song document for them. Touches no model
 // and no BandFolder, so it is safe on any thread. songFolder must be missing or empty; it is made if missing, and on
@@ -45,12 +47,16 @@ struct ConvertedSong { juce::Result result = juce::Result::ok(); SongDoc song; j
 ConvertedSong convertSongFiles(const ImportPlan&, const juce::File& songFolder, double bandRate,
                                const std::function<bool(double progress)>& keepGoing);
 
-struct ImportResult { juce::Result result = juce::Result::ok(); juce::String songId; };
+// note: "" or why the MIDI file was left out of a song that was added.
+struct ImportResult { juce::Result result = juce::Result::ok(); juce::String songId; juce::String note; };
 // Message thread. Registers the converted song's folder with the band folder and adds the song with "song.add"; if that
-// fails, or the conversion had, the folder is deleted and the model is unchanged.
-ImportResult commitImportedSong(ConvertedSong, BandFolder&, CommandLayer&);
+// fails, or the conversion had, the folder is deleted and the model is unchanged. Given a choice and a MIDI file, it reads
+// the file here and runs "song.importMidi" under the same new coalesce key, so the song with its MIDI is one undo step; a
+// file that can't be read then (or a refused import) leaves the song without it, and the note says so.
+ImportResult commitImportedSong(ConvertedSong, BandFolder&, CommandLayer&, const MidiImportChoice* = nullptr);
 
 // All three steps on the calling thread, at the band's rate. On failure or cancel nothing is left and the model is unchanged.
-ImportResult importSong(const ImportPlan&, BandFolder&, CommandLayer&, const std::function<bool(double progress)>& keepGoing);
+ImportResult importSong(const ImportPlan&, BandFolder&, CommandLayer&, const std::function<bool(double progress)>& keepGoing,
+                        const MidiImportChoice* = nullptr);
 
 }  // namespace sqlive::model
