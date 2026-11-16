@@ -28,6 +28,7 @@ const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");      // " · "
 const juce::Colour kOnEmber{0xff160f10};                             // the mockup's text on an ember fill
 
 const juce::String kCheckFiles = "Check files";
+const juce::String kUndoKeys = juce::String::fromUTF8("Ctrl+Z undo \xc2\xb7 Ctrl+Y redo");
 
 juce::Font tabFont() { return theme::font(theme::sizeBody, true); }
 juce::Font switchFont() { return theme::font(theme::sizeSmall, true); }
@@ -315,7 +316,8 @@ void TopBar::setState(const TopBarState& next) {
 
 void TopBar::apply() {
     undo_->setEnabled(state_.canUndo);
-    undo_->setTooltip(state_.undoTip);
+    // The keys work on every Edit page (AppShell); there is no Redo button, so the tip is where they are told.
+    undo_->setTooltip(state_.undoTip.isEmpty() ? kUndoKeys : state_.undoTip + " (" + kUndoKeys + ")");
 
     while (chips_.size() < static_cast<std::size_t>(state_.chips.size())) {
         chips_.push_back(std::make_unique<Chip>());
@@ -388,17 +390,23 @@ void TopBar::layout() {
     }
     undo_->setVisible(edit);
 
-    // Show mode: the status pills, right to left before the switch. Edit mode: only "Check files", before Undo, where a
-    // click on it opens the files dialog (in Show mode it only says so: nothing there may change the band folder).
+    // Show mode: the status pills, right to left before the switch. Edit mode: only what needs a look, right to left before
+    // Undo: the audio pill when audio isn't OK, and "Check files", where a click opens the files dialog (in Show mode it
+    // only says so: nothing there may change the band folder).
     const bool showPills = !edit;
     checkFiles_ = {};
-    for (std::size_t i = 0; i < pills_.size(); ++i) {
-        const bool checkFiles = edit && i < state_.pills.size() && state_.pills[i].text == kCheckFiles;
-        pills_[i]->setVisible((showPills || checkFiles) && i < state_.pills.size());
-        if (!checkFiles) continue;
+    int editX = undo_->getX() - kGap;
+    for (std::size_t i = pills_.size(); i-- > 0;) {
+        const bool inState = i < state_.pills.size();
+        const bool checkFiles = inState && state_.pills[i].text == kCheckFiles;
+        const bool shownInEdit = edit && inState && (checkFiles || state_.pills[i].level == StatusPill::Level::Bad);
+        pills_[i]->setVisible(inState && (showPills || shownInEdit));
+        if (!shownInEdit) continue;
         const int pw = pills_[i]->idealWidth();
-        centreOn(*pills_[i], undo_->getX() - kGap - pw, pw, 24, centreY);
-        checkFiles_ = pills_[i]->getBounds();
+        editX -= pw;
+        centreOn(*pills_[i], editX, pw, 24, centreY);
+        editX -= 6;
+        if (checkFiles) checkFiles_ = pills_[i]->getBounds();
     }
     if (showPills) {
         int x = right;

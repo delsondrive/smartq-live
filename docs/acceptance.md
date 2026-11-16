@@ -41,7 +41,8 @@ Not built yet, so do not look for them: MIDI for pedalboards, sections, spoken c
 - [ ] Turn **Test tone** off. The tone stops at once.
 - [ ] Click **Done**. You are back where you came from.
 - [ ] Quit the app and start it again. It remembers your interface, your sample rate and your buffer.
-- [ ] Start it with the interface unplugged. It opens and does not crash. Click **SHOW**: the check says **Choose one in Setup, or plug yours in.** and the check blocks the show. Plug the interface in and choose it in Setup. It works.
+- [ ] Start it with the interface unplugged. It opens and does not crash, and the red **Audio lost** pill shows at the top, next to **Undo**. Click **SHOW**: the check says **Choose one in Setup, or plug yours in.** and the check blocks the show. Click **Back to Edit**.
+- [ ] Start the app with the interface unplugged, then plug it in. It is found within a few seconds (the red pill goes) and nothing plays by itself. Do it again in Show mode (quit during a show, unplug, start again): the red banner shows, and goes once the interface is found.
 
 ## 2. Adding a song
 
@@ -76,6 +77,7 @@ Have a real song's stems in a folder: one audio file for each part, and a click 
 - [ ] **(by ear)** Play the song to the end, and listen at the last bar. The click is still exactly in time with the stems. If it has drifted, write down the tempo and how far it drifted, and whether the song has a tempo change.
 - [ ] **(by ear)** Let the song play to the very end. It ends cleanly, with no click or cut-off.
 - [ ] On the Song editor page, click the song's title. A window opens (**Rename the song**). Rename it. The new name shows. Click **Undo**. The old name comes back.
+- [ ] Press **Ctrl+Z**. The last change is undone. Press **Ctrl+Y**: it comes back. **Ctrl+Shift+Z** brings it back too. These keys work on every Edit page (Setlists, Song editor, Mixer, Setup), and do nothing in Show mode. Hold the mouse over **Undo**: the tip says **Ctrl+Z undo · Ctrl+Y redo**.
 - [ ] Right-click a song in the list on the Setlists page. The menu has **Open in the Song editor** and **Remove from the band…**.
 - [ ] Right-click a part. The menu has **Rename…** and the choice of its role. Rename the part (the window is called **Rename the part**). The new name shows in the Mixer too.
 - [ ] Rename one of a song's audio files in Explorer, so it goes missing. The Song editor says **The audio file is missing**, and the Setlists page says **1 file missing**. Rename it back. It works again.
@@ -184,7 +186,7 @@ Do each of these on purpose, to see that the app does the safe thing.
 - [ ] Change the sample rate or the buffer size in the interface's own control panel, with a song loaded. The app copes. If it cannot use the new setting, it tells you and does not crash. After it comes back, songs play at the right speed and pitch. **(by ear)**
 - [ ] Unplug the interface and plug it back in at a different sample rate. Songs play at the right speed and pitch. **(by ear)**
 - [ ] Unplug the interface and leave it out, so Windows moves to its default device (the laptop's speakers). The app does not play through that device. It stays on the red banner, and nothing plays until your interface is back.
-- [ ] In Edit mode, unplug the interface during a song. There is no banner. The song stops. Nothing on screen shows the loss yet in Edit mode (the status pill can only be seen if you were already in Show mode when the interface went). Write down what you see. Nothing plays by itself when the interface comes back.
+- [ ] In Edit mode, unplug the interface during a song. There is no banner. The song stops, and the red **Audio lost** pill shows at the top, next to **Undo**. Plug it back in: the pill goes, and nothing plays by itself.
 
 **The window and the keyboard**
 

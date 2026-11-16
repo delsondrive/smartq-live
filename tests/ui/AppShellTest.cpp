@@ -6,6 +6,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "app/AudioHost.h"
 #include "app/Session.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
@@ -104,4 +105,53 @@ TEST_CASE("files changed on another computer bring a banner, and Check files ope
     shell.openFilesDialog();  CHECK(shell.showingFilesDialog());
     s.enterShow();  d.settle();
     CHECK_FALSE(shell.showingFilesDialog());                                       // nothing may change the band folder in a show
+}
+TEST_CASE("in Edit mode the top bar shows the audio pill whenever audio isn't OK", "[shell]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    auto drawnPills = [](ui::TopBar& bar) {
+        juce::StringArray shown;
+        for (auto* child : bar.getChildren())
+            if (auto* pill = dynamic_cast<StatusPill*>(child); pill != nullptr && pill->isVisible()) shown.add(pill->text());
+        return shown;
+    };
+    ui::TopBar bar(s);  bar.setBounds(0, 0, 1280, 62);
+    auto none = makeTopBarState(s, nullptr, nullptr, Page::Setlists);
+    REQUIRE(none.mode == Mode::Edit);
+    CHECK(none.pills[0].text == "No audio");
+    bar.setState(none);
+    CHECK(drawnPills(bar) == juce::StringArray{"No audio"});
+    CHECK(hasColour(snapshot(bar, 1280, 62), theme::danger));
+    app::AudioHost host(s);
+    host.deviceLost();
+    auto lost = makeTopBarState(s, &host, nullptr, Page::Mixer);
+    CHECK(lost.pills[0].text == "Audio lost");  CHECK(lost.pills[0].level == StatusPill::Level::Bad);
+    bar.setState(lost);
+    CHECK(drawnPills(bar) == juce::StringArray{"Audio lost"});
+    bar.setState(makeTopBarState(s, &host, nullptr, Page::Mixer, true));      // the keyboard pill is Show mode's
+    CHECK(drawnPills(bar) == juce::StringArray{"Audio lost"});
+}
+TEST_CASE("Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes on every Edit page, never in Show mode", "[shell]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    ui::AppShell shell(s, nullptr);  shell.setBounds(0, 0, 1280, 760);
+    const juce::KeyPress undo('z', juce::ModifierKeys::commandModifier, 0), redo('y', juce::ModifierKeys::commandModifier, 0),
+        redoShift('Z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0);
+    const auto name = s.model().band().name;
+    s.commands().run("band.rename", params({{"name", "Renamed"}}));
+    for (auto page : {Page::Setlists, Page::SongEditor, Page::Mixer, Page::Setup}) {
+        shell.showPage(page);
+        CHECK(shell.keyPressed(undo));       CHECK(s.model().band().name == name);
+        CHECK(shell.keyPressed(redo));       CHECK(s.model().band().name == "Renamed");
+        shell.keyPressed(undo);
+        CHECK(shell.keyPressed(redoShift));  CHECK(s.model().band().name == "Renamed");
+    }
+    ui::TopBar& bar = shell.topBar();
+    for (auto* child : bar.getChildren())
+        if (auto* button = dynamic_cast<PillButton*>(child))
+            CHECK(button->getTooltip() == juce::String::fromUTF8("Undo: rename the band (Ctrl+Z undo \xc2\xb7 Ctrl+Y redo)"));
+    s.enterShow();  d.settle();
+    CHECK_FALSE(shell.keyPressed(undo));
+    CHECK(s.model().band().name == "Renamed");                                     // Show mode never writes the band folder
+    CHECK_FALSE(shell.keyPressed(redo));
 }

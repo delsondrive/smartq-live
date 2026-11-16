@@ -18,7 +18,8 @@ namespace sqlive::app {
 // What Main.cpp runs: reads this computer's settings, opens a band folder (--band <folder> on the command line, else the
 // newest recent one), makes the session and the audio host, and shows the main window. With no band folder it shows the
 // Welcome page; a band whose rig has no device for this computer first shows the New computer page. A device that is bound
-// but can't be opened is not a reason for that page: the main window opens with the "No audio" pill.
+// but can't be opened is not a reason for that page: the main window opens with the red "Audio lost" pill (in Edit mode
+// too; in Show mode the red banner as well), and AudioHost tries it again every 2 s until it is plugged in.
 // Every band folder that opens is noted in the settings, which are saved.
 // With --screenshots <folder> it draws every screen to a PNG there (ui::renderScreens), prints the folder, and opens no
 // window, so wantsWindow() is false and the app quits (with exit code 1 when the pictures couldn't be made).

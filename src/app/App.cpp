@@ -81,7 +81,7 @@ void App::openBand(const juce::File& root) {
 
     host_ = std::make_unique<AudioHost>(*session_);
     if (host_->hasBindingForThisComputer()) {
-        // A failure leaves the "No audio" pill showing.
+        // A failure is taken as the device lost: the "Audio lost" pill shows, and it is tried again every 2 s.
         host_->openFromRig();
         showMainWindow();
     } else {
