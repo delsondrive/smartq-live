@@ -13,6 +13,11 @@ Settings::Settings(juce::File file) : file_(std::move(file)), bands_(new juce::D
     juce::var parsed;
     if (!juce::JSON::parse(file_.loadFileAsString(), parsed).wasOk() || !parsed.isObject()) return;
 
+    // What this version doesn't know (a later one's MIDI or remote settings) is kept as it is, and written back.
+    for (const auto& property : parsed.getDynamicObject()->getProperties())
+        if (property.name != juce::Identifier("recent") && property.name != juce::Identifier("bands"))
+            others_.set(property.name, property.value);
+
     if (auto* list = parsed.getProperty("recent", {}).getArray())
         for (const auto& item : *list)
             if (item.isString() && item.toString().isNotEmpty()) recent_.addIfNotAlreadyThere(item.toString());
@@ -103,6 +108,7 @@ juce::Result Settings::save() {
     juce::Array<juce::var> recent;
     for (const auto& path : recent_) recent.add(path);
     auto* root = new juce::DynamicObject();
+    for (const auto& property : others_) root->setProperty(property.name, property.value);
     root->setProperty("recent", recent);
     root->setProperty("bands", bands_);
     return model::writeFileAtomically(file_, juce::JSON::toString(juce::var(root)));

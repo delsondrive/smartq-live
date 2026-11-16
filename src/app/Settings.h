@@ -16,7 +16,8 @@ struct ShowMemory {
 // It lives outside the band folders, because it differs from one computer to the next.
 class Settings {
 public:
-    // Reads the file if it exists; one that cannot be read or parsed is treated as empty.
+    // Reads the file if it exists; one that cannot be read or parsed is treated as empty. Top-level keys this version doesn't
+    // know (a later version's) are kept and written back by save, so running an older build never erases them.
     explicit Settings(juce::File file);
 
     // <user app data>/Smart Q Live/settings.json
@@ -44,6 +45,7 @@ private:
     juce::File file_;
     juce::StringArray recent_;                                          // full paths, newest first
     juce::var bands_;                                                   // object: full path -> object
+    juce::NamedValueSet others_;                                        // top-level keys this version doesn't know, kept as read
 };
 
 }  // namespace sqlive::app

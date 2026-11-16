@@ -31,3 +31,15 @@ TEST_CASE("a damaged settings file is treated as empty", "[settings]") {
     CHECK(s.recentBandFolders().isEmpty());
     CHECK(s.save().wasOk());
 }
+TEST_CASE("settings keep what a later version wrote, so it isn't erased", "[settings]") {
+    sqlive::test::TempDir t; auto file = t.dir().getChildFile("settings.json");
+    auto a = t.dir().getChildFile("Band A"); a.createDirectory();
+    file.replaceWithText(R"({"recent": [], "bands": {}, "midi": {"port": "Drum pad", "channel": 10}, "remote": true})");
+    { Settings s(file);  s.noteOpened(a);  s.setRigFor(a, "rig-1");  REQUIRE(s.save().wasOk()); }
+    const auto saved = juce::JSON::parse(file.loadFileAsString());
+    CHECK(saved.getProperty("midi", {}).getProperty("port", {}).toString() == "Drum pad");
+    CHECK((int) saved.getProperty("midi", {}).getProperty("channel", {}) == 10);
+    CHECK((bool) saved.getProperty("remote", false));
+    Settings again(file);
+    CHECK(again.rigFor(a) == "rig-1");  CHECK(again.recentBandFolders().size() == 1);
+}
