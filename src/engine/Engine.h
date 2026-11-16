@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 
+#include "engine/Midi.h"
+#include "engine/MidiOut.h"
 #include "engine/MixSetup.h"
 #include "engine/PreparedSong.h"
 #include "engine/SongRenderer.h"
@@ -45,10 +47,11 @@ public:
     Engine();
 
     // Must only be called while process cannot run: for a device, from audioDeviceAboutToStart, before its first callback.
-    // It stops whatever was playing, at once and without an event, keeps the mix, keeps the cue unless it was made at
-    // another sample rate (that one is dropped, through the garbage queue), and keeps stream time running. Every command
-    // not yet taken is dropped, a start included, and what it carries goes through the garbage queue: the control thread
-    // sends again what it still wants (the mix, the follow-on, the cue) once the device has started.
+    // It stops whatever was playing, at once and without an event (a note-off goes out for each MIDI note it left
+    // sounding), keeps the mix, keeps the cue unless it was made at another sample rate (that one is dropped, through the
+    // garbage queue), and keeps stream time running. Every command not yet taken is dropped, a start included, and what it
+    // carries goes through the garbage queue: the control thread sends again what it still wants (the mix, the follow-on,
+    // the cue) once the device has started.
     void prepare(double sampleRate, int maxBlockFrames);
     // Audio thread: clears out, then renders into the first min(numChannels, kMaxDeviceChannels) of it.
     void process(float* const* out, int numChannels, int frames) noexcept;
@@ -68,6 +71,12 @@ public:
     void setClickGain(std::uint64_t serial, float linear);
     void setSolo(std::uint64_t serial, int part);
     bool popEvent(EngineEvent&);
+    // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
+    // it is due at. Notes still sounding when a song stops (at the end of its fade), ends, or prepare stops it are ended
+    // then. When the queue is full, what doesn't fit is dropped.
+    bool popMidi(OutMidi&);
+    // Control thread: sends again the state a device should be in (Task 4). Until then it does nothing.
+    void resendMidiState(int device);
     // Frees what the audio thread has finished with. Call it regularly (the app's timer does): when the garbage queue is
     // full, the audio thread keeps what it lets go of in a small store of its own, and once that is nearly full it holds
     // back every command, cues, starts and stops included, until garbage is collected.
@@ -126,6 +135,7 @@ private:
     SpscQueue<Command> commands_;
     SpscQueue<std::shared_ptr<const void>> garbage_;
     SpscQueue<EngineEvent> events_;
+    MidiOut midi_;                           // its queue too; its producer is the audio thread (and prepare)
     std::atomic<double> sample_rate_{0.0};
     // The status fields are written together once per process (and by prepare). status_seq_ is odd while they are being
     // written and even once done, so a reader that sees the same even value before and after reading them has one snapshot.

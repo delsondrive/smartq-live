@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "engine/Click.h"
+#include "engine/Midi.h"
 #include "engine/TempoMap.h"
 #include "engine/Types.h"
 
@@ -46,6 +48,11 @@ struct PreparedSong {
     ClickSetup click;
     std::vector<ClickTick> ticks;      // every tick in [start, end); those in [countInStart, 0) sound even with the click off
     ClickSound clickSound;
+    // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
+    std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order
+    std::vector<std::uint16_t> clockDevices, startStopDevices;
+    std::vector<SamplePos> clockTicks; // 24 per quarter over [start, end); only when clockDevices isn't empty (from Task 5)
+    std::vector<std::string> midiDeviceIds;   // the band's device id for each engine device number, as when prepared
 };
 
 // explicitEnd below 0 means "where the longest part ends".

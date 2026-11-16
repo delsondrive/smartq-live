@@ -6,6 +6,7 @@
 #include "model/SongAudio.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/FileHold.h"
+#include "tests/support/MidiParams.h"
 #include "tests/support/Params.h"
 
 using namespace sqlive::app;
@@ -158,7 +159,8 @@ std::shared_ptr<const sqlive::engine::PreparedSong> songBehindTheBack(Session& s
     const auto loaded = s.cache().loaded(songId);
     REQUIRE(loaded != nullptr);
     return std::make_shared<const sqlive::engine::PreparedSong>(
-        sqlive::model::buildPreparedSong(*s.model().song(songId), s.model().band(), loaded->audio, s.engine().sampleRate()));
+        sqlive::model::buildPreparedSong(*s.model().song(songId), s.model().band(), s.rigAsHeard(), loaded->audio,
+                                         s.engine().sampleRate()));
 }
 // The invariant: whatever the engine plays, the session says something plays, so every stop gesture can stop it.
 bool sessionKnowsWhatPlays(Session& s) { return s.engine().status().playingSerial == 0 || s.now().playing; }
@@ -283,4 +285,21 @@ TEST_CASE("a settings file that can't be written shows as a failed save", "[sess
     }
     s.flushNow();
     CHECK(s.saveState() == SaveState::Saved);  CHECK(s.saveError().isEmpty());
+}
+
+// ---- Stage 2: MIDI ---------------------------------------------------------------------------------------------------
+
+TEST_CASE("a change to a device's channel reaches the song the session has prepared", "[session]") {
+    using sqlive::test::messages;
+    using sqlive::test::pc;
+    namespace engine = sqlive::engine;
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 2}, {"beat", 1}, {"messages", messages({pc(12)})}}));
+    d.settle();                                                       // prepared with channel 1
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"channel", 5}}));
+    d.settle();
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 6);     // past the count-in and bar 2
+    std::vector<engine::OutMidi> out; engine::OutMidi m; while (s.engine().popMidi(m)) out.push_back(m);
+    REQUIRE(out.size() == 1);  CHECK(out[0].data[0] == 0xC4);  CHECK(out[0].data[1] == 12);
 }

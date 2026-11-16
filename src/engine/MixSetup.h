@@ -7,7 +7,6 @@ namespace sqlive::engine {
 
 inline constexpr int kMaxRoles = 64;
 inline constexpr int kMaxBuses = 32;
-inline constexpr int kMaxMidiDevices = 32;   // the most MIDI devices the engine sends to
 
 // One output of the device: a mono channel or a stereo pair starting at firstChannel (0-based).
 struct OutputBus {

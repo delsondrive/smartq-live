@@ -260,6 +260,7 @@ private:
 
     std::map<juce::String, std::shared_ptr<const Prepared>> prepared_;   // by song id
     model::BandDoc prepared_band_;                               // the band the prepared songs were built with
+    model::RigDoc prepared_rig_;                                 // and the rig: only its MIDI channels are built into them
     std::vector<WantedSong> wanted_;                             // the last list handed to the cache
 
     bool mix_built_ = false;

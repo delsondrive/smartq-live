@@ -4,7 +4,7 @@
 #include <set>
 #include <tuple>
 
-#include "engine/MixSetup.h"
+#include "engine/Midi.h"
 #include "model/ActionNames.h"
 #include "model/CommandParams.h"
 #include "model/DocumentsJson.h"

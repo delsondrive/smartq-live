@@ -713,7 +713,7 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
     prepared->clickDb = prepared_band_.clickDb + prepared->doc.click.offsetDb;
     prepared->loaded = loaded;
     prepared->song = std::make_shared<const engine::PreparedSong>(
-        model::buildPreparedSong(prepared->doc, prepared_band_, loaded->audio, sample_rate_));
+        model::buildPreparedSong(prepared->doc, prepared_band_, prepared_rig_, loaded->audio, sample_rate_));
     for (std::size_t i = 0; i < prepared->song->parts.size(); ++i)
         prepared->partIndex[juce::String(prepared->song->parts[i].partId)] = (int) i;
     prepared_[songId] = prepared;
@@ -721,10 +721,13 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
 }
 
 void Session::refreshPrepared() {
-    if (auto band = bandAsHeard(); band != prepared_band_) {     // roles and the click level are built into every song
-        prepared_.clear();
-        prepared_band_ = std::move(band);
-    }
+    // Roles, the click level and the MIDI devices are built into every song, and so are the rig's MIDI channels. The rig's
+    // levels are not: a change to them alone keeps the songs (and the cue) as they are.
+    auto band = bandAsHeard();
+    auto rig = rigAsHeard();
+    if (band != prepared_band_ || rig.midiChannels != prepared_rig_.midiChannels) prepared_.clear();
+    prepared_band_ = std::move(band);
+    prepared_rig_ = std::move(rig);
     // The songs near the playhead: the next, the entries either side of it, and the song open in an Edit page.
     std::set<juce::String> near;
     const int next = indexOf(next_entry_id_);

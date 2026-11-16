@@ -36,7 +36,7 @@ TEST_CASE("a song document becomes a prepared song", "[songaudio]") {
     song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, -6.0f, false, 2}, {"p2", "Lost", "audio/Lost.wav", band.roles[4].id, 0.0f, false, 2},
                   {"p3", "No role", "audio/x.wav", "gone", 0.0f, true, 1}};
     auto audio = sqlive::test::constantAudio(96000, 0.5f, NAN);
-    auto prepared = buildPreparedSong(song, band, {{"p2", nullptr}, {"p3", audio}, {"p1", audio}}, 48000.0);
+    auto prepared = buildPreparedSong(song, band, RigDoc{}, {{"p2", nullptr}, {"p3", audio}, {"p1", audio}}, 48000.0);
     CHECK(prepared.id == "s");
     CHECK(prepared.audioStartOffset == 24000);
     CHECK(prepared.start == -115200);                              // one bar at 100 BPM
@@ -59,7 +59,7 @@ TEST_CASE("audio is paired with its part by id, never by position", "[songaudio]
                   {"bass", "Bass", "audio/Bass.wav", band.roles[6].id, 0.0f, false, 1},
                   {"lost", "Lost", "audio/Lost.wav", band.roles[4].id, 0.0f, false, 1}};
     auto keys = sqlive::test::constantAudio(100, 0.25f, NAN), bass = sqlive::test::constantAudio(200, 0.5f, NAN);
-    auto prepared = buildPreparedSong(song, band, {{"bass", bass}, {"keys", keys}, {"elsewhere", keys}}, 48000.0);
+    auto prepared = buildPreparedSong(song, band, RigDoc{}, {{"bass", bass}, {"keys", keys}, {"elsewhere", keys}}, 48000.0);
     REQUIRE(prepared.parts.size() == 2);                           // "lost" has no audio; "elsewhere" is no part of this song
     CHECK(prepared.parts[0].partId == "keys");  CHECK(prepared.parts[0].audio == keys);  CHECK(prepared.parts[0].role == 3);
     CHECK(prepared.parts[1].partId == "bass");  CHECK(prepared.parts[1].audio == bass);  CHECK(prepared.parts[1].role == 6);

@@ -9,6 +9,7 @@
 
 #include "model/Resampler.h"
 #include "model/Routing.h"
+#include "model/SongMidi.h"
 #include "model/Units.h"
 
 namespace sqlive::model {
@@ -60,7 +61,7 @@ std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, do
     }
 }
 
-engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
+engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band, const RigDoc& rig,
                                        const std::map<juce::String, std::shared_ptr<const engine::PartAudio>>& audioByPartId,
                                        double sampleRate) {
     std::vector<engine::PreparedPart> parts;
@@ -76,9 +77,15 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     click.subdivision = subdivisionNamed(song.click.subdivision);
     click.sound = clickSoundNamed(song.click.sound);
     click.accentDownbeat = song.click.accentDownbeat;
-    return engine::prepareSong(song.id.toStdString(), tempoMapOf(song), song.countInBars,
-                               (engine::SamplePos) std::llround(song.audioStartSeconds * sampleRate), std::move(parts), click,
-                               sampleRate);
+    auto prepared = engine::prepareSong(song.id.toStdString(), tempoMapOf(song), song.countInBars,
+                                        (engine::SamplePos) std::llround(song.audioStartSeconds * sampleRate), std::move(parts),
+                                        click, sampleRate);
+    auto midi = buildMidi(song, band, rig, prepared.tempo, sampleRate);
+    prepared.midi = std::move(midi.events);
+    prepared.clockDevices = std::move(midi.clockDevices);
+    prepared.startStopDevices = std::move(midi.startStopDevices);
+    prepared.midiDeviceIds = std::move(midi.deviceIds);
+    return prepared;
 }
 
 engine::TempoMap tempoMapOf(const SongDoc& song) {

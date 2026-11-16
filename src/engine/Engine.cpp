@@ -29,6 +29,7 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     // is freed here. The mix is kept: a start snaps it into the renderer again. So is the cue, unless it was made for
     // another rate; that one goes back through the garbage queue like anything else the engine lets go of. Stream time
     // carries on: it never goes backwards, so times from before and after a device restart stay comparable.
+    midi_.end(stream_time_);   // the notes it left sounding end now; with process not running, prepare is the producer
     playing_ = {};
     if (cued_.song != nullptr && !fitsRate(*cued_.song)) retire(cued_);
     // Commands sent before the device stopped were meant for a device that no longer runs: a start among them would go off
@@ -86,6 +87,10 @@ void Engine::setClickGain(std::uint64_t serial, float linear) {
 void Engine::setSolo(std::uint64_t serial, int part) { push({.type = Command::Type::SetSolo, .serial = serial, .index = part}); }
 
 bool Engine::popEvent(EngineEvent& event) { return events_.pop(event); }
+
+bool Engine::popMidi(OutMidi& out) { return midi_.pop(out); }
+
+void Engine::resendMidiState(int) {}
 
 void Engine::collectGarbage() {
     std::shared_ptr<const void> object;
@@ -225,6 +230,7 @@ void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix)
     // setMix snap, so a song started out of silence hears the current mix from its first sample rather than gliding in
     // from an older one. A song that follows straight on keeps the glide going, as the song before it would have.
     renderer_.setSong(playing_.song);
+    midi_.begin(*playing_.song, playing_.serial, songTime);
     if (snapMix) {
         renderer_.setMix(nullptr);
         renderer_.setMix(mix_);
@@ -261,6 +267,7 @@ void Engine::renderChunk(float* const* out, int numChannels, int offset, int fra
         if (n > 0) {
             for (int c = 0; c < numChannels; ++c) channels_[c] = out[c] != nullptr ? out[c] + offset + pos : nullptr;
             renderer_.render(song_time_, static_cast<int>(n), channels_.data(), numChannels, envelope);
+            midi_.play(song_time_, n, stream_time_ + pos);
             song_time_ += n;
             pos += static_cast<int>(n);
             if (state_ == PlayState::Stopping) fade_pos_ += n;
@@ -281,6 +288,7 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     const std::uint64_t ended = playing_.serial;
     report(type, ended, streamTime);
     renderer_.setSong(nullptr);   // before the song can be freed
+    midi_.end(streamTime);
     retire(playing_);
     state_ = PlayState::Stopped;
     song_time_ = 0;

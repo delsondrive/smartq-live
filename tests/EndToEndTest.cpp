@@ -42,7 +42,7 @@ TEST_CASE("the demo band plays", "[e2e]") {
     for (auto& [id, a] : audio) REQUIRE(a != nullptr);
     auto play = [&](const RigDoc& r) {
         engine::Engine e; e.prepare(48000.0, 512); e.setMix(buildMixSetup(model.band(), r, 2));
-        auto prepared = std::make_shared<const engine::PreparedSong>(buildPreparedSong(song, model.band(), audio, 48000.0));
+        auto prepared = std::make_shared<const engine::PreparedSong>(buildPreparedSong(song, model.band(), r, audio, 48000.0));
         e.cue(prepared); e.start();
         return engine::renderOffline(e, 2, -prepared->start + prepared->end + 1000, 512);
     };
