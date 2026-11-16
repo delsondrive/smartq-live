@@ -13,4 +13,4 @@ The first runs the tests with that Catch2 filter; the second builds `build\Smart
 
 ## Status
 
-Stage 1a: engine and band folder
+Stage 1a done: the engine and the band folder work and are tested. There is no window yet.

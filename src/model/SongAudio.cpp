@@ -1,0 +1,98 @@
+#include "model/SongAudio.h"
+
+#include <algorithm>
+#include <cmath>
+#include <new>
+#include <utility>
+
+#include <juce_audio_formats/juce_audio_formats.h>
+
+#include "model/Resampler.h"
+#include "model/Routing.h"
+#include "model/Units.h"
+
+namespace sqlive::model {
+
+namespace {
+
+engine::Subdivision subdivisionNamed(const juce::String& name) {
+    if (name == "eighths") return engine::Subdivision::Eighths;
+    if (name == "triplets") return engine::Subdivision::Triplets;
+    if (name == "sixteenths") return engine::Subdivision::Sixteenths;
+    return engine::Subdivision::None;
+}
+
+int clickSoundNamed(const juce::String& name) {
+    if (name == "beep") return 1;
+    if (name == "rim") return 2;
+    return 0;   // "wood"
+}
+
+engine::TempoMap tempoMapOf(const SongDoc& song) {
+    std::vector<engine::TempoPoint> points;
+    for (const auto& p : song.tempo) points.push_back({p.bar, p.beat, p.bpm, p.numerator, p.denominator});
+    return engine::TempoMap(std::move(points));
+}
+
+}  // namespace
+
+std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, double targetRate,
+                                                       const std::function<bool(double progress)>& keepGoing) {
+    if (targetRate <= 0.0) return nullptr;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(wav));
+    if (reader == nullptr || reader->numChannels == 0 || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0) return nullptr;
+
+    const int channels = std::min(2, (int) reader->numChannels);
+    const auto expected = (size_t) std::llround((double) reader->lengthInSamples * targetRate / reader->sampleRate);
+    try {
+        auto audio = std::make_shared<engine::PartAudio>();
+        audio->left.reserve(expected);
+        if (channels == 2) audio->right.reserve(expected);
+        const auto end = readAtRate(*reader, channels, targetRate, keepGoing, [&](const juce::AudioBuffer<float>& block, int frames) {
+            const float* l = block.getReadPointer(0);
+            audio->left.insert(audio->left.end(), l, l + frames);
+            if (channels == 2) {
+                const float* r = block.getReadPointer(1);
+                audio->right.insert(audio->right.end(), r, r + frames);
+            }
+            return true;
+        });
+        if (end != ReadEnd::Done || audio->left.empty()) return nullptr;
+        return audio;
+    } catch (const std::bad_alloc&) {
+        return nullptr;   // too long to hold in memory
+    }
+}
+
+engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
+                                       const std::vector<std::shared_ptr<const engine::PartAudio>>& audio,
+                                       double sampleRate) {
+    std::vector<engine::PreparedPart> parts;
+    for (size_t i = 0; i < song.parts.size() && i < audio.size(); ++i) {
+        const auto& part = song.parts[i];
+        const int role = roleIndex(band, part.roleId);
+        if (audio[i] == nullptr || role < 0) continue;
+        parts.push_back({audio[i], role, dbToGain(part.gainDb), part.mute});
+    }
+    engine::ClickSetup click;
+    click.enabled = song.click.enabled;
+    click.gain = dbToGain(band.clickDb + song.click.offsetDb);
+    click.subdivision = subdivisionNamed(song.click.subdivision);
+    click.sound = clickSoundNamed(song.click.sound);
+    click.accentDownbeat = song.click.accentDownbeat;
+    return engine::prepareSong(song.id.toStdString(), tempoMapOf(song), song.countInBars,
+                               (engine::SamplePos) std::llround(song.audioStartSeconds * sampleRate), std::move(parts), click,
+                               sampleRate);
+}
+
+std::int64_t bytesInMemory(const SongDoc& song, double sampleRate) {
+    const auto frames = (std::int64_t) std::llround(song.lengthSeconds * sampleRate);
+    std::int64_t bytes = 0;
+    for (const auto& part : song.parts)   // loadPartAudio keeps at most two channels
+        bytes += frames * std::clamp(part.channels, 0, 2) * (std::int64_t) sizeof(float);
+    return bytes;
+}
+
+}  // namespace sqlive::model

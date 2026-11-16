@@ -8,12 +8,11 @@
 
 #include "model/DocumentsJson.h"
 #include "model/FileNames.h"
+#include "model/Resampler.h"
 
 namespace sqlive::model {
 
 namespace {
-
-constexpr int kBlockFrames = 65536;
 
 // Lower-cased runs of letters and digits.
 juce::StringArray wordsOf(const juce::String& text) {
@@ -71,74 +70,9 @@ int sharedLeadLength(const juce::StringArray& names) {
     return 0;
 }
 
-// Feeds one channel's WindowedSincInterpolator exactly the input its next outputs need, so the stream has no seams between
-// blocks. Output m is the input at m * speed: the interpolator's 100-sample latency is taken up by a first output thrown away.
-// Downsampling isn't low-pass filtered yet: content above the new Nyquist frequency can alias.
-class Resampler {
-public:
-    Resampler(int channels, double speed) : speed_(speed), interpolators_((size_t) channels), pending_((size_t) channels) {}
-
-    void push(const juce::AudioBuffer<float>& input, int frames) {
-        for (size_t c = 0; c < pending_.size(); ++c) {
-            const float* p = input.getReadPointer((int) c);
-            pending_[c].insert(pending_[c].end(), p, p + frames);
-        }
-    }
-    void pushSilence(int frames) {
-        for (auto& p : pending_) p.insert(p.end(), (size_t) frames, 0.0f);
-    }
-    // Up to maxFrames of output into `out`, as many as the input pushed so far allows.
-    int pull(juce::AudioBuffer<float>& out, int maxFrames) {
-        if (! primed_) {
-            float discarded = 0.0f;
-            if (run(latency_, nullptr, &discarded, 1) == 0) return 0;
-            primed_ = true;
-        }
-        return run(speed_, &out, nullptr, maxFrames);
-    }
-
-private:
-    static constexpr double latency_ = (double) juce::WindowedSincInterpolator::getBaseLatency();
-
-    // Makes up to maxFrames outputs at `speed` from the pending input, into `out`, or (one frame to throw away) into `scratch`.
-    int run(double speed, juce::AudioBuffer<float>* out, float* scratch, int maxFrames) {
-        // Count them as the interpolator will: before each output it takes one input for every whole step of its position.
-        const int available = pending_.empty() ? 0 : (int) pending_[0].size();
-        double pos = pos_;
-        int made = 0, used = 0;
-        while (made < maxFrames) {
-            double next = pos;
-            int need = 0;
-            while (next >= 1.0) { next -= 1.0; ++need; }
-            if (used + need > available) break;
-            used += need;
-            pos = next + speed;
-            ++made;
-        }
-        if (made == 0) return 0;
-        for (size_t c = 0; c < pending_.size(); ++c) {
-            float* dest = out != nullptr ? out->getWritePointer((int) c) : scratch;
-            [[maybe_unused]] const int taken = interpolators_[c].process(speed, pending_[c].data(), dest, made);
-            jassert(taken == used);
-            pending_[c].erase(pending_[c].begin(), pending_[c].begin() + used);
-        }
-        pos_ = pos;
-        return made;
-    }
-
-    double speed_, pos_ = 1.0;   // pos_ mirrors each interpolator's own position, which starts at 1 after a reset
-    bool primed_ = false;
-    std::vector<juce::WindowedSincInterpolator> interpolators_;
-    std::vector<std::vector<float>> pending_;
-};
-
 juce::Result writeConverted(juce::AudioFormatReader& reader, const juce::File& part, double targetRate,
                             const std::function<bool(double)>& keepGoing, const juce::String& sourceName) {
     const int channels = (int) reader.numChannels;
-    const juce::int64 inFrames = reader.lengthInSamples;
-    const bool resample = reader.sampleRate != targetRate;
-    const juce::int64 outFrames = resample ? std::llround((double) inFrames * targetRate / reader.sampleRate) : inFrames;
-
     std::unique_ptr<juce::OutputStream> stream = part.createOutputStream();
     if (stream == nullptr) return juce::Result::fail("Couldn't write " + part.getFileName() + ".");
     juce::WavAudioFormat wav;
@@ -148,38 +82,14 @@ juce::Result writeConverted(juce::AudioFormatReader& reader, const juce::File& p
                                                   .withBitsPerSample(24));
     if (writer == nullptr) return juce::Result::fail("Couldn't write " + part.getFileName() + ".");
 
-    const auto couldntWrite = juce::Result::fail("Couldn't write " + part.getFileName() + ". Is the disk full?");
-    juce::AudioBuffer<float> in(channels, kBlockFrames), out(channels, kBlockFrames);
-    Resampler resampler(channels, reader.sampleRate / targetRate);
-    juce::int64 readFrames = 0, written = 0;
-    const auto drain = [&]() -> bool {
-        while (written < outFrames) {
-            const int made = resampler.pull(out, (int) std::min<juce::int64>(kBlockFrames, outFrames - written));
-            if (made == 0) return true;
-            if (! writer->writeFromAudioSampleBuffer(out, 0, made)) return false;
-            written += made;
-        }
-        return true;
-    };
-
-    while (readFrames < inFrames) {
-        const int frames = (int) std::min<juce::int64>(kBlockFrames, inFrames - readFrames);
-        if (! reader.read(&in, 0, frames, readFrames, true, true))
-            return juce::Result::fail(sourceName + " couldn't be read to the end.");
-        readFrames += frames;
-        if (resample) {
-            resampler.push(in, frames);
-            if (! drain()) return couldntWrite;
-        } else {
-            if (! writer->writeFromAudioSampleBuffer(in, 0, frames)) return couldntWrite;
-            written += frames;
-        }
-        if (! keepGoing((double) readFrames / (double) inFrames)) return juce::Result::fail("The import was stopped.");
-    }
-    // The last outputs look ahead past the end of the input, into silence.
-    while (written < outFrames) {
-        resampler.pushSilence(256);
-        if (! drain()) return couldntWrite;
+    const auto end = readAtRate(reader, channels, targetRate, keepGoing, [&](const juce::AudioBuffer<float>& block, int frames) {
+        return writer->writeFromAudioSampleBuffer(block, 0, frames);
+    });
+    switch (end) {
+        case ReadEnd::ReadFailed: return juce::Result::fail(sourceName + " couldn't be read to the end.");
+        case ReadEnd::SinkFailed: return juce::Result::fail("Couldn't write " + part.getFileName() + ". Is the disk full?");
+        case ReadEnd::Stopped: return juce::Result::fail("The import was stopped.");
+        case ReadEnd::Done: break;
     }
     writer.reset();   // writes the header and closes the file
     return juce::Result::ok();
