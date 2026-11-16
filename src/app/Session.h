@@ -3,12 +3,14 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <juce_events/juce_events.h>
 
 #include "app/Settings.h"
 #include "app/SongCache.h"
+#include "app/Tonight.h"
 #include "engine/Engine.h"
 #include "model/Autosaver.h"
 #include "model/BandFolder.h"
@@ -37,10 +39,14 @@ struct NowPlaying {
 // runs on the message thread; the engine's events come back through a 30 Hz timer (or advanceWithoutDevice in tests).
 //
 // The playing and next entries are kept as entry ids, never as indices, so the setlist can change under them.
+//
+// In Show mode the band folder is never written: a level changed there is kept in Tonight, which lives in the settings'
+// show memory, and the engine plays the documents with it applied (songAsHeard, rigAsHeard). Leaving Show mode keeps
+// Tonight until the user keeps or drops it. Opening a band whose show memory says it was in a show goes back into it.
 class Session : private juce::Timer {
 public:
     Session(Settings&, juce::File bandRoot, std::int64_t cacheBudgetBytes = SongCache::defaultBudgetBytes());
-    ~Session() override;                                         // flushes the autosaver
+    ~Session() override;                                         // flushes the autosaver and saves the settings
 
     const model::BandModel& model() const;
     model::CommandLayer& commands();        const model::CommandLayer& commands() const;    // const: canUndo, undoName
@@ -65,16 +71,34 @@ public:
     void playSong(const juce::String& songId, double fromSeconds);   // Edit mode: play one song from a place
     void setEditFocus(const juce::String& songId);               // the song open in an Edit page: kept loaded first
 
+    Mode mode() const;
+    void enterShow();                                            // views run the pre-show check first (Task 18)
+    bool leaveShow();                                            // false while a song is playing; keeps tonight's changes
+    std::optional<float> level(const LevelTarget&) const;        // as it is now, tonight's changes included; nullopt = not sent,
+                                                                 // or no such thing
+    bool muted(const juce::String& songId, const juce::String& partId) const;
+    // Edit mode: a command, coalesced by gestureId, so one drag is one undo step. Show mode: for tonight only (a Mix send
+    // that model::mayRoute forbids is ignored). Either way it is heard at once.
+    void setLevel(const LevelTarget&, std::optional<float> db, const juce::String& gestureId);
+    void setMute(const juce::String& songId, const juce::String& partId, bool);
+    bool changedTonight(const LevelTarget&) const;               // for a Part target, its mute counts too
+    bool hasTonightChanges() const;
+    void keepTonightChanges();                                   // makes them permanent, as one undoable step; Edit mode only
+    void dropTonightChanges();
+    model::SongDoc songAsHeard(const juce::String& songId) const;    // the document with tonight's changes applied
+    model::RigDoc rigAsHeard() const;                            // the chosen rig, with tonight's changes applied
+
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
                                                                  // never while a real device runs (Task 6 adds the check)
-    void flushNow();                                             // autosave immediately
+    void flushNow();                                             // autosave and save the settings immediately
 
 private:
     // A song as the engine plays it, with what it was built from, so a change to either builds it again.
     struct Prepared {
         std::shared_ptr<const engine::PreparedSong> song;
         std::map<juce::String, int> partIndex;                   // the engine's index of each part; a part left out has none
-        model::SongDoc doc;
+        model::SongDoc doc;                                      // as heard: tonight's changes applied
+        float clickDb = 0.0f;                                    // the band's click level plus the song's offset, as built
         std::shared_ptr<const LoadedSong> loaded;
     };
     // A cue the engine took: the entry it is for ("" for Edit-mode playback) and its serial.
@@ -114,6 +138,7 @@ private:
     void refreshPrepared();
     void refreshWanted();
     void refreshMix(bool force);
+    void refreshPlayingLevels();                                 // the playing song's levels, as heard, to the engine
     void refreshTransport();                                     // the follow-on and the cue
     engine::FollowOn followOn() const;
     bool handleEngineEvents();                                   // true when anything changed
@@ -122,6 +147,12 @@ private:
     void forgetDeadCues(const engine::EngineStatus&);
     void noteSaveState();
     void changed();
+
+    model::BandDoc bandAsHeard() const;
+    void restoreShow();                                          // from the show memory, when opening
+    void rememberShow();                                         // in Show mode: the show memory, when it differs
+    void writeShowMemory();                                      // the show memory as it is now; the file is saved by the flush
+    void tonightChanged();
 
     Settings& settings_;
     model::BandFolder folder_;
@@ -157,7 +188,14 @@ private:
     model::RigDoc mix_rig_;
     int mix_channels_ = 0;
 
-    double last_change_ms_ = 0.0;
+    Tonight tonight_;
+    // The playing song's levels as last sent to the engine, for the song with this serial.
+    std::uint64_t levels_serial_ = 0;
+    model::SongDoc levels_doc_;
+    float levels_click_db_ = 0.0f;
+
+    double last_change_ms_ = 0.0;                                // the last change to the band or to tonight's levels
+    bool settings_pending_ = false;                              // the settings changed and the file isn't written yet
     bool save_failed_ = false;
     juce::String save_error_;
     SaveState last_save_state_ = SaveState::Saved;

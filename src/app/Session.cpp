@@ -9,6 +9,7 @@
 #include "model/CoreCommands.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
+#include "model/Units.h"
 
 namespace sqlive::app {
 
@@ -57,6 +58,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     ensureChoices();
     rememberChoices();                                           // a fallback is remembered too
     setNext(entryIdAt(0));
+    restoreShow();
 
     refresh();
     startTimerHz(kTimerHz);
@@ -66,6 +68,7 @@ Session::~Session() {
     stopTimer();
     cache_.onChanged = nullptr;
     autosaver_.flush();
+    if (settings_pending_) settings_.save();
 }
 
 // ---- Accessors ---------------------------------------------------------------------------------------------------------
@@ -190,6 +193,7 @@ void Session::perform(Action action) {
     }
     case Action::ToggleView:
         stage_view_ = !stage_view_;
+        rememberShow();
         changed();
         break;
     }
@@ -214,6 +218,169 @@ void Session::playSong(const juce::String& songId, double fromSeconds) {
     refresh();
 }
 
+// ---- Show mode and levels ----------------------------------------------------------------------------------------------
+
+Mode Session::mode() const { return mode_; }
+
+void Session::enterShow() {
+    if (mode_ == Mode::Show) return;
+    mode_ = Mode::Show;
+    writeShowMemory();
+    refresh();
+}
+
+bool Session::leaveShow() {
+    if (mode_ == Mode::Edit) return true;
+    if (now().playing) return false;
+    mode_ = Mode::Edit;
+    writeShowMemory();                                           // no longer in the show; tonight's changes wait for the answer
+    refresh();
+    return true;
+}
+
+std::optional<float> Session::level(const LevelTarget& target) const {
+    using Kind = LevelTarget::Kind;
+    switch (target.kind) {
+    case Kind::Part: {
+        if (model_.song(target.songId) == nullptr) return std::nullopt;
+        for (const auto& part : songAsHeard(target.songId).parts)
+            if (part.id == target.partId) return part.gainDb;
+        return std::nullopt;
+    }
+    case Kind::SongClick:
+        if (model_.song(target.songId) == nullptr) return std::nullopt;
+        return songAsHeard(target.songId).click.offsetDb;
+    case Kind::Mix:
+    case Kind::OutputTrim:
+        for (const auto& out : rigAsHeard().outputs) {
+            if (out.id != target.outputId) continue;
+            if (target.kind == Kind::OutputTrim) return out.trimDb;
+            const auto sent = out.mix.find(target.roleId);
+            return sent != out.mix.end() ? std::optional<float>(sent->second) : std::nullopt;
+        }
+        return std::nullopt;
+    case Kind::BandClick: return bandAsHeard().clickDb;
+    case Kind::BandCues: return bandAsHeard().cuesDb;
+    case Kind::BandPad: return bandAsHeard().padDb;
+    }
+    return std::nullopt;
+}
+
+bool Session::muted(const juce::String& songId, const juce::String& partId) const {
+    for (const auto& part : songAsHeard(songId).parts)
+        if (part.id == partId) return part.mute;
+    return false;
+}
+
+void Session::setLevel(const LevelTarget& target, std::optional<float> db, const juce::String& gestureId) {
+    if (!db.has_value() && target.kind != LevelTarget::Kind::Mix) return;
+    if (mode_ == Mode::Edit) {
+        // The same commands that keeping tonight's changes runs, for this one change.
+        Tonight one;
+        one.setLevel(target, db);
+        for (const auto& [name, params] : one.asCommands(rig_id_)) commands_.run(name, params, gestureId);
+        return;
+    }
+    if (target.kind == LevelTarget::Kind::Mix) {
+        const auto* role = model_.role(target.roleId);
+        const auto* rig = model_.rig(rig_id_);
+        if (role == nullptr || rig == nullptr) return;
+        const auto out = std::find_if(rig->outputs.begin(), rig->outputs.end(),
+                                      [&](const model::OutputDoc& o) { return o.id == target.outputId; });
+        if (out == rig->outputs.end() || (db.has_value() && !model::mayRoute(role->kind, out->label))) return;
+    }
+    tonight_.setLevel(target, db);
+    tonightChanged();
+}
+
+void Session::setMute(const juce::String& songId, const juce::String& partId, bool mute) {
+    if (mode_ == Mode::Edit) {
+        Tonight one;
+        one.setMute(songId, partId, mute);
+        for (const auto& [name, params] : one.asCommands(rig_id_)) commands_.run(name, params);
+        return;
+    }
+    tonight_.setMute(songId, partId, mute);
+    tonightChanged();
+}
+
+bool Session::changedTonight(const LevelTarget& target) const {
+    return tonight_.has(target) || (target.kind == LevelTarget::Kind::Part && tonight_.hasMute(target.songId, target.partId));
+}
+
+bool Session::hasTonightChanges() const { return !tonight_.isEmpty(); }
+
+void Session::keepTonightChanges() {
+    if (mode_ == Mode::Show || tonight_.isEmpty()) return;      // Show mode never writes the band folder
+    // One key shared by all of them, so undo takes them back together; fresh each time, as CommandLayer merges into the top
+    // step whenever its key matches, and a reused one would fold them into an edit made before the show. Tonight is
+    // cleared only afterwards, so what is heard doesn't change while the documents catch up with it.
+    const auto key = juce::Uuid().toString();
+    for (const auto& [name, params] : tonight_.asCommands(rig_id_)) commands_.run(name, params, key);
+    tonight_.clear();
+    tonightChanged();
+}
+
+void Session::dropTonightChanges() {
+    if (tonight_.isEmpty()) return;
+    tonight_.clear();
+    tonightChanged();                                            // the documents' levels go back to the engine
+}
+
+model::SongDoc Session::songAsHeard(const juce::String& songId) const {
+    const auto* doc = model_.song(songId);
+    return tonight_.apply(doc != nullptr ? *doc : model::SongDoc{});
+}
+
+model::RigDoc Session::rigAsHeard() const {
+    const auto* rig = model_.rig(rig_id_);
+    return tonight_.apply(rig != nullptr ? *rig : model::RigDoc{});
+}
+
+model::BandDoc Session::bandAsHeard() const { return tonight_.apply(model_.band()); }
+
+void Session::restoreShow() {
+    const auto memory = settings_.showMemory(folder_.root());
+    // Kept after leaving a show until the user keeps or drops it: still heard, and the question is asked again.
+    tonight_ = Tonight::fromJson(memory.tonightJson);
+    if (!memory.inShow) return;
+    mode_ = Mode::Show;
+    stage_view_ = memory.stageView;
+    if (memory.setlistId != setlist_id_ && model_.setlist(memory.setlistId) != nullptr) {
+        setlist_id_ = memory.setlistId;
+        rememberChoices();
+        setNext(entryIdAt(0));
+    }
+    if (indexOf(memory.nextEntryId) >= 0) setNext(memory.nextEntryId);
+}
+
+void Session::rememberShow() {
+    if (mode_ != Mode::Show) return;
+    const auto memory = settings_.showMemory(folder_.root());
+    if (memory.inShow && memory.stageView == stage_view_ && memory.setlistId == setlist_id_
+        && memory.nextEntryId == next_entry_id_)
+        return;
+    writeShowMemory();
+}
+
+void Session::writeShowMemory() {
+    ShowMemory memory;
+    memory.inShow = mode_ == Mode::Show;
+    memory.stageView = stage_view_;
+    memory.setlistId = setlist_id_;
+    memory.nextEntryId = next_entry_id_;
+    memory.tonightJson = tonight_.isEmpty() ? juce::String() : tonight_.toJson();
+    settings_.setShowMemory(folder_.root(), memory);
+    // Written to the file by the same flush as the band, never on every fader step.
+    settings_pending_ = true;
+    last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
+}
+
+void Session::tonightChanged() {
+    writeShowMemory();
+    refresh();
+}
+
 void Session::advanceWithoutDevice(int frames) {
     const int channels = output_channels_ > 0 ? output_channels_ : 2;
     if ((int) scratch_.size() != channels) {
@@ -235,16 +402,18 @@ void Session::advanceWithoutDevice(int frames) {
 
 void Session::flushNow() {
     autosaver_.flush();
+    if (settings_pending_) settings_pending_ = settings_.save().failed();
     noteSaveState();
 }
 
 void Session::timerCallback() {
     if (handleEngineEvents()) refresh();
     else refreshTransport();                                     // retries a cue the engine's full queue refused
-    if (autosaver_.hasPending() && juce::Time::getMillisecondCounterHiRes() - last_change_ms_ >= kAutosaveDelayMs) {
+    if ((autosaver_.hasPending() || settings_pending_)
+        && juce::Time::getMillisecondCounterHiRes() - last_change_ms_ >= kAutosaveDelayMs) {
         flushNow();
         // What failed stays pending: try again after the same wait, not on every tick.
-        if (autosaver_.hasPending()) last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
+        if (autosaver_.hasPending() || settings_pending_) last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
     }
     noteSaveState();
     if (playing_.active() || engine_.status().inGap) changed();  // the position moves
@@ -336,7 +505,9 @@ void Session::refresh() {
     refreshPrepared();
     refreshWanted();
     refreshMix(false);
+    refreshPlayingLevels();
     refreshTransport();
+    rememberShow();
     noteSaveState();
     changed();
 }
@@ -387,15 +558,17 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
         prepared_.erase(songId);
         return nullptr;
     }
+    auto heard = tonight_.apply(*doc);
     if (const auto found = prepared_.find(songId);
-        found != prepared_.end() && found->second->loaded == loaded && found->second->doc == *doc)
+        found != prepared_.end() && found->second->loaded == loaded && found->second->doc == heard)
         return found->second;
 
     auto prepared = std::make_shared<Prepared>();
-    prepared->doc = *doc;
+    prepared->doc = std::move(heard);
+    prepared->clickDb = prepared_band_.clickDb + prepared->doc.click.offsetDb;
     prepared->loaded = loaded;
     prepared->song = std::make_shared<const engine::PreparedSong>(
-        model::buildPreparedSong(*doc, model_.band(), loaded->audio, sample_rate_));
+        model::buildPreparedSong(prepared->doc, prepared_band_, loaded->audio, sample_rate_));
     for (std::size_t i = 0; i < prepared->song->parts.size(); ++i)
         prepared->partIndex[juce::String(prepared->song->parts[i].partId)] = (int) i;
     prepared_[songId] = prepared;
@@ -403,9 +576,9 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
 }
 
 void Session::refreshPrepared() {
-    if (model_.band() != prepared_band_) {                       // roles and the click level are built into every song
+    if (auto band = bandAsHeard(); band != prepared_band_) {     // roles and the click level are built into every song
         prepared_.clear();
-        prepared_band_ = model_.band();
+        prepared_band_ = std::move(band);
     }
     // The songs near the playhead: the next, the entries either side of it, and the song open in an Edit page.
     std::set<juce::String> near;
@@ -453,14 +626,38 @@ void Session::refreshWanted() {
 }
 
 void Session::refreshMix(bool force) {
-    const auto* rig = model_.rig(rig_id_);
-    const model::RigDoc rigDoc = rig != nullptr ? *rig : model::RigDoc{};
-    if (!force && mix_built_ && rigDoc == mix_rig_ && model_.band() == mix_band_ && output_channels_ == mix_channels_) return;
+    auto rigDoc = rigAsHeard();
+    auto band = bandAsHeard();
+    if (!force && mix_built_ && rigDoc == mix_rig_ && band == mix_band_ && output_channels_ == mix_channels_) return;
     mix_built_ = true;
-    mix_rig_ = rigDoc;
-    mix_band_ = model_.band();
+    mix_rig_ = std::move(rigDoc);
+    mix_band_ = std::move(band);
     mix_channels_ = output_channels_;
     engine_.setMix(model::buildMixSetup(mix_band_, mix_rig_, mix_channels_));
+}
+
+void Session::refreshPlayingLevels() {
+    if (!playing_.active() || model_.song(playing_.songId) == nullptr) return;
+    const auto& prepared = *playing_.prepared;
+    if (levels_serial_ != playing_.serial) {                     // a song just started: it was built with these
+        levels_serial_ = playing_.serial;
+        levels_doc_ = prepared.doc;
+        levels_click_db_ = prepared.clickDb;
+    }
+    const auto heard = songAsHeard(playing_.songId);
+    for (const auto& part : heard.parts) {
+        const auto index = prepared.partIndex.find(part.id);
+        const auto sent = std::find_if(levels_doc_.parts.begin(), levels_doc_.parts.end(),
+                                       [&](const model::PartDoc& p) { return p.id == part.id; });
+        if (index == prepared.partIndex.end() || sent == levels_doc_.parts.end()) continue;   // not in what the engine plays
+        if (part.gainDb != sent->gainDb) engine_.setPartGain(playing_.serial, index->second, model::dbToGain(part.gainDb));
+        if (part.mute != sent->mute) engine_.setPartMute(playing_.serial, index->second, part.mute);
+        sent->gainDb = part.gainDb;
+        sent->mute = part.mute;
+    }
+    const float clickDb = bandAsHeard().clickDb + heard.click.offsetDb;
+    if (clickDb != levels_click_db_) engine_.setClickGain(playing_.serial, model::dbToGain(clickDb));
+    levels_click_db_ = clickDb;
 }
 
 engine::FollowOn Session::followOn() const {
