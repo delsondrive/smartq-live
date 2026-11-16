@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Q Live mockups</title>
+<style>
+:root{
+  --bg1:#0e0c11;--bg2:#17131b;--glow:#241b2c;--panel:#121016;--popup:#211b27;--field:rgba(255,255,255,.07);
+  --hair:rgba(255,255,255,.11);--text:#f5f2f6;--mid:#c9c2cf;--dim:#9a90a2;
+  /* one job each: mint = now / ready, ember = next, amber = changed tonight / check this, red = broken */
+  --ember:#f29a78;--mint:#6ff0c8;--danger:#ff6f7d;--caution:#ffb547;
+  /* section types */
+  --s-intro:#8491ff;--s-verse:#6ea8ff;--s-pre:#58d3e8;--s-chorus:#ffc163;--s-bridge:#b69dff;--s-solo:#ff8fd2;--s-outro:#a79fb0;
+  /* parts */
+  --p-keys:#ff9a68;--p-synth:#e070ff;--p-gtr:#a8dc68;--p-bvs:#5ed8a2;--p-perc:#e9d568;--p-str:#b8c0cc;--p-pad:#86b7a8;
+  /* MIDI devices */
+  --d1:#4fcabd;--d2:#ff7d93;--d3:#9fb4ff;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#08070a;color:var(--text);font:14px/1.4 "Segoe UI",system-ui,sans-serif}
+.nav{position:sticky;top:0;z-index:50;background:rgba(8,7,10,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--hair);padding:10px 24px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.nav b{margin-right:10px;font-weight:600}
+.nav i{font-style:normal;color:var(--ember);font-size:11px;font-weight:700;letter-spacing:1px;margin:0 4px 0 10px}
+.nav a{color:var(--mid);text-decoration:none;font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px;background:var(--field)}
+.nav a:hover{color:#0e0c11;background:var(--mint)}
+.page{padding:24px}
+h1{font-weight:500;font-size:24px;margin:0 0 4px}
+.lead{color:var(--dim);margin:0 0 8px;max-width:1100px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 0;font-size:12px;color:var(--mid)}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--k)}
+.group{font-size:12px;letter-spacing:1.5px;color:var(--ember);font-weight:700;margin:40px 0 0;padding-top:14px;border-top:1px solid var(--hair)}
+.opt{margin:18px 0 44px;scroll-margin-top:60px}
+.opt h2{font-size:18px;font-weight:600;margin:0 0 4px}
+.opt h2 span{display:inline-block;background:var(--mint);color:#0e0c11;border-radius:6px;padding:0 8px;margin-right:8px;min-width:30px;text-align:center}
+.opt p.sub{color:var(--mid);margin:0 0 12px;max-width:1180px}
+.pair{display:flex;gap:20px;align-items:flex-start}
+/* app frame */
+.app{flex-shrink:0;width:1280px;height:760px;border-radius:12px;overflow:hidden;border:1px solid var(--hair);position:relative;
+  background:radial-gradient(1200px 500px at 50% -10%,var(--glow),transparent),linear-gradient(var(--bg1),var(--bg2));
+  display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.app.half{width:630px;height:580px}
+.top{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--hair);background:rgba(0,0,0,.25);min-height:62px;flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:.5px;white-space:nowrap}
+.logo i{width:26px;height:26px;border-radius:50%;border:2px solid var(--mint);display:grid;place-items:center;font-style:normal;color:var(--mint);font-size:13px}
+.logo small{color:var(--ember);font-weight:600}
+.tabs{display:flex;gap:4px}
+.tabs span{padding:6px 12px;border-radius:8px;color:var(--dim);font-weight:600;font-size:13px;white-space:nowrap}
+.tabs span.on{background:var(--field);color:var(--text);box-shadow:inset 0 -2px 0 var(--mint)}
+.grow{flex:1}
+.modesw{flex-shrink:0;display:flex;border:1px solid var(--hair);border-radius:8px;overflow:hidden;font-size:12px;font-weight:600;white-space:nowrap}
+.modesw span{padding:6px 12px;color:var(--dim)}
+.modesw.show span.on{background:var(--ember);color:#160f10}
+.modesw.editing span.on{background:var(--mint);color:#0e0c11}
+.btn{display:inline-block;padding:6px 12px;border-radius:8px;background:var(--field);border:1px solid var(--hair);color:var(--mid);font-size:13px;font-weight:600;white-space:nowrap}
+.btn.pri{background:var(--mint);color:#0e0c11;border-color:transparent}
+.btn.emb{background:var(--ember);color:#160f10;border-color:transparent}
+.btn.red{color:var(--danger)}
+.btn.off{opacity:.4}
+.chip{background:var(--field);border:1px solid var(--hair);border-radius:8px;padding:4px 10px;color:var(--mid);font-size:13px;white-space:nowrap}
+.chip b{color:var(--text)}
+.hint{font-size:12px;color:var(--dim)}
+kbd{background:var(--field);border:1px solid var(--hair);border-bottom-width:2px;border-radius:4px;padding:0 5px;font:600 11px "Segoe UI";color:var(--text);white-space:nowrap}
+.ok{color:var(--mint)}.warn{color:var(--caution)}.bad{color:var(--danger)}
+.dd{display:inline-flex;align-items:center;gap:6px;background:var(--field);border:1px solid var(--hair);border-radius:6px;padding:2px 8px;color:var(--text);white-space:nowrap}
+.dd i{width:8px;height:8px;border-radius:50%}
+.dd::after{content:"▾";color:var(--dim);font-size:10px}
+.dd.need{border-color:var(--caution);color:var(--caution)}
+.tog{display:inline-block;width:34px;height:18px;border-radius:10px;background:var(--field);border:1px solid var(--hair);position:relative;vertical-align:middle}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--dim)}
+.tog.on{background:rgba(111,240,200,.25);border-color:var(--mint)}
+.tog.on::after{left:18px;background:var(--mint)}
+.box,.card{background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:10px 12px}
+h4{margin:0 0 6px;font-size:11px;letter-spacing:.8px;color:var(--dim);font-weight:700}
+.row{display:flex;justify-content:space-between;align-items:center;margin:6px 0;font-size:13px;color:var(--mid);gap:10px}
+.val{background:var(--field);border:1px solid var(--hair);border-radius:6px;padding:3px 8px;color:var(--text);font-weight:600;min-width:80px;text-align:right;white-space:nowrap}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--dim);font-size:11px;letter-spacing:.6px;text-align:left;padding:7px 8px;border-bottom:1px solid var(--hair);font-weight:700;white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.05);color:var(--mid);white-space:nowrap}
+td.f{color:var(--text);font-weight:600}
+td.f small{display:block;font-weight:400;color:var(--dim);font-size:11px}
+.bar4{display:inline-block;width:4px;height:14px;border-radius:2px;margin-right:8px;vertical-align:middle}
+.status{display:flex;gap:6px;font-size:12px}
+.st{padding:3px 8px;border-radius:20px;background:rgba(111,240,200,.1);color:var(--mint);border:1px solid rgba(111,240,200,.25);white-space:nowrap}
+.st.warn{background:rgba(255,181,71,.1);color:var(--caution);border-color:rgba(255,181,71,.3)}
+.st.bad{background:rgba(255,111,125,.15);color:var(--danger);border-color:rgba(255,111,125,.4)}
+/* main view */
+.clock{font-variant-numeric:tabular-nums;white-space:nowrap}
+.clock b{font-size:30px;font-weight:300;display:block;line-height:1}
+.clock small{color:var(--dim)}
+.meta{display:flex;gap:6px}
+.transport{display:flex;gap:10px;margin:0 auto;align-items:center}
+.tbtn{width:44px;height:44px;border-radius:10px;background:var(--field);border:1px solid var(--hair);display:grid;place-items:center;color:var(--mid);font-size:16px}
+.tbtn.play{width:64px;height:52px;background:var(--mint);color:#0e0c11;font-size:22px;border:none;box-shadow:0 0 24px rgba(111,240,200,.35)}
+.beats{display:flex;gap:5px}
+.beats i{width:12px;height:12px;border-radius:50%;background:var(--field);border:1px solid var(--hair)}
+.beats i.on{background:var(--mint);box-shadow:0 0 10px var(--mint);border-color:var(--mint)}
+.setstrip{display:flex;gap:8px;padding:12px 16px;overflow:hidden;border-bottom:1px solid var(--hair)}
+.song{flex:0 0 168px;border-radius:10px;background:var(--field);border:1px solid var(--hair);padding:8px 10px 10px 12px;position:relative;overflow:hidden}
+.song .n{color:var(--dim);font-size:12px}
+.song .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.song .m{color:var(--dim);font-size:12px;display:flex;justify-content:space-between}
+.song.done{opacity:.45}
+.song.playing{border-color:var(--mint);background:rgba(111,240,200,.08);box-shadow:inset 0 0 0 1px var(--mint)}
+.song.playing::after{content:"";position:absolute;left:0;bottom:0;height:3px;width:46%;background:var(--mint)}
+.song.upnext{border:1px dashed var(--ember)}
+.tag{position:absolute;right:8px;top:6px;font-size:10px;font-weight:700;letter-spacing:.6px;padding:1px 6px;border-radius:4px}
+.tag.t-now{background:var(--mint);color:#0e0c11}
+.tag.t-next{background:var(--ember);color:#160f10}
+.map{padding:12px 16px 6px;position:relative}
+.sections{display:flex;gap:3px;margin-bottom:6px}
+.sec{height:34px;border-radius:7px;display:flex;align-items:center;padding:0 10px;font-weight:600;font-size:13px;color:#0e0c11;position:relative;white-space:nowrap;overflow:hidden}
+.sec small{opacity:.65;margin-right:6px;font-weight:700}
+.sec.past{opacity:.4}
+.sec.cur{outline:2px solid #fff;outline-offset:1px}
+.sec.queued{outline:2px dashed var(--ember);outline-offset:1px}
+.sec.queued::after{content:"NEXT";position:absolute;right:6px;font-size:10px;background:#0e0c11;color:var(--ember);padding:1px 5px;border-radius:4px}
+.wave{height:112px;border-radius:8px;background:rgba(0,0,0,.25);border:1px solid var(--hair);position:relative;overflow:hidden}
+.wave canvas{width:100%;height:100%;display:block}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff}
+.lanes{margin-top:6px;display:flex;flex-direction:column;gap:3px}
+.lane{height:22px;border-radius:5px;background:rgba(0,0,0,.2);border:1px solid var(--hair);position:relative;font-size:11px}
+.lane label{position:absolute;left:6px;top:3px;color:var(--dim);font-weight:600}
+.mk{position:absolute;top:2px;height:16px;border-radius:4px;padding:0 5px;color:#0e0c11;font-weight:700;font-size:10px;line-height:16px;white-space:nowrap}
+.mk.picked{outline:2px solid #fff;outline-offset:1px;box-shadow:0 0 12px rgba(255,255,255,.5)}
+.mk.auto{background:transparent;border:1px dashed var(--dim);color:var(--dim)}
+.bottom{flex:1;display:flex;gap:12px;padding:8px 16px 14px;min-height:0}
+.mixer{flex:1;display:flex;gap:6px;background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:10px;position:relative}
+.mixer.live{padding-top:30px}
+.mixer .cap2{position:absolute;left:12px;top:8px;font-size:10px;letter-spacing:.8px;font-weight:700;color:var(--dim)}
+.ch{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.ch .nm{font-size:11px;font-weight:600;color:var(--mid);white-space:nowrap}
+.ch .out{font-size:10px;color:var(--dim);white-space:nowrap}
+.fader{flex:1;width:8px;border-radius:4px;background:rgba(255,255,255,.08);position:relative}
+.fader .cap{position:absolute;left:-12px;width:32px;height:14px;border-radius:4px;background:#e9e4ec;box-shadow:0 2px 6px rgba(0,0,0,.6)}
+.fader .cap.tonight{background:var(--caution)}
+.fader .lvl{position:absolute;left:0;right:0;bottom:0;border-radius:4px;opacity:.75}
+.ms{display:flex;gap:3px}
+.ms b{font-size:10px;width:18px;height:16px;border-radius:3px;display:grid;place-items:center;background:var(--field);color:var(--dim)}
+.ms b.m{background:var(--danger);color:#160f10}
+.ms b.s{background:var(--caution);color:#160f10}
+.ch.mon .nm::after{content:" ◉";color:var(--dim)}
+.sep{width:1px;background:var(--hair)}
+.side{width:250px;display:flex;flex-direction:column;gap:10px}
+.keys{display:flex;flex-wrap:wrap;gap:3px}
+.keys span{font-size:11px;width:26px;text-align:center;padding:3px 0;border-radius:4px;background:var(--field);color:var(--dim)}
+.keys span.on{background:var(--p-pad);color:#0e0c11;font-weight:700}
+/* stage view */
+.stage{padding:24px 32px;display:flex;flex-direction:column;gap:22px;flex:1}
+.nowrow{display:flex;align-items:flex-end;justify-content:space-between}
+.nowrow .lbl{font-size:15px;font-weight:700;letter-spacing:2px;color:var(--mint)}
+.nowrow .title{font-size:72px;font-weight:600;line-height:1.05}
+.big{display:flex;gap:32px;align-items:flex-end;font-variant-numeric:tabular-nums}
+.big div{text-align:right}
+.big b{font-size:76px;font-weight:300;line-height:1;display:block}
+.big small{color:var(--dim);font-size:14px;letter-spacing:1px}
+.bigbeats{display:flex;gap:10px}
+.bigbeats i{width:34px;height:34px;border-radius:50%;background:var(--field);border:1px solid var(--hair)}
+.bigbeats i.on{background:var(--mint);box-shadow:0 0 24px var(--mint)}
+.secline{display:flex;align-items:baseline;gap:16px;font-size:30px;font-weight:600}
+.secline b{font-size:60px;font-weight:300;font-variant-numeric:tabular-nums;line-height:1}
+.secline .then{margin-left:auto;color:var(--ember)}
+.bigsec{display:grid;grid-template-columns:repeat(7,1fr);gap:10px}
+.bigsec div{height:112px;border-radius:14px;padding:12px 14px;color:#0e0c11;font-weight:700;font-size:24px;display:flex;flex-direction:column;justify-content:space-between}
+.bigsec div small{font-size:14px;opacity:.7}
+.bigsec div.past{opacity:.35}
+.bigsec div.cur{outline:4px solid #fff;outline-offset:2px}
+.bigsec div.q{outline:3px dashed var(--ember);outline-offset:2px}
+.bigsec.quiet div{opacity:.5;height:72px;font-size:17px;justify-content:center}
+.prog{height:10px;border-radius:5px;background:var(--field);overflow:hidden}
+.prog i{display:block;height:100%;width:46%;background:var(--mint)}
+.nextbox{display:flex;gap:16px;align-items:center;border:2px dashed var(--ember);border-radius:14px;padding:16px 22px}
+.nextbox .lbl{font-weight:700;letter-spacing:2px;color:var(--ember)}
+.nextbox .title{font-size:40px;font-weight:600}
+.nextbox .info{margin-left:auto;color:var(--mid);text-align:right;font-size:18px}
+.after{display:flex;gap:8px}
+.after span{flex:1;padding:12px 14px;border-radius:10px;background:var(--field);color:var(--dim);font-size:16px;font-weight:600;white-space:nowrap}
+.after span b{color:var(--mid);margin-right:6px}
+.keysbar{display:flex;gap:18px;color:var(--dim);font-size:14px;margin-top:auto;flex-wrap:wrap}
+.cta{display:flex;align-items:center;gap:26px;border-radius:18px;padding:30px;background:rgba(111,240,200,.1);border:2px solid var(--mint)}
+.cta .bigkey{font-size:36px;padding:16px 36px;border-radius:12px;background:var(--mint);color:#0e0c11;border:none;font-weight:700}
+.cta b{display:block;font-size:40px;font-weight:600}
+.cta small{color:var(--mid);font-size:17px}
+.cta .pill{margin-left:auto;font-size:24px;font-weight:700;letter-spacing:1px;color:var(--mint);white-space:nowrap}
+.cta.strip{padding:16px 26px}
+.cta.strip .bigkey{font-size:24px;padding:10px 24px}
+.cta.strip b{font-size:26px}
+.cta.strip .pill{font-size:18px}
+.cta.loading{background:var(--field);border-color:var(--hair)}
+.cta.loading .bigkey{background:var(--field);color:var(--dim)}
+.cta.loading .pill{color:var(--dim)}
+/* edit layout */
+.body{flex:1;display:flex;min-height:0}
+.songs{width:200px;border-right:1px solid var(--hair);padding:10px;display:flex;flex-direction:column;gap:4px;background:rgba(0,0,0,.15)}
+.si{padding:7px 9px;border-radius:7px;font-size:13px;color:var(--mid);display:flex;gap:8px;align-items:center;white-space:nowrap}
+.si.on{background:var(--field);color:var(--text);box-shadow:inset 0 0 0 1px var(--mint)}
+.si.add{color:var(--mint);font-weight:600;margin-top:6px;border:1px dashed rgba(111,240,200,.4);justify-content:center}
+.editcol{flex:1;display:flex;flex-direction:column;min-width:0}
+.ebar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--hair)}
+.ebar .title{font-size:18px;font-weight:600;margin-right:6px;white-space:nowrap}
+.ebar .chip{padding:3px 8px;font-size:12px}
+.arr{display:flex;align-items:center;gap:5px;padding:7px 12px;border-bottom:1px solid var(--hair);font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden}
+.arr span.c{font-weight:700;color:#0e0c11;border-radius:5px;padding:2px 8px;font-size:11px}
+.arr span.c.new{outline:2px solid #fff;outline-offset:1px}
+.arr em{font-style:normal;color:var(--mint);font-weight:600;margin-left:6px}
+.tools{display:flex;gap:3px;background:var(--field);border-radius:8px;padding:3px}
+.tools span{padding:3px 9px;border-radius:6px;font-size:12px;color:var(--dim);font-weight:600;white-space:nowrap}
+.tools span.on{background:var(--popup);color:var(--text)}
+.tl{flex:1;display:grid;grid-template-columns:150px 1fr;grid-auto-rows:min-content;overflow:hidden;position:relative}
+.hd{border-right:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:4px 8px;font-size:12px;font-weight:600;color:var(--mid);display:flex;align-items:center;gap:6px;background:rgba(0,0,0,.18);white-space:nowrap}
+.hd i{width:8px;height:8px;border-radius:50%}
+.hd small{color:var(--dim);font-weight:400;margin-left:auto}
+.ln{border-bottom:1px solid var(--hair);position:relative;background:repeating-linear-gradient(90deg,rgba(255,255,255,.05) 0 1px,transparent 1px 34.2px)}
+.ruler{height:26px;background:rgba(0,0,0,.3);font-size:10px;color:var(--dim)}
+.ruler span{position:absolute;top:6px;transform:translateX(3px)}
+.r28{height:28px}.r24{height:24px}.r44{height:44px}.r36{height:36px}
+.tempo{position:absolute;top:4px;height:20px;border-radius:4px;padding:0 6px;font-size:11px;font-weight:700;line-height:20px;background:rgba(255,255,255,.12);color:var(--text)}
+.esec{position:absolute;top:3px;height:22px;border-radius:5px;padding:0 7px;font-size:12px;font-weight:700;line-height:22px;color:#0e0c11;overflow:hidden;white-space:nowrap}
+.ln .mk{top:4px}
+.wf{position:absolute;inset:4px 0}
+.eph{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;left:calc(150px + (100% - 150px) * 0.205);z-index:3}
+.insp{width:290px;border-left:1px solid var(--hair);padding:12px;display:flex;flex-direction:column;gap:10px;background:rgba(0,0,0,.15)}
+.msg{display:flex;gap:6px;align-items:center;background:var(--field);border-radius:7px;padding:6px 8px;margin:5px 0;font-size:12px}
+.msg b{background:var(--d1);color:#0e0c11;border-radius:4px;padding:0 5px;font-size:11px}
+.msg span{color:var(--dim);margin-left:auto}
+.addl{color:var(--mint);font-size:12px;font-weight:600}
+.foot{display:flex;gap:14px;align-items:center;padding:7px 12px;border-top:1px solid var(--hair);font-size:12px;color:var(--dim)}
+.foot b{color:var(--mint)}
+.pills{display:inline-flex;flex-wrap:wrap;gap:4px}
+.pills span{font-size:11px;font-weight:700;color:#0e0c11;border-radius:4px;padding:1px 6px}
+/* dialogs */
+.veil{position:absolute;inset:0;background:rgba(5,4,7,.7);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:5}
+.dlg{width:1040px;background:var(--popup);border:1px solid var(--hair);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.7);overflow:hidden}
+.dlg .dh{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--hair)}
+.dlg .dh h3{margin:0;font-size:18px}
+.steps{display:flex;gap:6px;margin-left:auto;font-size:12px}
+.steps span{padding:3px 10px;border-radius:20px;background:var(--field);color:var(--dim);font-weight:600}
+.steps span.done{color:var(--mint)}
+.steps span.on{background:var(--mint);color:#0e0c11}
+.dbody{display:grid;grid-template-columns:1fr 320px;gap:16px;padding:16px 18px}
+.drop{border:2px dashed rgba(111,240,200,.35);border-radius:10px;padding:10px 14px;color:var(--mid);display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:10px;background:rgba(111,240,200,.04)}
+.drop b{color:var(--mint)}
+.mini{width:120px;height:18px}
+.df{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--hair)}
+.check{display:flex;align-items:center;gap:6px;color:var(--mid);font-size:13px}
+.check i{width:16px;height:16px;border-radius:4px;background:var(--mint);display:grid;place-items:center;color:#0e0c11;font-style:normal;font-size:11px;font-weight:800}
+.content{flex:1;display:flex;gap:14px;padding:14px 16px;min-height:0}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.subtabs{width:190px;display:flex;flex-direction:column;gap:3px;flex-shrink:0}
+.subtabs span{padding:8px 12px;border-radius:8px;color:var(--mid);font-weight:600;font-size:13px}
+.subtabs span.on{background:var(--field);color:var(--text);box-shadow:inset 3px 0 0 var(--mint)}
+.subtabs span small{display:block;font-weight:400;color:var(--dim);font-size:11px}
+.lbl-out{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;white-space:nowrap}
+.lbl-out.mon{background:rgba(255,255,255,.1);color:var(--text);border:1px solid var(--hair)}
+.lbl-out.foh{background:rgba(110,168,255,.15);color:#8fbcff;border:1px solid rgba(110,168,255,.35)}
+.lbl-out.tc{background:rgba(182,157,255,.15);color:#c4b1ff;border:1px solid rgba(182,157,255,.35)}
+.lbl-out.off{background:transparent;color:var(--dim);border:1px dashed var(--hair)}
+.grid-route th{text-align:center}
+.grid-route th:first-child{text-align:left}
+.grid-route td.dot{text-align:center}
+.grid-route td.dot i{display:inline-block;width:14px;height:14px;border-radius:50%;border:1px solid var(--hair)}
+.grid-route td.dot i.on{background:var(--mint);border-color:var(--mint);box-shadow:0 0 8px rgba(111,240,200,.5)}
+.grid-route td.dot i.block{border:none;width:14px;height:2px;border-radius:1px;background:rgba(255,255,255,.12);vertical-align:middle}
+.lv{display:inline-block;min-width:38px;padding:1px 6px;border-radius:10px;background:rgba(111,240,200,.14);border:1px solid rgba(111,240,200,.55);color:var(--mint);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.lv.hi{background:rgba(111,240,200,.3)}
+.nolv{color:rgba(255,255,255,.16)}
+.grid-route th small{display:block;color:var(--text);font-size:12px;letter-spacing:0;font-weight:600;margin-bottom:2px}
+.meter{display:inline-block;width:80px;height:6px;border-radius:3px;background:var(--field);overflow:hidden;vertical-align:middle}
+.meter i{display:block;height:100%;background:var(--mint)}
+.meter.hot i{background:var(--danger)}
+.learn{display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:700;background:var(--field);color:var(--mid);border:1px solid var(--hair)}
+.learn.wait{background:rgba(242,154,120,.15);color:var(--ember);border-color:rgba(242,154,120,.4);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.4}}
+.qr{width:150px;height:150px;border-radius:8px;background:#fff;padding:8px;flex-shrink:0}
+.qr canvas{width:100%;height:100%}
+.phone{flex-shrink:0;width:300px;height:620px;border-radius:38px;border:10px solid #262029;background:linear-gradient(var(--bg1),var(--bg2));overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.phone .notch{height:24px;display:flex;justify-content:center}
+.phone .notch i{width:90px;height:18px;background:#262029;border-radius:0 0 12px 12px}
+.ph-body{flex:1;padding:10px 14px;display:flex;flex-direction:column;gap:10px}
+.ph-now{font-size:11px;letter-spacing:1.5px;color:var(--mint);font-weight:700}
+.ph-title{font-size:24px;font-weight:600;line-height:1.1}
+.ph-secs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.ph-secs span{border-radius:8px;padding:8px 6px;font-size:12px;font-weight:700;color:#0e0c11;text-align:center}
+.ph-btns{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:6px;margin-top:auto}
+.ph-btns span{height:58px;border-radius:12px;display:grid;place-items:center;background:var(--field);border:1px solid var(--hair);font-size:12px;font-weight:600;color:var(--mid);text-align:center;line-height:1.2}
+.ph-btns span.go{background:var(--mint);color:#0e0c11;border:none;font-size:15px}
+.ph-list span{display:flex;justify-content:space-between;padding:7px 10px;border-radius:8px;font-size:13px;color:var(--mid)}
+.ph-list span.nx{border:1px dashed var(--ember);color:var(--text)}
+.banner{position:absolute;left:0;right:0;top:62px;z-index:6;color:#160f10;padding:12px 18px;display:flex;align-items:center;gap:14px;font-weight:600}
+.banner.red{background:rgba(255,111,125,.96)}
+.banner.amber{background:rgba(255,181,71,.96)}
+.banner b{font-size:18px;white-space:nowrap}
+.checklist div{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:13px;color:var(--mid)}
+.checklist div i{font-style:normal;font-weight:800;width:20px;text-align:center;flex-shrink:0}
+.checklist div b{color:var(--text)}
+.recent{display:flex;gap:12px;align-items:center;padding:12px 14px;border-radius:10px;background:var(--field);border:1px solid var(--hair)}
+.recent b{display:block;font-size:16px}
+.recent small{color:var(--dim)}
+.lib span{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:7px;font-size:13px;color:var(--mid);white-space:nowrap}
+.lib span small{margin-left:auto;color:var(--dim);font-size:11px}
+.lib span.in{opacity:.45}
+</style>
+</head>
+<body>
+<div class="nav"><b>Smart Q Live</b>
+  <i>SHOW</i><a href="#s1">1 Main view</a><a href="#s2">2 Stage, playing</a><a href="#s3">3 Stage, between songs</a><a href="#s4">4 Phone remote</a><a href="#s5">5 Checks &amp; warnings</a>
+  <i>SET UP</i><a href="#s6">6 Welcome</a><a href="#s7">7 Setlists</a><a href="#s8">8 New song</a><a href="#s9">9 Song editor</a><a href="#s10">10 Mixer</a><a href="#s11">11 Audio &amp; routing</a><a href="#s12">12 MIDI &amp; controls</a><a href="#s13">13 Cue voice &amp; pad</a><a href="#s14">14 Remote, backup, timecode</a><a href="#s15">15 Snapshots</a>
+</div>
+<div class="page">
+<h1>Smart Q Live: mockups of the whole app</h1>
+<p class="lead">Every screen, in Smart Q's colours. The layout of the main view follows MultiTracks Playback; the look is Smart Q's own. The names and numbers are placeholders. Show mode screens come first, then everything used to build and set up.</p>
+<div class="legend">
+  <span style="--k:var(--mint)">Mint: playing now, ready, OK</span>
+  <span style="--k:var(--ember)">Ember: what comes next</span>
+  <span style="--k:var(--caution)">Amber: changed tonight, or needs a look</span>
+  <span style="--k:var(--danger)">Red: broken</span>
+  <span style="--k:var(--s-chorus)">Solid tiles: section types (a Chorus is always this colour)</span>
+</div>
+
+<div class="group">DURING THE SHOW (SHOW MODE)</div>
+
+<!-- 1 MAIN VIEW -->
+<div class="opt" id="s1">
+<h2><span>1</span>Main view</h2>
+<p class="sub">Playback-style: the setlist across the top, the song map in the middle (sections, waveform, pedal and cue lanes), and the mixer at the bottom. In Show mode everything is locked except the faders: levels stay live, and a level changed during the show turns amber and is for tonight only (the Click, here). The NEXT card says whether that song is loaded. <kbd>Tab</kbd> switches to the stage view.</p>
+<div class="app">
+  <div class="top">
+    <div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div>
+    <div class="clock"><b>02:14</b><small>of 4:52 · bar 33.1</small></div>
+    <div class="meta"><span class="chip"><b>128</b> BPM</span><span class="chip"><b>4/4</b></span><span class="chip">Key <b>E</b></span></div>
+    <div class="beats"><i class="on"></i><i></i><i></i><i></i></div>
+    <div class="transport"><div class="tbtn">⏮</div><div class="tbtn play">▶</div><div class="tbtn">⏭</div><div class="tbtn">⟳</div></div>
+    <div class="status"><span class="st">Audio</span><span class="st">MIDI 3</span><span class="st">Remote 2</span><span class="st">Backup</span></div>
+    <div class="modesw show"><span>EDIT</span><span class="on">SHOW</span></div>
+  </div>
+  <div class="setstrip">
+    <div class="song done"><div class="n">1</div><div class="t">Intro</div><div class="m"><span>1:30</span><span>→ seamless</span></div></div>
+    <div class="song done"><div class="n">2</div><div class="t">Firestarter</div><div class="m"><span>3:58</span><span>→ gap 4 s</span></div></div>
+    <div class="song playing"><span class="tag t-now">NOW</span><div class="n">3</div><div class="t">Hold The Line</div><div class="m"><span>4:52</span><span>→ crossfade</span></div></div>
+    <div class="song upnext"><span class="tag t-next">NEXT</span><div class="n">4</div><div class="t">Long Way Down</div><div class="m"><span>5:04</span><span class="ok">✓ Ready</span></div></div>
+    <div class="song"><div class="n">5</div><div class="t">Ballad</div><div class="m"><span>4:10</span><span>→ gap 8 s</span></div></div>
+    <div class="song"><div class="n">6</div><div class="t">Closer</div><div class="m"><span>4:31</span><span>→ stop</span></div></div>
+    <div class="song"><div class="n">7</div><div class="t">Encore</div><div class="m"><span>3:40</span><span>end</span></div></div>
+  </div>
+  <div class="map">
+    <div class="sections">
+      <div class="sec past" style="flex:8;background:var(--s-intro)"><small>1</small>Intro</div>
+      <div class="sec past" style="flex:16;background:var(--s-verse)"><small>2</small>Verse 1</div>
+      <div class="sec cur" style="flex:16;background:var(--s-chorus)"><small>3</small>Chorus · 6 bars left</div>
+      <div class="sec queued" style="flex:16;background:var(--s-verse)"><small>4</small>Verse 2</div>
+      <div class="sec" style="flex:16;background:var(--s-chorus)"><small>5</small>Chorus</div>
+      <div class="sec" style="flex:12;background:var(--s-bridge)"><small>6</small>Bridge</div>
+      <div class="sec" style="flex:12;background:var(--s-outro)"><small>7</small>Outro</div>
+    </div>
+    <div class="wave"><canvas class="bigwave" width="1248" height="112"></canvas><div class="playhead" style="left:46%"></div></div>
+    <div class="lanes">
+      <div class="lane"><label>Guitar 1</label><span class="mk" style="left:9%;background:var(--d1)">Clean</span><span class="mk" style="left:25%;background:var(--d1)">Crunch</span><span class="mk" style="left:41.6%;background:var(--d1)">Clean</span><span class="mk" style="left:58.2%;background:var(--d1)">Crunch</span><span class="mk" style="left:74.8%;background:var(--d1)">Lead</span></div>
+      <div class="lane"><label>Guitar 2</label><span class="mk" style="left:9%;background:var(--d2)">Rhythm</span><span class="mk" style="left:25%;background:var(--d2)">Delay on</span><span class="mk" style="left:41.6%;background:var(--d2)">Delay off</span><span class="mk" style="left:74.8%;background:var(--d2)">Ambient</span></div>
+      <div class="lane"><label>Cues</label><span class="mk auto" style="left:22.5%">Chorus</span><span class="mk auto" style="left:39.1%">Verse</span><span class="mk auto" style="left:55.7%">Chorus</span><span class="mk" style="left:65%;background:var(--mid)">“Watch me”</span><span class="mk auto" style="left:72.3%">Bridge</span></div>
+    </div>
+  </div>
+  <div class="bottom">
+    <div class="mixer live">
+      <span class="cap2">LEVELS ARE LIVE · <span class="warn">AMBER = CHANGED TONIGHT</span></span>
+      <div class="ch mon"><div class="nm">Click</div><div class="fader"><div class="lvl" style="height:76%;background:var(--ember)"></div><div class="cap tonight" style="bottom:76%"></div></div><div class="ms"><b>M</b></div><div class="out warn">+2 dB</div></div>
+      <div class="ch mon"><div class="nm">Cues</div><div class="fader"><div class="lvl" style="height:20%;background:var(--mid)"></div><div class="cap" style="bottom:60%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="sep"></div>
+      <div class="ch"><div class="nm">Keys</div><div class="fader"><div class="lvl" style="height:55%;background:var(--p-keys)"></div><div class="cap" style="bottom:66%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Synth</div><div class="fader"><div class="lvl" style="height:40%;background:var(--p-synth)"></div><div class="cap" style="bottom:58%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Gtr FX</div><div class="fader"><div class="lvl" style="height:0%;background:var(--p-gtr)"></div><div class="cap" style="bottom:60%"></div></div><div class="ms"><b class="m">M</b></div></div>
+      <div class="ch"><div class="nm">BVs</div><div class="fader"><div class="lvl" style="height:48%;background:var(--p-bvs)"></div><div class="cap" style="bottom:62%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Perc</div><div class="fader"><div class="lvl" style="height:62%;background:var(--p-perc)"></div><div class="cap" style="bottom:70%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Strings</div><div class="fader"><div class="lvl" style="height:35%;background:var(--p-str)"></div><div class="cap" style="bottom:55%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="sep"></div>
+      <div class="ch"><div class="nm">Pad</div><div class="fader"><div class="lvl" style="height:30%;background:var(--p-pad)"></div><div class="cap" style="bottom:50%"></div></div><div class="ms"><b>M</b></div></div>
+    </div>
+    <div class="side">
+      <div class="box"><h4>NEXT SONG</h4><div style="font-size:18px;font-weight:600">4 · Long Way Down</div><div class="hint"><span class="ok">✓ Ready</span> · after a 4 s crossfade</div></div>
+      <div class="box"><h4>PAD · FOLLOWING THE SETLIST</h4><div class="keys"><span>C</span><span>C#</span><span>D</span><span>Eb</span><span class="on">E</span><span>F</span><span>F#</span><span>G</span><span>Ab</span><span>A</span><span>Bb</span><span>B</span></div></div>
+      <div class="box hint" style="line-height:1.9"><kbd>←</kbd><kbd>→</kbd> next song · <kbd>↑</kbd><kbd>↓</kbd> next section<br><kbd>L</kbd> loop · <kbd>Backspace</kbd> cancel<br>hold <kbd>Space</kbd> stop · <kbd>Tab</kbd> stage view</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 2 STAGE VIEW PLAYING -->
+<div class="opt" id="s2">
+<h2><span>2</span>Stage view, while a song plays</h2>
+<p class="sub">Built for the drum throne: nothing small, and nothing that can be changed by accident. The line above the tiles answers the drummer's two questions: how long is left in this section, and what comes after it. Here Verse 2 has been chosen with <kbd>↓</kbd>; pressing <kbd>L</kbd> instead would loop the Chorus.</p>
+<div class="app">
+  <div class="top">
+    <div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="grow"></div>
+    <div class="status"><span class="st">Audio</span><span class="st">MIDI 3</span><span class="st">Remote 2</span><span class="st">Backup</span></div>
+    <div class="modesw show"><span>EDIT</span><span class="on">SHOW</span></div>
+  </div>
+  <div class="stage">
+    <div class="nowrow">
+      <div><div class="lbl">NOW PLAYING · 3 OF 7</div><div class="title">Hold The Line</div></div>
+      <div class="big"><div><b>33<span style="color:var(--dim);font-size:34px">.1</span></b><small>BAR</small></div><div><b>128</b><small>BPM · 4/4</small></div><div><b>2:38</b><small>LEFT</small></div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:20px"><div class="bigbeats"><i class="on"></i><i></i><i></i><i></i></div><div class="prog" style="flex:1"><i></i></div></div>
+    <div class="secline"><span>Chorus</span><b>6</b><span style="color:var(--mid)">bars left</span><span class="then">then → Verse 2</span></div>
+    <div class="bigsec">
+      <div class="past" style="background:var(--s-intro)"><small>1</small>Intro</div>
+      <div class="past" style="background:var(--s-verse)"><small>2</small>Verse 1</div>
+      <div class="cur" style="background:var(--s-chorus)"><small>3 · NOW</small>Chorus</div>
+      <div class="q" style="background:var(--s-verse)"><small>4 · NEXT</small>Verse 2</div>
+      <div style="background:var(--s-chorus)"><small>5</small>Chorus</div>
+      <div style="background:var(--s-bridge)"><small>6</small>Bridge</div>
+      <div style="background:var(--s-outro)"><small>7</small>Outro</div>
+    </div>
+    <div class="nextbox"><div><div class="lbl">NEXT SONG · ✓ READY</div><div class="title">4 · Long Way Down</div></div><div class="info">132 BPM · Key A<br>after a 4 s crossfade</div></div>
+    <div class="keysbar"><span><kbd>↑</kbd> <kbd>↓</kbd> next section</span><span><kbd>L</kbd> loop this section</span><span><kbd>Backspace</kbd> cancel</span><span><kbd>←</kbd> <kbd>→</kbd> next song</span><span>hold <kbd>→</kbd> go to next song now</span><span>hold <kbd>Space</kbd> stop</span><span><kbd>Tab</kbd> main view</span></div>
+  </div>
+</div>
+</div>
+
+<!-- 3 STAGE VIEW BETWEEN SONGS -->
+<div class="opt" id="s3">
+<h2><span>3</span>Stage view, between songs</h2>
+<p class="sub">The moment with the least time. One thing fills the screen: the song that will start, and the key that starts it. The arrows change which song it is. If the chosen song isn't in memory yet, the green bar turns grey and shows the loading progress (below the frame); Space does nothing until it says Ready.</p>
+<div class="app">
+  <div class="top">
+    <div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="grow"></div>
+    <div class="status"><span class="st">Audio</span><span class="st">MIDI 3</span><span class="st">Remote 2</span><span class="st">Backup</span></div>
+    <div class="modesw show"><span>EDIT</span><span class="on">SHOW</span></div>
+  </div>
+  <div class="stage">
+    <div class="nowrow">
+      <div><div class="lbl" style="color:var(--ember)">UP NEXT · 4 OF 7</div><div class="title">Long Way Down</div></div>
+      <div class="big"><div><b>132</b><small>BPM · 4/4</small></div><div><b>A</b><small>KEY</small></div><div><b>5:04</b><small>LENGTH</small></div></div>
+    </div>
+    <div class="cta"><kbd class="bigkey">Space</kbd><div><b>Press Space to start</b><small>2 bars of count-in, then bar 1. The pedalboards switch to this song's first patches when you press.</small></div><span class="pill">✓ READY</span></div>
+    <div class="bigsec quiet" style="grid-template-columns:repeat(8,1fr)">
+      <div style="background:var(--s-intro)">Intro</div><div style="background:var(--s-verse)">Verse 1</div><div style="background:var(--s-pre)">Pre-chorus</div><div style="background:var(--s-chorus)">Chorus</div>
+      <div style="background:var(--s-verse)">Verse 2</div><div style="background:var(--s-chorus)">Chorus</div><div style="background:var(--s-solo)">Solo</div><div style="background:var(--s-outro)">Outro</div>
+    </div>
+    <div class="after"><span style="opacity:.6">✓ <b>3</b>Hold The Line · played</span><span style="border:1px dashed var(--ember);color:var(--text)"><b>4</b>Long Way Down</span><span><b>5</b>Ballad</span><span><b>6</b>Closer</span><span><b>7</b>Encore</span></div>
+    <div class="keysbar"><span><kbd>Space</kbd> start</span><span><kbd>←</kbd> <kbd>→</kbd> choose a different song</span><span><kbd>1</kbd>–<kbd>9</kbd> start from a section</span><span><kbd>Tab</kbd> main view</span></div>
+  </div>
+</div>
+<div class="cta loading strip" style="width:1280px;margin-top:12px"><kbd class="bigkey">Space</kbd><div><b style="color:var(--mid)">Loading Ballad…</b><small>Space will work as soon as this says Ready.</small><div class="prog" style="margin-top:8px;width:520px"><i style="width:62%;background:var(--dim)"></i></div></div><span class="pill">LOADING 62%</span></div>
+</div>
+
+<!-- 4 PHONE REMOTE -->
+<div class="opt" id="s4">
+<h2><span>4</span>Phone remote</h2>
+<p class="sub">A web page served by the laptop: open it in any phone or tablet browser on the band's Wi-Fi, with nothing to install. Left: a phone with full control. Right: a view-only phone for a bandmate, who can follow along but can't change anything. Stop needs a hold, as on the keyboard.</p>
+<div class="pair" style="gap:40px">
+  <div class="phone"><div class="notch"><i></i></div><div class="ph-body">
+    <div style="display:flex;justify-content:space-between;align-items:center"><span class="logo" style="font-size:12px"><i style="width:20px;height:20px;font-size:10px">Q</i>LIVE</span><span class="st" style="font-size:10px">Full control</span></div>
+    <div><div class="ph-now">NOW · 3 OF 7</div><div class="ph-title">Hold The Line</div><div class="hint">Chorus · 6 bars left · 128 BPM</div></div>
+    <div class="ph-secs">
+      <span style="background:var(--s-intro);opacity:.4">Intro</span><span style="background:var(--s-verse);opacity:.4">Verse 1</span><span style="background:var(--s-chorus);outline:2px solid #fff">Chorus</span>
+      <span style="background:var(--s-verse);outline:2px dashed var(--ember)">Verse 2</span><span style="background:var(--s-chorus)">Chorus</span><span style="background:var(--s-bridge)">Bridge</span>
+    </div>
+    <div class="btn" style="text-align:center">⟳ Loop this section</div>
+    <div class="nextbox" style="padding:8px 10px;border-radius:10px;border-width:1px"><div><div class="lbl" style="font-size:10px">NEXT SONG · ✓ READY</div><div style="font-size:16px;font-weight:600">4 · Long Way Down</div></div></div>
+    <div class="ph-btns"><span>◀<br>earlier song</span><span class="go">▶ Start</span><span>▶▶<br>later song</span></div>
+    <div class="hint" style="text-align:center">Hold ▶ for a second to stop</div>
+  </div></div>
+  <div class="phone"><div class="notch"><i></i></div><div class="ph-body">
+    <div style="display:flex;justify-content:space-between;align-items:center"><span class="logo" style="font-size:12px"><i style="width:20px;height:20px;font-size:10px">Q</i>LIVE</span><span class="st warn" style="font-size:10px">View only</span></div>
+    <div><div class="ph-now">NOW · 3 OF 7</div><div class="ph-title">Hold The Line</div><div class="hint">Chorus → Verse 2 · bar 33</div></div>
+    <div class="prog"><i></i></div>
+    <div class="ph-list" style="display:flex;flex-direction:column;gap:3px">
+      <span style="opacity:.45"><b>1 Intro</b>1:30</span><span style="opacity:.45"><b>2 Firestarter</b>3:58</span>
+      <span style="background:rgba(111,240,200,.1);color:var(--text);box-shadow:inset 0 0 0 1px var(--mint)"><b>3 Hold The Line</b>playing</span>
+      <span class="nx"><b>4 Long Way Down</b>next</span><span><b>5 Ballad</b>4:10</span><span><b>6 Closer</b>4:31</span><span><b>7 Encore</b>3:40</span>
+    </div>
+    <div class="hint" style="margin-top:auto;text-align:center">This phone can watch but not change anything.</div>
+  </div></div>
+  <div class="box" style="width:380px">
+    <h4>HOW A PHONE GETS IN</h4>
+    <div class="hint" style="font-size:13px;color:var(--mid);line-height:1.7">1. Turn on <b>Phone remote</b> in Setup (screen 14).<br>2. Scan the QR code shown there and type the PIN.<br>3. The phone appears on the laptop as “waiting”.<br>4. Someone at the laptop lets it in, as <b>Full control</b> or <b>View only</b>.</div>
+    <div class="hint" style="margin-top:10px">A phone that has been let in once reconnects by itself. New phones can only be let in from Edit mode, so nobody in the room can join during the show. No internet is needed.</div>
+  </div>
+</div>
+</div>
+
+<!-- 5 CHECKS & WARNINGS -->
+<div class="opt" id="s5">
+<h2><span>5</span>The pre-show check, and warnings during the show</h2>
+<p class="sub">Left: switching to Show mode runs a check and stops you if something would go wrong on stage. Right: if the audio interface is unplugged mid-song, a red banner appears, playback pauses, and nothing restarts by itself. Below: if another window takes the keyboard (a system message, say), an amber banner says so until the app has it back; MIDI pedals and phones keep working meanwhile.</p>
+<div class="pair">
+<div class="app half">
+  <div class="top"><div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="grow"></div><div class="modesw editing"><span class="on">EDIT</span><span>SHOW</span></div></div>
+  <div class="veil"><div class="dlg" style="width:580px">
+    <div class="dh"><h3>Ready for the show?</h3><div class="grow"></div><span class="hint">Summer Tour 2026 · Tour rig</span></div>
+    <div style="padding:4px 18px" class="checklist">
+      <div><i class="ok">✓</i><span><b>Audio interface</b> · RME Fireface UCX II, 48 kHz, 512 samples</span></div>
+      <div><i class="ok">✓</i><span><b>Routing</b> · click and cues only reach in-ear outputs</span></div>
+      <div><i class="ok">✓</i><span><b>Levels</b> · no output clips in any of the 7 songs</span></div>
+      <div><i class="bad">✕</i><span><b>3 audio files are still in the cloud</b> · OneDrive hasn't downloaded them to this laptop (Ballad: Strings, BVs, Keys). <span class="addl">Download now</span></span></div>
+      <div><i class="warn">!</i><span><b>Guitar 2 isn't connected</b> · its MIDI port wasn't found. Plug it in, or go on without it.</span></div>
+      <div><i class="warn">!</i><span><b>Running on battery</b> · 64% left. Plug the laptop in.</span></div>
+      <div><i class="ok">✓</i><span><b>Backup laptop</b> · connected, same files</span></div>
+    </div>
+    <div class="df"><span class="hint"><span class="bad">✕</span> must be fixed · <span class="warn">!</span> is your call</span><div class="grow"></div><span class="btn">Back to Edit</span><span class="btn pri off">Go to Show mode</span></div>
+  </div></div>
+</div>
+<div class="app half">
+  <div class="top"><div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="grow"></div><div class="status"><span class="st bad">Audio lost</span><span class="st">MIDI 3</span></div><div class="modesw show"><span>EDIT</span><span class="on">SHOW</span></div></div>
+  <div class="banner red"><b>⚠ Audio interface disconnected</b><span>Paused at bar 41. Waiting for it to come back.</span></div>
+  <div class="stage" style="padding-top:74px;opacity:.5">
+    <div class="nowrow"><div><div class="lbl">PAUSED · 3 OF 7</div><div class="title" style="font-size:40px">Hold The Line</div></div><div class="big"><div><b style="font-size:48px">41</b><small>BAR</small></div></div></div>
+    <div class="bigsec quiet" style="grid-template-columns:repeat(4,1fr)"><div style="background:var(--s-verse)">Verse 1</div><div style="background:var(--s-chorus)">Chorus</div><div style="background:var(--s-verse)">Verse 2</div><div style="background:var(--s-bridge)">Bridge</div></div>
+  </div>
+  <div style="position:absolute;left:28px;right:28px;bottom:24px" class="box"><h4>WHEN IT COMES BACK</h4><span class="hint" style="font-size:13px;color:var(--mid)"><kbd>Space</kbd> restarts the song from the top · <kbd>←</kbd><kbd>→</kbd> choose another song. Nothing starts by itself. The pedalboards are sent their patches again.</span></div>
+</div>
+</div>
+<div class="app" style="height:150px;margin-top:20px">
+  <div class="top"><div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="grow"></div><div class="status"><span class="st warn">Keyboard elsewhere</span><span class="st">Audio</span><span class="st">MIDI 3</span></div><div class="modesw show"><span>EDIT</span><span class="on">SHOW</span></div></div>
+  <div class="banner amber"><b>⌨ The keyboard isn't reaching Smart Q Live</b><span>Another window has it. Click anywhere here to take it back. The song keeps playing; pedals and phones still work.</span></div>
+</div>
+</div>
+
+<div class="group">BUILDING AND SETTING UP (EDIT MODE)</div>
+
+<!-- 6 WELCOME -->
+<div class="opt" id="s6">
+<h2><span>6</span>Welcome, and setting up a new computer</h2>
+<p class="sub">Left: the app normally opens straight into the band folder it had last time; this screen appears the first time, or when you want another folder. Right: the first time a band folder is opened on a computer, one screen asks which rig this computer uses and matches the hardware. Songs never name a physical output or port, so nothing in them changes from one computer to the next.</p>
+<div class="pair">
+<div class="app half">
+  <div style="flex:1;display:flex;flex-direction:column;gap:16px;padding:44px 48px">
+    <div class="logo" style="font-size:22px"><i style="width:40px;height:40px;font-size:20px">Q</i>SMART Q <small>LIVE</small></div>
+    <div style="color:var(--mid);font-size:15px">Open your band folder to get started.</div>
+    <div class="recent"><span style="font-size:26px">📁</span><div><b>The Parallels</b><small>OneDrive › Band › Smart Q Live · 23 songs, 3 setlists · opened yesterday</small></div><div class="grow"></div><span class="btn pri">Open</span></div>
+    <div class="recent" style="opacity:.7"><span style="font-size:26px">📁</span><div><b>Demo band</b><small>Documents › Smart Q Live demo · 3 songs to try things out</small></div><div class="grow"></div><span class="btn">Open</span></div>
+    <div style="display:flex;gap:10px;margin-top:6px"><span class="btn">Open another folder…</span><span class="btn">Start a new band folder…</span></div>
+    <div class="hint" style="margin-top:auto">A band folder is an ordinary folder. Keep it in OneDrive or iCloud Drive to share it with the band and to have a backup.</div>
+  </div>
+</div>
+<div class="app half">
+  <div class="top"><div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="grow"></div><span class="hint">The Parallels</span></div>
+  <div style="padding:18px 22px;display:flex;flex-direction:column;gap:12px;flex:1">
+    <div><div style="font-size:19px;font-weight:600">Set up this computer</div><div class="hint" style="font-size:13px">This band folder hasn't been used on <b style="color:var(--mid)">Yan's MacBook Pro</b> before. Tell it what's plugged in here.</div></div>
+    <div class="box">
+      <div class="row" style="margin-top:0">Rig <span class="dd">Tour rig</span></div>
+      <div class="row">Audio interface <span><span class="ok">✓ found</span> &nbsp;<span class="dd">RME Fireface UCX II</span></span></div>
+      <div class="hint">The outputs and their mixes come with the rig: PA on 1/2, then in-ears for five people.</div>
+    </div>
+    <div class="box" style="padding:0">
+      <table>
+        <tr><th>MIDI DEVICE</th><th>PORT ON THIS COMPUTER</th><th></th></tr>
+        <tr><td class="f"><span class="bar4" style="background:var(--d1)"></span>Guitar 1</td><td><span class="dd">USB MIDI Interface Port 1</span></td><td class="ok">✓ found</td></tr>
+        <tr><td class="f"><span class="bar4" style="background:var(--d2)"></span>Guitar 2</td><td><span class="dd need">Choose a port…</span></td><td class="warn">needs a port</td></tr>
+        <tr><td class="f"><span class="bar4" style="background:var(--d3)"></span>Lights</td><td><span class="dd">Not on this computer</span></td><td class="hint">skipped</td></tr>
+      </table>
+    </div>
+    <div class="hint">Or choose <b style="color:var(--mid)">Headphones at home</b> as the rig to work on songs without the interface: everything plays on the laptop's own output.</div>
+    <div style="display:flex;gap:10px;margin-top:auto;justify-content:flex-end"><span class="btn">Test each device</span><span class="btn pri">Done</span></div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- 7 SETLISTS -->
+<div class="opt" id="s7">
+<h2><span>7</span>Setlists</h2>
+<p class="sub">Left: the band's setlists. Middle: the running order of the chosen one, with what happens after each song. Right: every song in the band folder; drag one in. A song can be in several setlists, and fixing a song fixes it in all of them. Drag rows to reorder.</p>
+<div class="app">
+  <div class="top" data-top="0"><span class="btn">↶ Undo</span><span class="btn">Snapshots</span></div>
+  <div class="content">
+    <div class="subtabs" style="width:200px">
+      <h4 style="padding:0 4px">SETLISTS</h4>
+      <span class="on">Summer Tour 2026<small>7 songs · 27:45</small></span>
+      <span>Festival, 45 min<small>9 songs · 41:10</small></span>
+      <span>Rehearsal<small>23 songs</small></span>
+      <span style="color:var(--mint)">+ New setlist</span>
+    </div>
+    <div class="col" style="flex:1">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:20px;font-weight:600">Summer Tour 2026</span><span class="hint">7 songs · 27:45</span>
+        <div class="grow"></div>
+        <span class="hint">After each song</span><div class="tools"><span class="on">Carry on (continuous)</span><span>Stop (song by song)</span></div>
+      </div>
+      <div class="box" style="padding:0;flex:1;overflow:hidden">
+        <table>
+          <tr><th style="width:24px"></th><th>#</th><th>SONG</th><th>LENGTH</th><th>ARRANGEMENT</th><th>THEN</th><th>PAD</th></tr>
+          <tr><td class="hint">⋮⋮</td><td>1</td><td class="f">Intro<small>90 BPM · D · no count-in</small></td><td>1:30</td><td><span class="dd">Normal</span></td><td><span class="dd">Seamless</span></td><td><span class="dd">Whole song</span></td></tr>
+          <tr><td class="hint">⋮⋮</td><td>2</td><td class="f">Firestarter<small>140 BPM · F#m · count-in 1 bar</small></td><td>3:58</td><td><span class="dd">Normal</span></td><td><span class="dd">Gap 4 s</span></td><td><span class="dd">Off</span></td></tr>
+          <tr style="background:rgba(111,240,200,.06)"><td class="hint">⋮⋮</td><td>3</td><td class="f">Hold The Line<small>128 BPM · E · count-in 1 bar</small></td><td>4:52</td><td><span class="dd">Long ending</span></td><td><span class="dd">Crossfade 4 s</span></td><td><span class="dd">Intro/outro</span></td></tr>
+          <tr><td class="hint">⋮⋮</td><td>4</td><td class="f">Long Way Down<small>132 BPM · A · count-in 2 bars</small></td><td>5:04</td><td><span class="dd">Normal</span></td><td><span class="dd">Stop</span></td><td><span class="dd">Off</span></td></tr>
+          <tr><td class="hint">⋮⋮</td><td>5</td><td class="f">Ballad <span class="warn" style="font-weight:400;font-size:12px">· 3 files still in the cloud</span><small>72 BPM · Bb · count-in 1 bar</small></td><td>4:10</td><td><span class="dd">Normal</span></td><td><span class="dd">Gap 8 s</span></td><td><span class="dd">Whole song</span></td></tr>
+          <tr><td class="hint">⋮⋮</td><td>6</td><td class="f">Closer<small>118 BPM · G · count-in 1 bar</small></td><td>4:31</td><td><span class="dd">Normal</span></td><td><span class="dd">Stop</span></td><td><span class="dd">Off</span></td></tr>
+          <tr><td class="hint">⋮⋮</td><td>7</td><td class="f">Encore<small>150 BPM · E · no count-in</small></td><td>3:40</td><td><span class="dd">Normal</span></td><td class="hint">end of the set</td><td><span class="dd">Off</span></td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="box" style="width:240px;display:flex;flex-direction:column;gap:6px">
+      <h4>ALL SONGS · 23</h4>
+      <div class="val" style="text-align:left;font-weight:400;color:var(--dim)">Search…</div>
+      <div class="lib" style="display:flex;flex-direction:column;gap:1px">
+        <span>⋮⋮ Afterglow<small>4:02</small></span><span class="in">Ballad<small>in this set</small></span><span>⋮⋮ Blackout<small>3:21</small></span><span class="in">Closer<small>in this set</small></span>
+        <span>⋮⋮ Daylight<small>3:47</small></span><span class="in">Encore<small>in this set</small></span><span class="in">Firestarter<small>in this set</small></span><span>⋮⋮ Glass Houses<small>4:40</small></span>
+        <span class="in">Hold The Line<small>in this set</small></span><span>⋮⋮ Ironside<small>3:55</small></span><span>⋮⋮ Killing Time<small>4:18</small></span>
+      </div>
+      <div class="grow"></div><span class="btn pri" style="text-align:center">+ New song</span>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 8 NEW SONG -->
+<div class="opt" id="s8">
+<h2><span>8</span>New song</h2>
+<p class="sub">Drop in the stems exported from your DAW, plus the song's MIDI file if you have one. The app guesses each part's role from its file name and reads the tempo, sections and pedal changes from the MIDI file. Anything it isn't sure of is in amber for you to set. The files are converted once, now, so the song loads fast on stage.</p>
+<div class="app">
+  <div class="top" data-top="1"></div>
+  <div class="veil">
+    <div class="dlg">
+      <div class="dh"><h3>New song</h3><div class="steps"><span class="done">✓ Files</span><span class="on">Check what was found</span><span>Create</span></div></div>
+      <div class="dbody">
+        <div>
+          <div class="drop">⇩ <span>Drop more files here, or <b>browse</b>. WAV, AIFF or FLAC, plus one MIDI file.</span></div>
+          <table>
+            <tr><th>FILE</th><th>PREVIEW</th><th>ROLE</th><th>HEARD IN (TOUR RIG)</th><th></th></tr>
+            <tr><td class="f">HTL_Keys.wav</td><td><canvas class="mini" data-s="1"></canvas></td><td><span class="dd"><i style="background:var(--p-keys)"></i>Keys</span></td><td>PA and 5 in-ears</td><td class="ok">✓</td></tr>
+            <tr><td class="f">HTL_Synth Lead.wav</td><td><canvas class="mini" data-s="2"></canvas></td><td><span class="dd"><i style="background:var(--p-synth)"></i>Synth</span></td><td>PA and 5 in-ears</td><td class="ok">✓</td></tr>
+            <tr><td class="f">HTL_Gtr Ambience.wav</td><td><canvas class="mini" data-s="3"></canvas></td><td><span class="dd"><i style="background:var(--p-gtr)"></i>Gtr FX</span></td><td>PA and 5 in-ears</td><td class="ok">✓</td></tr>
+            <tr><td class="f">HTL_BVs.wav</td><td><canvas class="mini" data-s="4"></canvas></td><td><span class="dd"><i style="background:var(--p-bvs)"></i>BVs</span></td><td>PA and 5 in-ears</td><td class="ok">✓</td></tr>
+            <tr><td class="f">HTL_Shaker.wav</td><td><canvas class="mini" data-s="5"></canvas></td><td><span class="dd"><i style="background:var(--p-perc)"></i>Perc</span></td><td>PA and 4 in-ears</td><td class="ok">✓</td></tr>
+            <tr><td class="f">HTL_Strings.wav</td><td><canvas class="mini" data-s="6"></canvas></td><td><span class="dd"><i style="background:var(--p-str)"></i>Strings</span></td><td>PA and 5 in-ears</td><td class="ok">✓</td></tr>
+            <tr><td class="f">HTL_Audio 07.wav</td><td><canvas class="mini" data-s="7"></canvas></td><td><span class="dd need">Choose a role…</span></td><td class="warn">—</td><td class="warn">?</td></tr>
+            <tr><td class="f">HTL_Click.wav</td><td><canvas class="mini" data-s="8"></canvas></td><td><span class="dd">Leave out</span></td><td class="hint">The app makes its own click</td><td class="hint">–</td></tr>
+          </table>
+        </div>
+        <div class="box">
+          <h4>FROM “HOLD THE LINE.MID”</h4>
+          <div class="row">Tempo <span class="val">128 BPM · 4/4</span></div>
+          <div class="row">Bar 1 starts at <span class="val">0:00.000</span></div>
+          <div class="row">Length <span class="val">156 bars · 4:52</span></div>
+          <div class="row">Sections <span class="ok" style="font-size:12px">7, from the markers</span></div>
+          <div class="pills"><span style="background:var(--s-intro)">Intro</span><span style="background:var(--s-verse)">Verse 1</span><span style="background:var(--s-chorus)">Chorus</span><span style="background:var(--s-verse)">Verse 2</span><span style="background:var(--s-chorus)">Chorus</span><span style="background:var(--s-bridge)">Bridge</span><span style="background:var(--s-outro)">Outro</span></div>
+          <div class="row" style="margin-top:12px">Pedal changes <span class="ok" style="font-size:12px">2 tracks</span></div>
+          <div class="row" style="font-size:12px">“Gtr 1 FX” (ch 1) → <span class="dd"><i style="background:var(--d1)"></i>Guitar 1</span></div>
+          <div class="row" style="font-size:12px">“Gtr 2 FX” (ch 2) → <span class="dd"><i style="background:var(--d2)"></i>Guitar 2</span></div>
+          <div class="hint" style="margin-top:10px">No MIDI file? Carry on: type or tap the tempo, and draw the sections in the editor.</div>
+        </div>
+      </div>
+      <div class="df"><div class="check"><i>✓</i>Add this song to “Summer Tour 2026”</div><div class="grow"></div><span class="hint warn">1 file needs a role</span><span class="btn">Back</span><span class="btn pri off">Create song</span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 9 SONG EDITOR -->
+<div class="opt" id="s9">
+<h2><span>9</span>Song editor</h2>
+<p class="sub">One timeline on bars and beats. The row of chips under the title is the arrangement: the order the sections play in. Here “Long ending” repeats the last Chorus; drag chips to reorder, or drag a section in again to repeat it. Below: tempo, sections, cues (dashed ones are automatic), one lane per pedalboard, then each part with its automation drawn on top. Pedal changes are picked by patch name. <kbd>Space</kbd> plays from the cursor, with the pedalboards put on the right patch first.</p>
+<div class="app">
+  <div class="top" data-top="1"><span class="btn">↶ Undo</span><span class="btn">Snapshots</span></div>
+  <div class="body">
+    <div class="songs">
+      <h4>ALL SONGS</h4>
+      <div class="si">Afterglow</div><div class="si">Ballad</div><div class="si">Blackout</div><div class="si">Closer</div><div class="si">Daylight</div><div class="si">Encore</div><div class="si">Firestarter</div><div class="si">Glass Houses</div>
+      <div class="si on">Hold The Line</div><div class="si">Ironside</div><div class="si">Killing Time</div>
+      <div class="si add">+ New song</div>
+    </div>
+    <div class="editcol">
+      <div class="ebar">
+        <span class="title">Hold The Line</span><span class="chip"><b>128</b> BPM</span><span class="chip"><b>4/4</b></span><span class="chip">Key <b>E</b></span><span class="chip">Count-in <b>1 bar</b></span>
+        <div class="grow"></div>
+        <div class="tools"><span class="on">Select</span><span>Draw</span><span>Automation</span></div>
+        <div class="tools"><span>Bar</span><span class="on">Beat</span><span>1/8</span></div>
+        <span class="btn">▶ Play</span>
+      </div>
+      <div class="arr">Arrangement <span class="dd" style="font-weight:600">Long ending</span>
+        <span class="c" style="background:var(--s-intro)">Intro</span>›<span class="c" style="background:var(--s-verse)">Verse 1</span>›<span class="c" style="background:var(--s-chorus)">Chorus</span>›<span class="c" style="background:var(--s-verse)">Verse 2</span>›<span class="c" style="background:var(--s-chorus)">Chorus</span>›<span class="c" style="background:var(--s-bridge)">Bridge</span>›<span class="c" style="background:var(--s-chorus)">Chorus</span>›<span class="c new" style="background:var(--s-chorus)">Chorus</span>›<span class="c" style="background:var(--s-outro)">Outro</span>
+        <em>5:24</em><div class="grow"></div><em>+ New arrangement</em></div>
+      <div class="tl">
+        <div class="hd ruler">BARS</div><div class="ln ruler rulerbars"></div>
+        <div class="hd r28">Tempo</div><div class="ln r28"><span class="tempo" style="left:0">128 · 4/4</span><span class="tempo" style="left:87.3%">120 · 4/4</span></div>
+        <div class="hd r28">Sections</div>
+        <div class="ln r28">
+          <span class="esec" style="left:0;width:8.3%;background:var(--s-intro)">Intro</span><span class="esec" style="left:8.4%;width:16.5%;background:var(--s-verse)">Verse 1</span>
+          <span class="esec" style="left:25%;width:16.5%;background:var(--s-chorus)">Chorus</span><span class="esec" style="left:41.6%;width:16.5%;background:var(--s-verse)">Verse 2</span>
+          <span class="esec" style="left:58.2%;width:16.5%;background:var(--s-chorus)">Chorus</span><span class="esec" style="left:74.8%;width:12.4%;background:var(--s-bridge)">Bridge</span>
+          <span class="esec" style="left:87.3%;width:12.7%;background:var(--s-outro)">Outro</span>
+        </div>
+        <div class="hd r24">Cues <small>1 bar early</small></div>
+        <div class="ln r24"><span class="mk auto" style="left:5.8%">Verse</span><span class="mk auto" style="left:22.4%">Chorus</span><span class="mk auto" style="left:39%">Verse</span><span class="mk auto" style="left:55.6%">Chorus</span><span class="mk" style="left:65%;background:var(--mid)">“Watch me”</span><span class="mk auto" style="left:72.2%">Bridge</span><span class="mk auto" style="left:84.7%">Outro</span></div>
+        <div class="hd r24"><i style="background:var(--d1)"></i>Guitar 1 <small>20 ms early</small></div>
+        <div class="ln r24"><span class="mk" style="left:0;background:var(--d1)">Clean</span><span class="mk picked" style="left:25%;background:var(--d1)">Crunch</span><span class="mk" style="left:41.6%;background:var(--d1)">Clean</span><span class="mk" style="left:58.2%;background:var(--d1)">Crunch</span><span class="mk" style="left:74.8%;background:var(--d1)">Lead</span></div>
+        <div class="hd r24"><i style="background:var(--d2)"></i>Guitar 2 <small>clock on</small></div>
+        <div class="ln r24"><span class="mk" style="left:0;background:var(--d2)">Rhythm</span><span class="mk" style="left:25%;background:var(--d2)">Delay on</span><span class="mk" style="left:41.6%;background:var(--d2)">Delay off</span><span class="mk" style="left:74.8%;background:var(--d2)">Ambient</span></div>
+        <div class="hd r44"><i style="background:var(--p-keys)"></i>Keys</div><div class="ln r44"><canvas class="wf" data-c="#ff9a68" data-s="11"></canvas></div>
+        <div class="hd r44"><i style="background:var(--p-synth)"></i>Synth</div><div class="ln r44"><canvas class="wf" data-c="#e070ff" data-s="12"></canvas></div>
+        <div class="hd r44"><i style="background:var(--p-gtr)"></i>Gtr FX <small>automation</small></div><div class="ln r44"><canvas class="wf" data-c="#a8dc68" data-s="13" data-auto="1"></canvas></div>
+        <div class="hd r44"><i style="background:var(--p-bvs)"></i>BVs</div><div class="ln r44"><canvas class="wf" data-c="#5ed8a2" data-s="14"></canvas></div>
+        <div class="hd r36"><i style="background:var(--ember)"></i>Click <small>in-ear only</small></div><div class="ln r36"><canvas class="wf" data-c="#f29a78" data-s="15" data-click="1"></canvas></div>
+        <div class="eph"></div>
+      </div>
+      <div class="foot"><span>Bar <b>33.1</b></span><span>2:14</span><span><kbd>Space</kbd> play from the cursor</span><span><kbd>Del</kbd> delete</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</span><span style="margin-left:auto" class="ok">Saved ✓</span></div>
+    </div>
+    <div class="insp">
+      <div class="card">
+        <h4>SELECTED · GUITAR 1 CHANGE</h4>
+        <div class="row">At <span class="val">Bar 33 · beat 1</span></div>
+        <div class="row">Patch <span class="dd" style="font-weight:600">12 · Crunch</span></div>
+        <h4 style="margin-top:12px">ALSO SEND</h4>
+        <div class="msg"><b style="background:var(--s-chorus)">CC</b>CC 7 (volume) = 110<span>ch 1</span></div>
+        <div class="addl">+ Add a message</div>
+        <div style="display:flex;gap:6px;margin-top:12px"><span class="btn">▶ Send now</span><span class="btn">Duplicate</span><span class="btn red">Delete</span></div>
+      </div>
+      <div class="card">
+        <h4>QUICK ACTIONS</h4>
+        <div class="row" style="font-size:12px">Do this at every <span class="pills"><span style="background:var(--s-chorus)">Chorus</span></span></div>
+        <div class="row" style="font-size:12px">Fade <span class="pills"><span style="background:var(--p-gtr)">Gtr FX</span></span> in over this section</div>
+        <div class="row" style="font-size:12px">Mute the click in this section</div>
+      </div>
+      <div class="card">
+        <h4>WHEN A SECTION IS CHOSEN LIVE</h4>
+        <div class="row">It happens at <span class="dd">The end of the section</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 10 MIXER -->
+<div class="opt" id="s10">
+<h2><span>10</span>Mixer</h2>
+<p class="sub">Two kinds of level, chosen with “Levels for” at the top. <b>This song</b> (first frame) is how loud each part is in this song, for everyone. Choosing a person or the PA (second frame) shows that output's own mix: how much of each part <i>they</i> get, in every song. So a part that is too quiet in one song is fixed in the first, and a drummer who wants more click is fixed in the second. The panel on the right shows the loudest moment each output will reach; one that would clip turns red and names the bar.</p>
+<div class="app">
+  <div class="top" data-top="2"><span class="hint">Levels for</span><div class="tools"><span class="on">This song</span><span>PA</span><span>Drummer</span><span>Guitar 1</span><span>Guitar 2</span><span>Bass</span><span>Vocals</span></div><span class="dd">Hold The Line</span></div>
+  <div class="content">
+    <div class="mixer" style="padding:14px;gap:10px">
+      <div class="ch mon"><div class="nm">Click</div><div class="hint">-6.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:76%;background:var(--ember)"></div><div class="cap" style="bottom:72%"></div></div><div class="ms"><b>M</b></div><div class="hint">Wood block</div></div>
+      <div class="ch mon"><div class="nm">Cues</div><div class="hint">-9.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:15%;background:var(--mid)"></div><div class="cap" style="bottom:62%"></div></div><div class="ms"><b>M</b></div><div class="hint">-3 this song</div></div>
+      <div class="sep"></div>
+      <div class="ch"><div class="nm">Keys</div><div class="hint">-3.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:58%;background:var(--p-keys)"></div><div class="cap" style="bottom:68%"></div></div><div class="ms"><b>M</b><b>S</b></div><div class="hint">—</div></div>
+      <div class="ch"><div class="nm">Synth</div><div class="hint">-5.5</div><div class="fader" style="width:10px"><div class="lvl" style="height:44%;background:var(--p-synth)"></div><div class="cap" style="bottom:60%"></div></div><div class="ms"><b>M</b><b>S</b></div><div class="hint">—</div></div>
+      <div class="ch"><div class="nm">Gtr FX</div><div class="hint">-4.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:10%;background:var(--p-gtr)"></div><div class="cap" style="bottom:64%"></div></div><div class="ms"><b>M</b><b>S</b></div><div class="hint ok">automation</div></div>
+      <div class="ch"><div class="nm">BVs</div><div class="hint">-2.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:52%;background:var(--p-bvs)"></div><div class="cap" style="bottom:70%"></div></div><div class="ms"><b>M</b><b class="s">S</b></div><div class="hint">—</div></div>
+      <div class="ch"><div class="nm">Perc</div><div class="hint">-1.5</div><div class="fader" style="width:10px"><div class="lvl" style="height:64%;background:var(--p-perc)"></div><div class="cap" style="bottom:72%"></div></div><div class="ms"><b>M</b><b>S</b></div><div class="hint">—</div></div>
+      <div class="ch"><div class="nm">Strings</div><div class="hint">-7.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:36%;background:var(--p-str)"></div><div class="cap" style="bottom:56%"></div></div><div class="ms"><b>M</b><b>S</b></div><div class="hint">—</div></div>
+      <div class="sep"></div>
+      <div class="ch"><div class="nm">Pad</div><div class="hint">-10.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:28%;background:var(--p-pad)"></div><div class="cap" style="bottom:50%"></div></div><div class="ms"><b>M</b></div><div class="hint">Key E</div></div>
+    </div>
+    <div class="side" style="width:320px">
+      <div class="box"><h4>SOLO</h4><div class="hint" style="font-size:13px;color:var(--mid)">BVs is soloed. Solo only exists in Edit mode, and the click keeps playing.</div></div>
+      <div class="box"><h4>WHAT EACH OUTPUT GETS · LOUDEST MOMENT</h4>
+        <div class="row">PA · 1/2 <span><span class="meter hot"><i style="width:100%"></i></span> <b class="bad">clips</b></span></div>
+        <div class="hint bad" style="margin:-2px 0 6px">Bar 97, last Chorus: Keys, Synth and Strings add up to +1.4 dB. Turn one down.</div>
+        <div class="row">Drummer · 3/4 <span><span class="meter"><i style="width:74%"></i></span> -6 dB</span></div>
+        <div class="row">Guitar 1 · 5/6 <span><span class="meter"><i style="width:62%"></i></span> -9 dB</span></div>
+        <div class="row">Guitar 2 · 7/8 <span><span class="meter"><i style="width:58%"></i></span> -10 dB</span></div>
+        <div class="row">Bass · 9/10 <span><span class="meter"><i style="width:66%"></i></span> -8 dB</span></div>
+        <div class="row">Vocals · 11/12 <span><span class="meter"><i style="width:60%"></i></span> -10 dB</span></div>
+      </div>
+      <div class="box hint">Worked out from the whole song without playing it, so a problem shows up here and in the pre-show check, not on stage.</div>
+    </div>
+  </div>
+</div>
+<div class="app" style="height:440px;margin-top:20px">
+  <div class="top" data-top="2"><span class="hint">Levels for</span><div class="tools"><span>This song</span><span>PA</span><span class="on">Drummer</span><span>Guitar 1</span><span>Guitar 2</span><span>Bass</span><span>Vocals</span></div></div>
+  <div class="content">
+    <div class="mixer" style="padding:14px;gap:10px">
+      <div class="ch mon"><div class="nm">Click</div><div class="hint ok">+3.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:80%;background:var(--ember)"></div><div class="cap" style="bottom:82%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch mon"><div class="nm">Cues</div><div class="hint">0.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:20%;background:var(--mid)"></div><div class="cap" style="bottom:70%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="sep"></div>
+      <div class="ch"><div class="nm">Keys</div><div class="hint">-6.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:40%;background:var(--p-keys)"></div><div class="cap" style="bottom:52%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Synth</div><div class="hint">-9.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:28%;background:var(--p-synth)"></div><div class="cap" style="bottom:42%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Gtr FX</div><div class="hint">-6.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:8%;background:var(--p-gtr)"></div><div class="cap" style="bottom:52%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">BVs</div><div class="hint">-3.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:46%;background:var(--p-bvs)"></div><div class="cap" style="bottom:62%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="ch"><div class="nm">Perc</div><div class="hint">off</div><div class="fader" style="width:10px"><div class="cap" style="bottom:0%;opacity:.5"></div></div><div class="ms"><b class="m">M</b></div></div>
+      <div class="ch"><div class="nm">Strings</div><div class="hint">-9.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:26%;background:var(--p-str)"></div><div class="cap" style="bottom:42%"></div></div><div class="ms"><b>M</b></div></div>
+      <div class="sep"></div>
+      <div class="ch"><div class="nm">Pad</div><div class="hint">-12.0</div><div class="fader" style="width:10px"><div class="lvl" style="height:18%;background:var(--p-pad)"></div><div class="cap" style="bottom:32%"></div></div><div class="ms"><b>M</b></div></div>
+    </div>
+    <div class="side" style="width:320px">
+      <div class="box"><h4>DRUMMER · <span class="lbl-out mon">In-ears</span> OUT 3/4</h4><div class="hint" style="font-size:13px;color:var(--mid)">What the drummer hears: plenty of click, no percussion. This mix is the same in every song.</div>
+        <div class="row" style="margin-top:10px">Overall level <span class="val">0 dB</span></div>
+        <div class="row">Loudest moment in the set <span class="val ok">-6 dB</span></div></div>
+      <div class="box hint">The same numbers appear in the Drummer column of the routing grid (screen 11). Change them in either place.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 11 AUDIO & ROUTING -->
+<div class="opt" id="s11">
+<h2><span>11</span>Setup: audio and routing</h2>
+<p class="sub">A rig is one set of real hardware: the tour rig, the rehearsal room, headphones at home. Give each output a name and a label: <span class="lbl-out mon">In-ears</span> only feeds someone's ears, <span class="lbl-out foh">PA</span> may reach front of house, <span class="lbl-out tc">Timecode</span> carries timecode only. <b>Each column is that output's mix.</b> Click a cell to send a role there and drag to set how loud; the number is in dB. Here the drummer has the click 3 dB up and no percussion, and the PA has every backing part and no click. A dash means it isn't allowed: click and cues can never go to a PA output.</p>
+<div class="app">
+  <div class="top" data-top="3"></div>
+  <div class="content">
+    <div class="subtabs" data-sub="0"></div>
+    <div class="col" style="flex:1">
+      <div class="box" style="display:flex;gap:18px;align-items:center">
+        <div><h4>RIG</h4><span class="dd" style="font-weight:600">Tour rig</span></div>
+        <div><h4>AUDIO INTERFACE</h4><span class="dd">RME Fireface UCX II (ASIO)</span></div>
+        <div><h4>SAMPLE RATE</h4><span class="dd">48 kHz</span></div>
+        <div><h4>BUFFER</h4><span class="dd">512 · safest</span></div>
+        <div class="grow"></div><span class="st">Connected · 16 outputs</span><span class="btn">Duplicate rig</span><span class="btn">Test tone</span>
+      </div>
+      <div class="box" style="padding:0;flex:1;overflow:hidden">
+        <table class="grid-route" id="grid"></table>
+        <div style="padding:10px 12px;display:flex;gap:14px;align-items:center"><span class="addl">+ Add a role</span><span class="addl">+ Add an output</span><span class="hint">Every song uses these mixes. Using personal mixers instead? Give each role an output of its own: <span class="addl">One output per role</span></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 12 MIDI & CONTROLS -->
+<div class="opt" id="s12">
+<h2><span>12</span>Setup: MIDI devices and controls</h2>
+<p class="sub">Top: each pedalboard has a name, a port and a channel on this rig, MIDI clock on or off, a timing nudge (so a slow-switching pedal gets its change a little early), and a list of patch names. <b>Test</b> sends its current patch. Bottom: what triggers each action. Every action has a key; click <span class="learn">Learn</span> and press a pedal or pad to add one. MIDI pedals are the safest choice on stage, because they work even when the keyboard is elsewhere.</p>
+<div class="app">
+  <div class="top" data-top="3"></div>
+  <div class="content">
+    <div class="subtabs" data-sub="1"></div>
+    <div class="col" style="flex:1">
+      <div class="box" style="padding:0">
+        <div style="display:flex;align-items:center;padding:10px 12px 0"><h4 style="margin:0">MIDI DEVICES · TOUR RIG</h4><div class="grow"></div><span class="addl">+ Add a device</span></div>
+        <table>
+          <tr><th>NAME</th><th>PORT</th><th>CH</th><th>CLOCK</th><th>START/STOP</th><th>TIMING</th><th>PATCHES</th><th>STATUS</th><th></th></tr>
+          <tr><td class="f"><span class="bar4" style="background:var(--d1)"></span>Guitar 1</td><td><span class="dd">USB MIDI Port A</span></td><td><span class="dd">1</span></td><td><span class="tog"></span></td><td><span class="tog"></span></td><td><span class="val">20 ms early</span></td><td><span class="btn">24 named</span></td><td class="ok">● Connected</td><td><span class="btn">Test</span></td></tr>
+          <tr><td class="f"><span class="bar4" style="background:var(--d2)"></span>Guitar 2</td><td><span class="dd">USB MIDI Port B</span></td><td><span class="dd">2</span></td><td><span class="tog on"></span></td><td><span class="tog"></span></td><td><span class="val">on time</span></td><td><span class="btn">12 named</span></td><td class="ok">● Connected</td><td><span class="btn">Test</span></td></tr>
+          <tr><td class="f"><span class="bar4" style="background:var(--d3)"></span>Lights</td><td><span class="dd">Network MIDI 1</span></td><td><span class="dd">16</span></td><td><span class="tog"></span></td><td><span class="tog"></span></td><td><span class="val">on time</span></td><td><span class="btn">Name them</span></td><td class="warn">● Not found</td><td><span class="btn">Test</span></td></tr>
+        </table>
+      </div>
+      <div class="box" style="padding:0;flex:1">
+        <div style="padding:10px 12px 0"><h4 style="margin:0">CONTROLS</h4></div>
+        <table>
+          <tr><th>ACTION</th><th>KEY</th><th>PEDAL OR PAD</th><th>PHONE</th></tr>
+          <tr><td class="f">Start the song</td><td><kbd>Space</kbd></td><td>Pedal 1 <span class="hint">· CC 64, ch 10 &nbsp;✕</span></td><td class="ok">✓</td></tr>
+          <tr><td class="f">Stop</td><td>hold <kbd>Space</kbd> · <kbd>Esc</kbd> <kbd>Esc</kbd></td><td>hold Pedal 1</td><td class="ok">✓ hold</td></tr>
+          <tr><td class="f">Next song: later / earlier</td><td><kbd>→</kbd> / <kbd>←</kbd></td><td>Pedal 2 / Pedal 3</td><td class="ok">✓</td></tr>
+          <tr><td class="f">Next section: later / earlier</td><td><kbd>↓</kbd> / <kbd>↑</kbd></td><td><span class="learn wait">Press a pedal…</span></td><td class="ok">✓</td></tr>
+          <tr><td class="f">Choose section 1–10</td><td><kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd></td><td>Pad notes 36–45</td><td class="ok">✓</td></tr>
+          <tr><td class="f">Loop this section / cancel</td><td><kbd>L</kbd> / <kbd>Backspace</kbd></td><td><span class="learn">Learn</span></td><td class="ok">✓</td></tr>
+          <tr><td class="f">Go to the next song now</td><td>hold <kbd>→</kbd></td><td><span class="learn">Learn</span></td><td class="ok">✓ hold</td></tr>
+          <tr><td class="f">Main view ⇄ stage view</td><td><kbd>Tab</kbd></td><td><span class="learn">Learn</span></td><td class="hint">—</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 13 CUE VOICE & PAD -->
+<div class="opt" id="s13">
+<h2><span>13</span>Setup: cue voice and pad</h2>
+<p class="sub">Left: each type of section has a colour and a spoken cue. The cue is said one bar before the section starts, always at the same place, so the band learns to expect it. Add your own types and your own recordings. Right: the pad sounds. A pad can be one recording per key, or a single recording that the app moves to the song's key.</p>
+<div class="app">
+  <div class="top" data-top="3"></div>
+  <div class="content">
+    <div class="subtabs" data-sub="2"></div>
+    <div class="col" style="flex:1.25">
+      <div class="box" style="display:flex;gap:18px;align-items:center">
+        <div><h4>VOICE</h4><span class="dd">Built-in · calm</span></div>
+        <div><h4>SAY IT</h4><span class="dd">1 bar before</span></div>
+        <div><h4>LEVEL</h4><span class="val" style="display:inline-block">-9 dB</span></div>
+        <div><h4>HEARD IN</h4><span class="lbl-out mon">In-ears</span> mixes only</div>
+        <div class="grow"></div><span class="btn">▶ Hear all</span>
+      </div>
+      <div class="box" style="padding:0;flex:1">
+        <table>
+          <tr><th>SECTION TYPE</th><th>COLOUR</th><th>CUE</th><th></th></tr>
+          <tr><td class="f">Intro</td><td><span class="pills"><span style="background:var(--s-intro)">Intro</span></span></td><td><span class="dd">“Intro”</span></td><td>▶</td></tr>
+          <tr><td class="f">Verse</td><td><span class="pills"><span style="background:var(--s-verse)">Verse</span></span></td><td><span class="dd">“Verse”</span></td><td>▶</td></tr>
+          <tr><td class="f">Pre-chorus</td><td><span class="pills"><span style="background:var(--s-pre)">Pre-chorus</span></span></td><td><span class="dd">“Pre-chorus”</span></td><td>▶</td></tr>
+          <tr><td class="f">Chorus</td><td><span class="pills"><span style="background:var(--s-chorus)">Chorus</span></span></td><td><span class="dd">“Chorus”</span></td><td>▶</td></tr>
+          <tr><td class="f">Bridge</td><td><span class="pills"><span style="background:var(--s-bridge)">Bridge</span></span></td><td><span class="dd">“Bridge”</span></td><td>▶</td></tr>
+          <tr><td class="f">Solo</td><td><span class="pills"><span style="background:var(--s-solo)">Solo</span></span></td><td><span class="dd">Your recording · “Solo, Jeff”</span></td><td>▶</td></tr>
+          <tr><td class="f">Outro</td><td><span class="pills"><span style="background:var(--s-outro)">Outro</span></span></td><td><span class="dd">“Outro”</span></td><td>▶</td></tr>
+          <tr><td class="f">Breakdown <span class="hint">· yours</span></td><td><span class="pills"><span style="background:#e9d568">Breakdown</span></span></td><td><span class="dd">No cue</span></td><td></td></tr>
+        </table>
+        <div style="padding:10px 12px;display:flex;gap:16px"><span class="addl">+ Add a section type</span><span class="addl">+ Import a recording</span><span class="hint">Other clips: “Watch me”, “Last time”, “Two bars to stop”, “1-2-3-4”</span></div>
+      </div>
+    </div>
+    <div class="col" style="flex:1">
+      <div class="box" style="padding:0">
+        <div style="display:flex;align-items:center;padding:10px 12px 0"><h4 style="margin:0">PAD SOUNDS</h4><div class="grow"></div><span class="addl">+ Add a sound</span></div>
+        <table>
+          <tr><th>SOUND</th><th>KEYS</th><th></th></tr>
+          <tr style="background:rgba(111,240,200,.06)"><td class="f">Warm pad<small>Built in</small></td><td class="ok">all 12</td><td class="ok">in use</td></tr>
+          <tr><td class="f">Analog strings<small>Your recordings, one per key</small></td><td class="warn">11 of 12 · F# missing</td><td>▶</td></tr>
+          <tr><td class="f">Shimmer<small>One recording in C, moved to each key</small></td><td class="ok">all 12</td><td>▶</td></tr>
+        </table>
+      </div>
+      <div class="box">
+        <h4>HOW THE PAD BEHAVES</h4>
+        <div class="row">Level <span class="val">-10 dB</span></div>
+        <div class="row">Moving to a new key takes <span class="val">4 s</span></div>
+        <div class="row">Heard in <span>all six mixes <span class="hint">(routing grid)</span></span></div>
+        <div class="row">Try a key <span class="keys" style="max-width:190px"><span>C</span><span>C#</span><span>D</span><span>Eb</span><span class="on">E</span><span>F</span><span>F#</span><span>G</span><span>Ab</span><span>A</span><span>Bb</span><span>B</span></span></div>
+      </div>
+      <div class="box hint">Whether a song has a pad, and whether the pad stays in key or moves on between songs, is set per song in the setlist.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 14 REMOTE BACKUP TIMECODE -->
+<div class="opt" id="s14">
+<h2><span>14</span>Setup: phone remote, backup laptop, timecode</h2>
+<p class="sub">All three are off until you turn them on. A new phone scans the code, types the PIN and then waits here until someone lets it in. The backup laptop is paired once and shows how closely it is following. Timecode needs an output labelled Timecode; each song's start time is set in the setlist.</p>
+<div class="app">
+  <div class="top" data-top="3"></div>
+  <div class="content">
+    <div class="subtabs" data-sub="3"></div>
+    <div class="col" style="flex:1">
+      <div class="box" style="display:flex;gap:18px">
+        <div class="qr"><canvas id="qr" width="134" height="134"></canvas></div>
+        <div style="flex:1">
+          <div class="row" style="margin-top:0"><b style="color:var(--text);font-size:15px">Phone remote</b><span><span class="tog on"></span> On</span></div>
+          <div class="row">Address <span class="val">http://192.168.1.20:8080</span></div>
+          <div class="row">PIN <span class="val" style="letter-spacing:4px">4 7 1 9</span></div>
+          <table style="margin-top:6px">
+            <tr><th>PHONE</th><th>CAN</th><th></th></tr>
+            <tr style="background:rgba(242,154,120,.08)"><td class="f">Sam's iPhone <span class="hint">· waiting</span></td><td><span class="btn pri">Full control</span> <span class="btn">View only</span></td><td class="bad">Refuse</td></tr>
+            <tr><td class="f">Drummer's iPhone</td><td><span class="dd">Full control</span></td><td class="hint">Forget</td></tr>
+            <tr><td class="f">Guitarist's Pixel</td><td><span class="dd">View only</span></td><td class="hint">Forget</td></tr>
+          </table>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex:1">
+        <div class="box" style="flex:1">
+          <div class="row" style="margin-top:0"><b style="color:var(--text);font-size:15px">Backup laptop</b><span><span class="tog on"></span> On</span></div>
+          <div class="row">This laptop is the <div class="tools"><span class="on">Main</span><span>Backup</span></div></div>
+          <div class="row">Paired with <span class="val">MacBook-Backup</span></div>
+          <div class="row">Connected by <span class="ok">network cable ✓</span></div>
+          <div class="row">Following within <span class="val ok">1.8 ms</span></div>
+          <div class="row">Band folders <span class="ok">✓ the same</span></div>
+          <div class="row">If the main laptop drops <span class="dd">Backup takes over MIDI</span></div>
+          <div class="hint" style="margin-top:8px">A hardware audio switcher, which isn't part of the app, chooses which laptop the system hears.</div>
+        </div>
+        <div class="box" style="flex:1">
+          <div class="row" style="margin-top:0"><b style="color:var(--text);font-size:15px">Timecode</b><span><span class="tog on"></span> On</span></div>
+          <div class="row">Sent on <span><span class="lbl-out tc">Timecode</span> Out 15</span></div>
+          <div class="row">Frame rate <span class="dd">30 fps</span></div>
+          <div class="row">Level <span class="val">-12 dB</span></div>
+          <div class="row">Also as MIDI timecode <span><span class="tog"></span> Off</span></div>
+          <div class="row">Sending now <span class="val" style="font-variant-numeric:tabular-nums">03:02:14:06</span></div>
+          <div class="hint" style="margin-top:8px">Hold The Line starts at 03:00:00:00 in this setlist.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 15 SNAPSHOTS -->
+<div class="opt" id="s15">
+<h2><span>15</span>Snapshots</h2>
+<p class="sub">A safety net for edits made at the venue. A snapshot of every song, setlist and setting is taken each time the band folder is opened, and you can save your own. Going back to one is a single click, and the current state is saved first, so even that can be undone. Each snapshot lists what has changed since.</p>
+<div class="app" style="height:560px">
+  <div class="top" data-top="1"><span class="btn">↶ Undo</span><span class="btn" style="color:var(--text);box-shadow:inset 0 -2px 0 var(--mint)">Snapshots</span></div>
+  <div class="veil"><div class="dlg" style="width:860px">
+    <div class="dh"><h3>Snapshots</h3><div class="grow"></div><span class="btn pri">+ Save a snapshot now</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr">
+      <div style="padding:8px 0;border-right:1px solid var(--hair)">
+        <table>
+          <tr><th>SNAPSHOT</th><th>WHEN</th><th></th></tr>
+          <tr style="background:rgba(111,240,200,.06)"><td class="f">Before soundcheck · Montréal</td><td>Today 16:42</td><td class="ok">selected</td></tr>
+          <tr><td class="f">Opened the folder <span class="hint">· automatic</span></td><td>Today 15:10</td><td></td></tr>
+          <tr><td class="f">After rehearsal</td><td>Thu 22:05</td><td></td></tr>
+          <tr><td class="f">Opened the folder <span class="hint">· automatic</span></td><td>Thu 18:30</td><td></td></tr>
+        </table>
+      </div>
+      <div style="padding:14px 18px">
+        <h4>CHANGED SINCE “BEFORE SOUNDCHECK”</h4>
+        <div class="checklist">
+          <div><i class="warn">•</i><span><b>Hold The Line</b> · Guitar 1: Crunch moved from bar 33 to bar 32, beat 4</span></div>
+          <div><i class="warn">•</i><span><b>Hold The Line</b> · BVs level -4.0 → -2.0 dB</span></div>
+          <div><i class="warn">•</i><span><b>Ballad</b> · cue “Watch me” added at bar 61</span></div>
+          <div><i class="warn">•</i><span><b>Band</b> · click level -6 → -4 dB <span class="hint">(kept from last night's show)</span></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="df"><span class="hint">Your current state is saved as a snapshot before going back.</span><div class="grow"></div><span class="btn">Close</span><span class="btn emb">Go back to this snapshot</span></div>
+  </div></div>
+</div>
+</div>
+
+</div>
+<script>
+// shared chrome for Edit-mode screens
+const TABS=['Setlists','Song editor','Mixer','Setup'];
+document.querySelectorAll('[data-top]').forEach(el=>{
+  const extra=el.innerHTML,on=+el.dataset.top;
+  el.innerHTML='<div class="logo"><i>Q</i>SMART Q <small>LIVE</small></div><div class="tabs">'+TABS.map((t,i)=>'<span'+(i==on?' class="on"':'')+'>'+t+'</span>').join('')+'</div><div class="grow"></div>'+extra+'<div class="modesw editing"><span class="on">EDIT</span><span>SHOW</span></div>';
+});
+const SUBS=[['Audio & routing','Rig, outputs, roles'],['MIDI & controls','Pedalboards, keys, pedals'],['Cue voice & pad','Section types, sounds'],['Remote, backup, timecode','Phones, second laptop']];
+document.querySelectorAll('[data-sub]').forEach(el=>{el.innerHTML=SUBS.map((s,i)=>'<span'+(i==+el.dataset.sub?' class="on"':'')+'>'+s[0]+'<small>'+s[1]+'</small></span>').join('')});
+// routing grid
+(function(){const g=document.getElementById('grid');if(!g)return;
+  // each output: [name, physical outputs, label class, label]
+  const outs=[['PA','1/2','foh','PA'],['Drummer','3/4','mon','In-ears'],['Guitar 1','5/6','mon','In-ears'],['Guitar 2','7/8','mon','In-ears'],['Bass','9/10','mon','In-ears'],['Vocals','11/12','mon','In-ears'],['Timecode','15','tc','Timecode'],['Spare','13/14, 16','off','Not used']];
+  // each role: [name, colour, kind, level in each of the six mixes ('' = not sent)]
+  const roles=[
+    ['Click','var(--ember)','mon',['','+3','0','0','0','-6']],
+    ['Cues','var(--mid)','mon',['','0','0','0','0','0']],
+    ['Keys','var(--p-keys)','any',['0','-6','-3','-3','-6','0']],
+    ['Synth','var(--p-synth)','any',['-3','-9','-6','-6','-9','-3']],
+    ['Gtr FX','var(--p-gtr)','any',['-3','-6','0','0','-9','-6']],
+    ['BVs','var(--p-bvs)','any',['0','-3','-6','-6','-6','+3']],
+    ['Perc','var(--p-perc)','any',['-6','','-9','-9','-6','-9']],
+    ['Strings','var(--p-str)','any',['-6','-9','-9','-9','-12','-6']],
+    ['Pad','var(--p-pad)','any',['-9','-12','-12','-12','-12','-9']],
+    ['Timecode','#c4b1ff','tc',[]]];
+  let h='<tr><th>ROLE ↓ &nbsp; OUTPUT MIX →</th>'+outs.map(o=>'<th><small>'+o[0]+'</small>'+o[1]+'<br><span class="lbl-out '+o[2]+'">'+o[3]+'</span></th>').join('')+'</tr>';
+  roles.forEach(r=>{h+='<tr><td class="f"><span class="bar4" style="background:'+r[1]+'"></span>'+r[0]+'</td>'+outs.map((o,i)=>{
+    const allowed=o[2]=='off'?false:(r[2]=='mon'?o[2]=='mon':r[2]=='tc'?o[2]=='tc':o[2]!='tc');
+    const lv=r[2]=='tc'?(o[2]=='tc'?'-12':''):(r[3][i]||'');
+    return '<td class="dot">'+(!allowed?'<i class="block"></i>':lv?'<span class="lv'+(lv[0]=='+'?' hi':'')+'">'+lv+'</span>':'<span class="nolv">·</span>')+'</td>'}).join('')+'</tr>'});
+  h+='<tr><td class="f" style="color:var(--dim)">Overall level</td>'+outs.map((o,i)=>'<td class="dot">'+(o[2]=='off'?'':'<span class="val" style="min-width:0;display:inline-block;font-size:11px">'+(i==0?'-2':'0')+' dB</span>')+'</td>').join('')+'</tr>';
+  g.innerHTML=h;})();
+function rnd(seed){let s=seed*7919%233280;return()=>{s=(s*9301+49297)%233280;return s/233280}}
+const env=t=>t<.083?.35:t<.25?.55:t<.416?.85:t<.582?.55:t<.748?.9:t<.873?.6:.4;
+document.querySelectorAll('canvas.bigwave').forEach(c=>{
+  const x=c.getContext('2d'),W=c.width,H=c.height,mid=H/2,ph=W*.46,r=rnd(3);
+  for(let i=0;i<W;i+=2){const a=(.35+.65*r())*env(i/W)*mid*.9;x.fillStyle=i<ph?'rgba(111,240,200,.9)':'rgba(141,127,150,.6)';x.fillRect(i,mid-a,1.4,a*2)}
+});
+document.querySelectorAll('canvas.mini').forEach(c=>{
+  c.width=240;c.height=36;const x=c.getContext('2d'),r=rnd(+c.dataset.s);
+  for(let i=0;i<240;i+=2){const a=(.2+.8*r())*16*(c.dataset.s==8?.5:1);x.fillStyle='rgba(201,194,207,.7)';x.fillRect(i,18-a,1.3,a*2)}
+});
+document.querySelectorAll('.rulerbars').forEach(ru=>{for(let b=1;b<=156;b+=8){const s=document.createElement('span');s.style.left=((b-1)/156*100)+'%';s.textContent=b;ru.appendChild(s)}});
+document.querySelectorAll('canvas.wf').forEach(c=>{
+  const W=c.parentElement.clientWidth||900,H=c.parentElement.clientHeight-8;c.width=W;c.height=H;
+  const x=c.getContext('2d'),r=rnd(+c.dataset.s),mid=H/2;
+  if(c.dataset.click){x.fillStyle=c.dataset.c;for(let i=0;i<W;i+=W/624){const big=Math.round(i/(W/624))%4==0;x.fillRect(i,mid-(big?12:6),1.2,big?24:12)}return}
+  for(let i=0;i<W;i+=2){const t=i/W;let e=env(t);if(c.dataset.auto){e*=t<.25?0:(t<.416?(t-.25)/.166:1)}
+    const a=(.3+.7*r())*e*mid*.95;x.fillStyle=c.dataset.c;x.globalAlpha=.75;x.fillRect(i,mid-a,1.3,a*2)}
+  if(c.dataset.auto){x.globalAlpha=1;x.strokeStyle='#fff';x.lineWidth=1.5;x.beginPath();x.moveTo(0,H-3);x.lineTo(W*.25,H-3);x.lineTo(W*.416,4);x.lineTo(W,4);x.stroke();
+    [[.25,H-3],[.416,4]].forEach(([p,y])=>{x.fillStyle='#fff';x.beginPath();x.arc(W*p,y,3.5,0,7);x.fill()})}
+});
+(function(){const c=document.getElementById('qr');if(!c)return;const x=c.getContext('2d'),n=29,s=c.width/n,r=rnd(42);x.fillStyle='#0e0c11';
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){if(r()>.52)x.fillRect(i*s,j*s,s,s)}
+  [[0,0],[n-7,0],[0,n-7]].forEach(([a,b])=>{x.fillStyle='#0e0c11';x.fillRect(a*s,b*s,7*s,7*s);x.fillStyle='#fff';x.fillRect((a+1)*s,(b+1)*s,5*s,5*s);x.fillStyle='#0e0c11';x.fillRect((a+2)*s,(b+2)*s,3*s,3*s)});})();
+</script>
+</body>
+</html>
