@@ -1,3 +1,5 @@
+#include <limits>
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -40,6 +42,16 @@ TEST_CASE("bars and seconds convert both ways", "[tempo]") {
         auto back = m.barBeatAt(m.secondsAt(at));
         CHECK(back.bar == at.bar);
         CHECK(back.beat == Catch::Approx(at.beat).margin(1e-9));
+    }
+}
+
+TEST_CASE("seconds that are not a number give bar 1 beat 1", "[tempo]") {
+    TempoMap m({{1, 1.0, 128, 4, 4}, {5, 1.0, 90, 6, 8}});
+    for (double s : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(),
+                     -std::numeric_limits<double>::infinity()}) {
+        auto at = m.barBeatAt(s);
+        CHECK(at.bar == 1);
+        CHECK(at.beat == 1.0);
     }
 }
 

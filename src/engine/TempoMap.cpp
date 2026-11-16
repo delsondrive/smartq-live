@@ -72,6 +72,7 @@ double TempoMap::secondsAt(BarBeat at) const noexcept {
 }
 
 BarBeat TempoMap::barBeatAt(double seconds) const noexcept {
+    if (!std::isfinite(seconds)) return {};   // bar 1 beat 1: no bar number can be made from it
     std::size_t i = 0;
     while (i + 1 < points_.size() && seconds_[i + 1] <= seconds) ++i;
     const auto& p = points_[i];

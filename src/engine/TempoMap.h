@@ -22,7 +22,7 @@ public:
 
     const std::vector<TempoPoint>& points() const noexcept { return points_; }
     double secondsAt(BarBeat) const noexcept;    // from bar 1 beat 1; negative before it
-    BarBeat barBeatAt(double seconds) const noexcept;
+    BarBeat barBeatAt(double seconds) const noexcept;   // bar 1 beat 1 for NaN or infinite seconds
     SamplePos sampleAt(BarBeat, double sampleRate) const noexcept;
     int beatsInBar(int bar) const noexcept;
     int denominatorAt(int bar) const noexcept;
