@@ -147,7 +147,7 @@ song.json
  ├─ tempoMap: list of {bar, beat, bpm, timeSignature}
  ├─ sections: list of {name, type, startBar, endBar}
  ├─ arrangements: named section orders (e.g. "Normal", "Long ending")
- ├─ parts: audio stems → {file, role, gainDb, mute, outputOverride?}
+ ├─ parts: audio stems → {file, role, gainDb, mute}
  ├─ automation: per part (and click/cue/pad) → breakpoints {bar, beat, gainDb | mute}
  ├─ click: {gainDb offset, sound, subdivision, accentDownbeat, enabled}
  ├─ cueLane: manual markers → {bar, beat, clip}
@@ -214,7 +214,7 @@ setlist.json
 - **Live changes:** when the drummer chooses a different next section, the announcement is for what will *actually* play. If the choice is made after the cue's usual place, the cue is spoken straight away.
 - **Manual cue markers** can be added anywhere, such as "Watch me" or "2 bars to stop".
 - Cues route only to Monitor outputs.
-- **The built-in voice must come from a source the app is allowed to ship.** Until one is chosen, development uses placeholder clips. See section 12.
+- **The built-in voice is made on the user's own computer,** with the system's text-to-speech, the first time it is asked for ("Make the voice" in Setup). No recorded voice ships with the app, so there is nothing to license. The clips are saved in the band folder, so every computer the band uses gets the same voice.
 
 ### 8.4 MIDI out
 
@@ -246,7 +246,7 @@ setlist.json
   1. the part's **fader**, set per song in the Mixer: how loud this part is in this song, everywhere it goes
   2. the role's **level in that output's mix**, set per rig on the routing grid
   3. the output's **trim**, set per rig
-- **Per part:** a fader, mute, and solo (solo in Edit mode only). The click, cues and pad have a band-wide level and a per-song offset. A part can be sent to a different output for one song.
+- **Per part:** a fader, mute, and solo (solo in Edit mode only). The click, cues and pad have a band-wide level and a per-song offset. To send a part somewhere different in one song, give it a different role in that song.
 - **Per output:** a level trim and a peak meter with a clip light.
 - **Safety rules:**
   - Each output is labeled **Monitor**, **FOH**, **Timecode** or unused.
@@ -435,7 +435,7 @@ There is no built-in cloud. These safeguards make a synced folder safe, and they
 - Code structure, the build system (CMake), and test organization.
 - Visual styling and fonts, within the mockups and "readable from the drum throne".
 - Built-in click sounds and the generated pad sound.
-- **The built-in cue voice.** It needs a source the app may ship: recordings made for it, or a text-to-speech voice whose licence allows redistribution. Placeholder clips until then.
+- How the system's text-to-speech is called on each platform to make the cue voice (section 8.3).
 - **A small web-server library** for the phone remote, with a permissive licence (JUCE has none built in). Server-sent events for updates and plain POSTs for commands are enough.
 - **Windows MIDI:** the classic Windows MIDI API by default. JUCE 9 also supports the newer Windows MIDI Services, which may give tighter timing where it is installed.
 - The undo implementation and the details of the JSON files.
@@ -553,4 +553,6 @@ The design was reviewed in full on 2026-11-15, against the Smart Q project and t
 | 17 | No crash plan | Restart goes straight back to Show mode at the same song | A restart mid-show has to take seconds. |
 | 18 | No level check | Pre-show check warns of clipping per output | Several parts summed into one output can clip into the PA. |
 | 19 | A role went to its output at one fixed level | Every output has its own mix: any role, at its own level | The user asked how to set a mix for specific outputs, such as one per band member. Each person needs the same parts at different levels. |
-| 20 | A by-ear check by the user between stages | Stages built back to back, gated by automated tests; the by-ear checklist is done when it suits the user; Mac later | The user asked to build as much as possible without interruptions, and to keep the Mac for later. |
+| 20 | A built-in voice that had to be licensed | The cue voice is made on the user's computer with the system's text-to-speech | Nothing to license, and it works on both systems. Found while planning. |
+| 21 | "A part can be sent to a different output for one song" | Give the part a different role in that song | With a mix per output, a one-song output override no longer has a clear meaning. Found while planning. |
+| 22 | A by-ear check by the user between stages | Stages built back to back, gated by automated tests; the by-ear checklist is done when it suits the user; Mac later | The user asked to build as much as possible without interruptions, and to keep the Mac for later. |

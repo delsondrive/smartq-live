@@ -398,6 +398,7 @@ struct PreparedSong {
     TempoMap tempo;
     SamplePos audioStartOffset = 0;    // where bar 1 beat 1 falls in every part's audio
     SamplePos start = 0;               // song time playback begins at, never above 0
+    SamplePos bodyStart = 0;           // where it begins when the count-in is skipped: -audioStartOffset
     SamplePos end = 0;                 // song time one past the last sample
     std::vector<PreparedPart> parts;
     ClickSetup click;
@@ -443,6 +444,7 @@ TEST_CASE("prepareSong works out where a song starts and ends", "[renderer]") {
     CHECK(preroll.start == -4800);  CHECK(preroll.end == 43200);
     auto both = prepareSong("d", TempoMap{}, 1, 200000, {{audio, 0}}, {}, 48000.0);
     CHECK(both.start == -200000);                          // the longer of count-in and pre-roll
+    CHECK(counted.bodyStart == 0);  CHECK(preroll.bodyStart == -4800);  CHECK(both.bodyStart == -200000);
     CHECK(prepareSong("e", TempoMap{}, 0, 0, {{audio, 0}}, {}, 48000.0, 1000).end == 1000);
     CHECK(prepareSong("f", TempoMap{}, 0, 0, {}, {}, 48000.0).end == 0);
 }
@@ -577,7 +579,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[renderer]"`. Expected: `SongRen
 
 - [ ] **Step 3: Implement `prepareSong`**
 
-`countIn = -tempo.sampleAt({1 - countInBars, 1.0}, sampleRate)`; `start = -max(countIn, audioStartOffset)`; `end` is `explicitEnd` when it is 0 or more, otherwise the longest part's length minus `audioStartOffset`, and never below 0. Ticks cover `[start, end)` and are always built, whether or not the click is enabled.
+`countIn = -tempo.sampleAt({1 - countInBars, 1.0}, sampleRate)`; `start = -max(countIn, audioStartOffset)`; `bodyStart = -audioStartOffset`; `end` is `explicitEnd` when it is 0 or more, otherwise the longest part's length minus `audioStartOffset`, and never below 0. Ticks cover `[start, end)` and are always built, whether or not the click is enabled.
 
 - [ ] **Step 4: Implement `SongRenderer`**
 
@@ -649,7 +651,7 @@ public:
 };
 
 // OfflineRender.h
-struct TimedAction { std::int64_t at; std::function<void(Engine&)> run; };       // `at` is a stream time
+struct TimedAction { std::int64_t at; std::function<void(Engine&)> run; };       // `at` is frames from the start of this renderOffline call
 std::vector<std::vector<float>> renderOffline(Engine&, int channels, std::int64_t frames, int blockFrames,
                                               std::vector<TimedAction> actions = {});
 ```
@@ -797,6 +799,15 @@ TEST_CASE("seamless: the next song starts on the very next sample", "[follow]") 
         REQUIRE(e.popEvent(ev)); CHECK(ev.serial == b); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 1000);
     }
 }
+TEST_CASE("seamless skips the next song's count-in; a gap keeps it", "[follow]") {
+    for (auto kind : {FollowKind::Seamless, FollowKind::Gap}) {
+        Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
+        e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({kind, 0.0});
+        auto out = renderOffline(e, 2, 1000 + 96000 + 100, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 200000, 0.5f, 1))); }}});
+        if (kind == FollowKind::Seamless) CHECK(out[0][1000] == 0.5f);               // straight into bar 1
+        else { CHECK(out[0][1000 + 50000] == 0.0f); CHECK(out[0][1000 + 96000] == 0.5f); }   // a gap of 0 s, then one bar of count-in
+    }
+}
 TEST_CASE("gap: silence for the gap, then the next song", "[follow]") {
     Engine e; e.prepare(48000.0, 512, 2); e.setMix(stereoMix());
     e.cue(share(testSong("a", 1000, 0.25f))); e.start(); e.setFollowOn({FollowKind::Gap, 0.5});
@@ -870,14 +881,14 @@ Run: `powershell -File scripts/build.ps1 -Test "[follow]"`. Expected: the seamle
 
 When the playing song ends partway through a block, the rest of that block is rendered from whatever follows, so the hand-over is on the exact sample. Read the latest `FollowOn` at that moment:
 - `Stop`, or nothing cued: stop, as Task 6. The cue is kept.
-- `Seamless` with a cue: the cue becomes the playing song at once; `Ended` for the old serial then `Started` for the new one, both with the stream time of the first sample of the new song.
-- `Gap` with a cue: `inGap` is true and the state stays `Playing` for `llround(gapSeconds * sampleRate)` samples of silence, then the cue starts as above. If the cue is cleared before the gap ends, the engine stops when it ends. `stop` during a gap stops at once, with event `Stopped` for the song that ended, and keeps the cue.
+- `Seamless` with a cue: the cue becomes the playing song at once, from its `bodyStart`, so its count-in is skipped; `Ended` for the old serial then `Started` for the new one, both with the stream time of the first sample of the new song.
+- `Gap` with a cue: `inGap` is true and the state stays `Playing` for `llround(gapSeconds * sampleRate)` samples of silence, then the cue starts from its `start`, count-in included. If the cue is cleared before the gap ends, the engine stops when it ends. `stop` during a gap stops at once, with event `Stopped` for the song that ended, and keeps the cue.
 
 The level calls apply only when their serial is the playing song's.
 
 - [ ] **Step 4: Run the engine tests**
 
-Run: `powershell -File scripts/build.ps1 -Test "[follow],[engine]"`. Expected: 13 test cases pass.
+Run: `powershell -File scripts/build.ps1 -Test "[follow],[engine]"`. Expected: 14 test cases pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1511,7 +1522,7 @@ git add -A && git commit -m "feat: turn a rig into per-output mixes, with the cl
 | `band.setLevel` | `which` ("click", "cues", "pad"), `db` | Clamped with `clampDb`. |
 | `role.add` | `name` | Refused when another role has that name, ignoring case: "There is already a role called <name>." Kind `Part`, next colour. |
 | `role.set` | `roleId`, `name?`, `colour?` | The same name rule. |
-| `role.remove` | `roleId` | Refused for Click, Cues and Pad: "<name> can't be removed." Refused when parts use it: "<n> parts still use <name>." Also removes it from every rig's mixes. |
+| `role.remove` | `roleId` | Refused for Click, Cues and Pad: "<name> can't be removed." Refused when parts use it: "1 part still uses <name>." or "<n> parts still use <name>." Also removes it from every rig's mixes. |
 | `song.add` | `song` (a `SongDoc` as a var) | Refused when its id exists. A missing `roleId` on a part is allowed. |
 | `song.setInfo` | `songId`, `title?`, `key?`, `countInBars?` | Title trimmed and not empty; `countInBars` 0..8. |
 | `song.setTempo` | `songId`, `tempo` (array of points) | At least one point; values limited as Task 9 reads them. |
@@ -1549,7 +1560,7 @@ CHECK(run("role.add", {{"name", "Loops"}}).ok);                       CHECK(mode
 CHECK(run("role.add", {{"name", "loops"}}).message == "There is already a role called loops.");
 CHECK(run("role.remove", {{"roleId", clickId}}).message == "Click can't be removed.");
 // (after adding a song with one part on Keys)
-CHECK(run("role.remove", {{"roleId", keysId}}).message == "1 parts still use Keys.");
+CHECK(run("role.remove", {{"roleId", keysId}}).message == "1 part still uses Keys.");
 // a removed role leaves every mix
 run("role.remove", {{"roleId", loopsId}});                            CHECK(rig().outputs[0].mix.count(loopsId) == 0);
 // songs and parts

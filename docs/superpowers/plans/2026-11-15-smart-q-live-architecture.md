@@ -20,6 +20,17 @@ Stage 5 (pad player, timecode, backup laptop) is not planned yet. The spec says 
 
 **No stops between plans.** The user asked for the stages to be built back to back. Finish a plan, run its whole test suite, add its section to `docs/acceptance.md`, then start the next plan. Stop only for something the user alone can do or decide.
 
+## What these plans leave out, on purpose
+
+- **Stage 5:** the pad player, timecode output and the backup laptop. The Pad role and the Timecode output label exist from stage 1 so that nothing has to be reshaped later, but nothing plays a pad or sends timecode yet.
+- **The macOS build.** The user is keeping the Mac for the end. Code is written to be portable (see the Windows-first rule below), and the first Mac build and its fixes are a task of their own later.
+- **Installers and code signing.**
+- **AI control.**
+
+## Test data
+
+`model::createDemoBand` makes a small band with three generated songs and never changes: tests rely on its exact contents. Stage 2 adds `model::addDemoMidi` and stage 3 adds `model::addDemoSections`, which enrich a demo band through commands. `sqlive::test::DemoSession d;` is the plain band; `DemoSession d(true);` also has the MIDI and the sections.
+
 ## Global constraints (every task in every plan)
 
 - **Toolchain:** C++20, MSVC from Visual Studio 2026, CMake 3.25+, JUCE 9.0.4, Catch2 v3.16.1. All fetched by CMake `FetchContent`, as in Smart Q.

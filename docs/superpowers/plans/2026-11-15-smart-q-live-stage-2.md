@@ -122,12 +122,24 @@ git add -A && git commit -m "feat: add MIDI devices, lanes and controls to the d
 ### Task 2: MIDI commands
 
 **Files:**
-- Create: `src/model/MidiCommands.h`, `src/model/MidiCommands.cpp`
+- Create: `src/model/MidiCommands.h`, `src/model/MidiCommands.cpp`, `src/model/ActionNames.h`, `src/model/ActionNames.cpp`
+- Create: `tests/support/MidiParams.h`
 - Modify: `src/app/Session.cpp` (register them beside the core commands)
 - Test: `tests/model/MidiCommandsTest.cpp`
 
 **Interfaces:**
-- Produces: `void registerMidiCommands(CommandLayer&);`
+- Produces: `void registerMidiCommands(CommandLayer&);` and, so that the model knows the actions without knowing the app:
+
+```cpp
+// model/ActionNames.h
+struct ActionInfo { juce::String name, title; ControlBinding defaultBinding; };
+const std::vector<ActionInfo>& actionInfos();
+    // {"start", "Start", Space}, {"stop", "Stop", none}, {"nextSongLater", "Next song: later", Right},
+    // {"nextSongEarlier", "Next song: earlier", Left}, {"toggleView", "Main view ⇄ stage view", Tab}
+const ActionInfo* actionInfo(const juce::String& name);            // nullptr when there is no such action
+```
+
+- `tests/support/MidiParams.h`, in `sqlive::test`, small builders for command parameters used by this plan's tests: `juce::var patches(std::initializer_list<std::pair<int, const char*>>)`, `juce::var sections(std::initializer_list<std::tuple<const char*, int, int>>)`, `model::MidiMessageDoc pc(int program)`, `model::MidiMessageDoc cc(int controller, int value)`, `juce::var messages(std::initializer_list<model::MidiMessageDoc>)`, and `juce::var binding(int keyCode, int midiKind = 0, int midiChannel = 0, int midiNumber = 0)`.
 
 | Command | Parameters | Rules |
 |---|---|---|
@@ -139,7 +151,7 @@ git add -A && git commit -m "feat: add MIDI devices, lanes and controls to the d
 | `marker.add` | `songId`, `deviceId`, `bar`, `beat`, `messages?`, `label?` | The device must exist. With no `messages`: one program change, the device's first patch, or program 0. Returns the id. |
 | `marker.set` | `songId`, `deviceId`, `markerId`, `bar?`, `beat?`, `label?`, `messages?` | `messages` may not be empty: "A change has to send something." |
 | `marker.remove` | `songId`, `deviceId`, `markerId` | |
-| `controls.set` | `action`, `binding` (a `ControlBinding` as a var, or void to go back to the default) | `action` must be one of the action names (Task 8). A key or MIDI message already used by another action is taken from it, and the message says so: "That key was used for Stop. It now does Start." |
+| `controls.set` | `action`, `binding` (a `ControlBinding` as a var, or void to go back to the default) | `action` must be a name in `actionInfos()`. A key or MIDI message already used by another action (by its own setting or by its default) is taken from it, and the message says so with the actions' titles: "That key was used for Next song: later. It now does Start." |
 | `song.setSections` | `songId`, `sections` | Sorted by `startBar`; each `endBar` is cut back to the next one's `startBar` so they never overlap. |
 
 - [ ] **Step 1: Write the failing tests**
@@ -192,7 +204,7 @@ git add -A && git commit -m "feat: add the commands for MIDI devices, changes an
 
 **Files:**
 - Create: `src/engine/Midi.h`, `src/model/SongMidi.h`, `src/model/SongMidi.cpp`
-- Modify: `src/engine/PreparedSong.h`, `src/engine/Engine.h`, `src/engine/Engine.cpp`, `src/model/SongAudio.cpp` (`buildPreparedSong` gains a `const RigDoc&` parameter and fills in the MIDI)
+- Modify: `src/engine/PreparedSong.h`, `src/engine/Engine.h`, `src/engine/Engine.cpp`, `src/model/SongAudio.h`, `src/model/SongAudio.cpp` (`buildPreparedSong` becomes `(const SongDoc&, const BandDoc&, const RigDoc&, audio, sampleRate)` and fills in the MIDI; update its callers and stage 1a's tests, which pass `RigDoc{}`)
 - Test: `tests/engine/EngineMidiTest.cpp`, `tests/model/SongMidiTest.cpp`
 
 **Interfaces:**
@@ -355,7 +367,7 @@ public:
 };
 ```
 
-**The rule:** starting a song from its start sends each device's state as of bar 1, beat 1 (song time 0), before anything else, and then skips every event at or before 0. Starting from somewhere else with `startAt(t)` sends the state as of `t` and skips every event at or before `t`. Notes are never chased.
+**The rule:** starting a song from its start sends each device's state as of bar 1, beat 1 (song time 0), before anything else. Starting from somewhere else with `startAt(t)` sends the state as of `t`. Call that time the chase point. From then on, a program change or control change at or before the chase point is skipped, because the chase has already covered it. Notes are never chased and never skipped: a note anywhere from the first sample played onwards sounds at its own time.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -422,7 +434,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[chase]"`. Expected: `engine/Mid
 
 - [ ] **Step 3: Implement `MidiChase` and use it**
 
-A table of `kMaxMidiDevices × 16` channel states, each holding a program (or -1) and 128 controller values (or -1). `scan` clears it and applies every program change and control change up to the time given. `emit` walks devices then channels in order: when a program is set, CC 0 and CC 32 if set, then the program; then every other set controller in ascending number. The engine calls `scan` + `emit` when a song starts (with `upTo = max(startTime, 0)` when starting at the song's start, `upTo = startTime` otherwise), sets its MIDI index to the first event after `upTo`, and gives the chased messages the stream time of the song's first sample. `resendMidiState` does the same for one device at the current song time, when a song is playing.
+A table of `kMaxMidiDevices × 16` channel states, each holding a program (or -1) and 128 controller values (or -1). `scan` clears it and applies every program change and control change up to the time given. `emit` walks devices then channels in order: when a program is set, CC 0 and CC 32 if set, then the program; then every other set controller in ascending number. The engine calls `scan` + `emit` when a song starts (with `upTo = max(startTime, 0)` when starting at the song's start, `upTo = startTime` otherwise), and gives the chased messages the stream time of the song's first sample. It remembers `upTo` as the chase point, sets its MIDI index to the first event at or after the first sample played, and while emitting skips program and control changes whose time is at or before the chase point. `resendMidiState` does the same for one device at the current song time, when a song is playing.
 
 - [ ] **Step 4: Run the tests**
 
@@ -712,8 +724,8 @@ git add -A && git commit -m "feat: connect MIDI devices to ports, and recover wh
 - Produces:
 
 ```cpp
-juce::String actionName(Action);                     // "start", "stop", "nextSongLater", "nextSongEarlier", "toggleView"
-juce::String actionTitle(Action);                    // "Start", "Stop", "Next song: later", "Next song: earlier", "Main view ⇄ stage view"
+juce::String actionName(Action);                     // the names and titles in model::actionInfos(), in the same order as the Action enum
+juce::String actionTitle(Action);
 std::optional<Action> actionFromName(const juce::String&);
 std::vector<Action> allActions();
 class ControlMap {
@@ -1449,9 +1461,9 @@ git add -A && git commit -m "feat: add snapshots as a safety net for edits made 
 **Files:**
 - Modify: `src/ui/Screens.cpp`, `tests/ui/ScreensTest.cpp`, `src/model/DemoBand.cpp`, `docs/acceptance.md`, `README.md`
 
-- [ ] **Step 1: Give the demo band MIDI**
+- [ ] **Step 1: Give the demo band MIDI, without changing the plain one**
 
-`createDemoBand` adds two devices, "Guitar 1" (patches 4 Clean, 12 Crunch, 20 Lead) and "Guitar 2" (2 Rhythm, 9 Ambient), and in each song a change for each device at bar 1 and two or three more at later bars. Tests written earlier that count devices or lanes on the demo band must still pass: where they assumed none, start those tests from a band made with `BandFolder::create` and the demo songs' audio, or adjust the expected numbers, whichever keeps the test's meaning.
+`createDemoBand` stays exactly as it is, so every earlier test keeps its meaning. Add `juce::Result model::addDemoMidi(CommandLayer&)` in `src/model/DemoBand.cpp`: through commands, it adds two devices, "Guitar 1" (patches 4 Clean, 12 Crunch, 20 Lead) and "Guitar 2" (2 Rhythm, 9 Ambient), and in each song a change for each device at bar 1 and two or three more at later bars (for "First Light": Guitar 1 Clean at bar 1, Crunch at bar 9, Clean at bar 13; Guitar 2 Rhythm at bar 1, Ambient at bar 13). The Welcome page's "Try the demo band" and `ui::renderScreen` call it after making the demo band. `sqlive::test::DemoSession` gains `explicit DemoSession(bool full = false)`: with `true` it also calls `addDemoMidi` and settles.
 
 - [ ] **Step 2: Add the new screens to `screenNames()` and the test's count**
 

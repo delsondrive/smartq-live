@@ -831,7 +831,7 @@ Items, in this order. A line is left out when it has nothing to say.
 |---|---|---|---|
 | `audio` | "Audio interface" · "<name>, 48 kHz, 512 samples" | rate differs from the band's: detail adds "Songs are converted to <rate> kHz as they load." | not open: "No audio interface" · "Choose one in Setup, or plug yours in." |
 | `routing` | "Routing" · "Click and cues only reach in-ear outputs" | each non-blocking `RoutingProblem`, title "Routing", its message | each blocking problem |
-| `files` | "Files" · "Every audio file is on this laptop" | parts whose file doesn't exist: "<n> parts have no audio file" · the first three names | cloud placeholders: "<n> audio files are still in the cloud" · "They haven't been downloaded to this laptop yet (<song>: <parts>…)." `fixLabel` "Download now" |
+| `files` | "Files" · "Every audio file is on this laptop" | parts whose file doesn't exist: "1 part has no audio file" / "<n> parts have no audio file" · the first three names | cloud placeholders: "<n> audio files are still in the cloud" · "They haven't been downloaded to this laptop yet (<song>: <parts>…)." `fixLabel` "Download now" |
 | `setlist` | "Setlist" · "<n> songs" | | no entries: "This setlist is empty" · "Add songs to it first." |
 | `conflicts` | | "<n> files have conflict copies" · "Two computers changed the same file. Open Setup to choose which to keep." | |
 | `power` | | on battery: "Running on battery" · "<percent>% left. Plug the laptop in." | |
@@ -860,7 +860,7 @@ TEST_CASE("what would go wrong on stage is caught", "[preshow]") {
     CHECK_FALSE(mayEnterShow(items));
     CHECK(find(items, "audio")->level == CheckItem::Level::Blocker);
     CHECK(find(items, "files")->level == CheckItem::Level::Warning);
-    CHECK(find(items, "files")->title == "1 parts have no audio file");
+    CHECK(find(items, "files")->title == "1 part has no audio file");
     CHECK(find(items, "power")->detail == "64% left. Plug the laptop in.");
     for (auto& e : d.setlist().entries) s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", e.id}}));
     CHECK(find(runPreShowCheck(s, good()), "setlist")->level == CheckItem::Level::Blocker);
@@ -1113,6 +1113,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[shell]"`. Expected: `ui/AppShel
 - `MainWindow`: native title bar, resizable, minimum 1100 × 680, starts at 1280 × 800 centred; content is an `AppShell`. In Show mode it registers the `ShowController` as key listener, takes kiosk mode with `juce::Desktop::setKioskModeComponent` (when allowed) and turns the screen saver off; leaving Show undoes all three. `activeWindowStatusChanged` calls `ShowController::keyboardLost` and `AppShell::setKeyboardElsewhere(true)` when the window stops being active in Show mode, and clears it when it is active again.
 - `App`: reads `Settings`; if the command line has `--band <folder>` that folder is used, else the newest recent folder; with no folder it shows the Welcome page (Task 10). With a folder: make the `Session`, the `AudioHost`, try `openFromRig` (failure leads to the New computer page, Task 10), then the `MainWindow`. Closing the window flushes the session and quits.
 - `Main.cpp` is `START_JUCE_APPLICATION` around a `juce::JUCEApplication` that owns an `App` and installs `LiveLookAndFeel` as the default.
+- Clicking the logo in Edit mode opens a small "About" panel: the logo, `sqlive::buildLine(sqlive::buildInfo())`, the band folder's path with "Show in Explorer", and "Open another band folder…", which goes back to the Welcome page.
 
 - [ ] **Step 5: Run the tests, then build and start the app once**
 
@@ -1228,8 +1229,8 @@ TEST_CASE("the setlists page describes the setlist in the mockup's words", "[set
     auto state = makeSetlistsState(s, {});
     REQUIRE(state.lists.size() == 1);
     CHECK(state.lists[0].name == "Demo set");  CHECK(state.lists[0].selected);
-    CHECK(state.lists[0].detail == "3 songs · 1:39");
-    CHECK(state.title == "Demo set");  CHECK(state.summary == "3 songs · 1:39");
+    CHECK(state.lists[0].detail == juce::String::fromUTF8("3 songs · 1:49"));       // 38.4 s + 30 s + 41.1 s
+    CHECK(state.title == "Demo set");  CHECK(state.summary == juce::String::fromUTF8("3 songs · 1:49"));
     CHECK_FALSE(state.continuous);
     REQUIRE(state.rows.size() == 3);
     CHECK(state.rows[0].number == 1);  CHECK(state.rows[0].title == "First Light");
@@ -1243,7 +1244,7 @@ TEST_CASE("the setlists page describes the setlist in the mockup's words", "[set
     s.commands().run("setlist.removeEntry", params({{"setlistId", s.setlistId()}, {"entryId", state.rows[1].entryId}}));
     auto after = makeSetlistsState(s, {});
     CHECK(after.rows[0].then == "Gap 4 s");
-    CHECK(after.library[1].note == "0:20");  CHECK_FALSE(after.library[1].inThisSet);
+    CHECK(after.library[1].note == "0:30");  CHECK_FALSE(after.library[1].inThisSet);
     auto& song = *s.model().song(after.rows[0].songId);
     s.folder().audioFile(song, song.parts[0]).deleteFile();
     CHECK(makeSetlistsState(s, {}).rows[0].warning == "1 file missing");
@@ -1358,6 +1359,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[newsong]"`. Expected: `ui/NewSo
 - The right-hand panel is left out in this stage (it shows what came from a MIDI file, which stage 2 adds). In its place, under the table: "Tempo and sections are set in the Song editor after this."
 - Footer: a tick box "Add this song to “<current setlist>”" (on by default), the `waiting` text in `caution`, "Cancel", and "Create song" (primary; enabled when `canCreate`). While importing: a progress bar and "Cancel"; a failure shows its reason and leaves the dialog open.
 - After creating: when the tick box is on, run `setlist.addSong`; then `onCreated`. `MainWindow` opens the new song in the Song editor.
+- **A song too big for this computer** is said here, not on stage: when the kept files would take more than half of the cache's budget in memory, the footer shows in `caution`: "This song needs <x> GB of memory. This computer keeps <y> GB for songs, so it may load slowly or not at all." The song can still be created.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1990,6 +1992,102 @@ git add -A && git commit -m "feat: check before a show, ask about tonight's leve
 
 ---
 
+### Task 18b: Files changed on another computer, and conflict copies
+
+**Files:**
+- Create: `src/app/FolderWatch.h`, `src/app/FolderWatch.cpp`, `src/ui/FilesDialog.h`, `src/ui/FilesDialog.cpp`
+- Modify: `src/app/Session.h`, `src/app/Session.cpp`, `src/ui/AppShell.cpp`, `src/ui/TopBar.cpp`
+- Test: `tests/app/FolderWatchTest.cpp`
+
+**Interfaces:**
+- Consumes: `model::BandFolder::fileFor`, `model::findConflictCopies`, `model::fromJson`, `CommandLayer`.
+- Produces:
+
+```cpp
+struct OutsideChange { model::DocKey key; juce::String name; enum class Kind { Changed, Added, Removed } kind; };
+class FolderWatch {
+public:
+    explicit FolderWatch(Session&);
+    void noteOwnWrite(const model::DocKey&);                      // the autosaver just wrote this: not an outside change
+    std::vector<OutsideChange> poll();                            // documents whose file changed, appeared or vanished since the last poll, other than by this app
+};
+// Session gains:
+    std::vector<OutsideChange> outsideChanges() const;            // waiting for the user's answer
+    void takeOutsideChanges();                                    // load them from disk, as one undoable step
+    void keepMine();                                              // write this app's version over them
+    std::vector<model::ConflictCopy> conflictCopies() const;
+    juce::Result resolveConflict(const model::ConflictCopy&, bool keepTheCopy);   // the loser goes to trash/
+// command "folder.reload" {documents: {"<kind>:<id>": JSON text, or "" for a removed one}}
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+```cpp
+TEST_CASE("a file changed by another computer is offered, not taken silently", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    CHECK(s.outsideChanges().empty());
+    s.commands().run("band.rename", params({{"name", "Mine"}}));  s.flushNow();
+    s.advanceWithoutDevice(0);  CHECK(s.outsideChanges().empty());                 // this app's own save is not an outside change
+    auto file = root.getChildFile("band.json");
+    file.replaceWithText(file.loadFileAsString().replace("\"Mine\"", "\"Theirs\""));
+    file.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::seconds(5));
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    CHECK(s.outsideChanges()[0].kind == OutsideChange::Kind::Changed);
+    CHECK(s.model().band().name == "Mine");                                        // nothing has been loaded yet
+    s.takeOutsideChanges();
+    CHECK(s.model().band().name == "Theirs");  CHECK(s.outsideChanges().empty());
+    s.commands().undo();  CHECK(s.model().band().name == "Mine");
+}
+TEST_CASE("during a show, outside changes wait; and 'keep mine' writes this version back", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto file = s.folder().root().getChildFile("band.json");
+    s.enterShow();
+    file.replaceWithText(file.loadFileAsString().replace("\"Demo band\"", "\"Theirs\""));
+    file.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::seconds(5));
+    s.advanceWithoutDevice(0);
+    CHECK(s.outsideChanges().empty());                                             // not looked at during a show
+    s.leaveShow();  s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    s.keepMine();
+    CHECK(file.loadFileAsString().contains("\"Demo band\""));  CHECK(s.outsideChanges().empty());
+}
+TEST_CASE("a conflict copy is resolved by keeping one and trashing the other", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    auto song = d.setlist().entries[0].songId;
+    auto original = s.folder().fileFor({model::DocKind::Song, song});
+    auto copy = original.getSiblingFile("song-DESKTOP-7Q.json");
+    copy.replaceWithText(original.loadFileAsString().replace("First Light", "First Light, edited elsewhere"));
+    REQUIRE(s.conflictCopies().size() == 1);
+    REQUIRE(s.resolveConflict(s.conflictCopies()[0], true).wasOk());               // keep the copy
+    CHECK(s.model().song(song)->title == "First Light, edited elsewhere");
+    CHECK_FALSE(copy.exists());  CHECK(original.loadFileAsString().contains("edited elsewhere"));
+    CHECK(s.conflictCopies().empty());
+    CHECK(root.getChildFile("trash").getNumberOfChildFiles(juce::File::findFiles) == 1);   // the version that lost is kept in the trash
+}
+```
+
+- [ ] **Step 2: Run and see it fail**
+
+Run: `powershell -File scripts/build.ps1 -Test "[folderwatch]"`. Expected: `app/FolderWatch.h` not found.
+
+- [ ] **Step 3: Implement**
+
+- `FolderWatch` remembers each document file's modification time and size after loading and after each of this app's own writes. `poll` compares them with the disk, and also notices document files that appeared or vanished. A new file holding a document whose id is already loaded is a conflict copy, not an outside change; `conflictCopies()` reports it. The session polls every 2 s in Edit mode (and whenever `advanceWithoutDevice` is called), and not at all in Show mode; leaving Show mode polls at once.
+- `takeOutsideChanges` reads the changed files and runs `folder.reload`, which applies each document's text with `BandModel::applyText`; the autosaver is told not to write those documents back. A file that can't be read is left as an outside change and reported.
+- **In the app:** when there are outside changes, a banner in Edit mode: "<names> changed on another computer." with "Load the changes" and "Keep mine". When there are conflict copies or load-report notes, the top bar shows the "Check files" pill; clicking it opens `FilesDialog`: the load report's notes, then one row per conflict: "<song or document> was changed on two computers", each version's time, and the buttons "Keep this one" under each.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `powershell -File scripts/build.ps1 -Test "[folderwatch],[session]"`. Expected: all pass.
+
+- [ ] **Step 5: Commit and push**
+
+```bash
+git add -A && git commit -m "feat: offer changes made on another computer and settle conflict copies" && git push origin main
+```
+
+---
+
 ### Task 19: Screenshots, and the look checked against the mockups
 
 **Files:**
@@ -2073,7 +2171,7 @@ Model it on Smart Q's `docs/acceptance.md`: an introduction saying what it is fo
 6. **The mixer:** this song against one output's mix; a level change heard at once with no click or zipper noise.
 7. **A show:** the pre-show check (unplug the interface, run on battery), Space, the arrows, Tab, hold Space, Esc twice, a tap that must not stop the song, the stage view from the drum throne, a full setlist both ways.
 8. **Tonight's levels:** change the click in Show mode, leave, keep; again, drop.
-9. **Things going wrong:** unplug the interface mid-song and plug it back; click another window mid-song; close the app mid-show and start it again; open a band folder whose files OneDrive hasn't downloaded.
+9. **Things going wrong:** unplug the interface mid-song and plug it back; click another window mid-song; close the app mid-show and start it again; open a band folder whose files OneDrive hasn't downloaded; change a song on a second computer while the first has the folder open, and see the offer to load it.
 10. **The look:** each screen beside its mockup; anything that looks off, with the screen's name.
 
 - [ ] **Step 2: Update `README.md`**

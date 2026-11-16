@@ -157,7 +157,7 @@ git add -A && git commit -m "feat: add section types, arrangements, cues and aut
 
 | Command | Parameters | Rules |
 |---|---|---|
-| `section.add` | `songId`, `name`, `startBar`, `typeId?` | The section it lands in is cut at `startBar`. Refused on a bar that already starts a section: "A section already starts at bar <n>." Type guessed when not given. Returns the id. |
+| `section.add` | `songId`, `name`, `startBar`, `typeId?` | The section it lands in is cut at `startBar`. Refused on a bar that already starts a stored section: "A section already starts at bar <n>." In a song with no stored sections, adding at bar 1 makes the first section, and adding at a later bar also stores a first section named "Song" from bar 1. Type guessed when not given. Returns the id. |
 | `section.set` | `songId`, `sectionId`, `name?`, `typeId?`, `startBar?` | Moving the start moves the boundary with the section before it; it can't pass a neighbour's start. The first section's start stays at 1. |
 | `section.remove` | `songId`, `sectionId` | The section before it grows over it (the one after, for the first). Refused for the only section. Removes it from every arrangement. |
 | `arrangement.add` | `songId`, `name`, `steps?` | With no steps: every section in order. Returns the id. |
@@ -169,7 +169,7 @@ git add -A && git commit -m "feat: add section types, arrangements, cues and aut
 | `automation.set` | `songId`, `target` (a part id, "click" or "cues"), `points` | Sorted by position; dB clamped; an empty array removes the lane. |
 | `automation.fadeIn` | `songId`, `target`, `sectionId` | Adds -60 dB at the section's start and 0 dB at its end, replacing points between them. |
 | `automation.muteIn` | `songId`, `target`, `sectionId` | Adds, at the section's start and end, a pair of points one after the other at the same place: 0 then -60, and -60 then 0. |
-| `marker.copyToType` | `songId`, `deviceId`, `markerId` | Copies the change to the same bar-and-beat offset inside every other section of the same type as the section it is in, skipping places that already have a change. The message says how many: "Copied to 2 more Chorus sections." |
+| `marker.copyToType` | `songId`, `deviceId`, `markerId` | Copies the change to the same bar-and-beat offset inside every other section of the same type as the section it is in, skipping places that already have a change. A copy that would fall beyond a shorter section's end is skipped too. The message says how many: "Copied to 1 more Chorus section.", "Copied to 2 more Chorus sections.", or, when none: "Every other Chorus already has a change there." Refused when the change's section has no type: "This section has no type, so there is nothing to copy it to." |
 | `sectionType.add` | `name`, `colour?` | Unique names. Returns the id. |
 | `sectionType.set` | `typeId`, `name?`, `colour?`, `cueClip?` | |
 | `sectionType.remove` | `typeId` | Sections of that type keep their name and lose their type. |
@@ -178,7 +178,7 @@ git add -A && git commit -m "feat: add section types, arrangements, cues and aut
 
 - [ ] **Step 1: Write the failing tests**
 
-Tagged `[sectioncmd]`, on a `DemoSession`'s model, with a 16-bar song. They must check at least:
+Tagged `[sectioncmd]`, on a plain `DemoSession`'s model, with its 16-bar song "First Light" (`song`), a second song with one stored section (`otherSong`, `onlyOne`), and one MIDI device `g1` added with `device.add`. They must check at least:
 
 ```cpp
 auto a = run("section.add", {{"songId", song}, {"name", "Intro"}, {"startBar", 1}}).value.toString();
@@ -187,6 +187,11 @@ auto c = run("section.add", {{"songId", song}, {"name", "Chorus"}, {"startBar", 
 auto c2 = run("section.add", {{"songId", song}, {"name", "Chorus"}, {"startBar", 13}}).value.toString();
 CHECK(run("section.add", {{"songId", song}, {"name", "Again"}, {"startBar", 9}}).message == "A section already starts at bar 9.");
 CHECK(doc().sections[1].endBar == 9);                               CHECK(doc().sections[1].typeId == typeId("Verse"));
+// a change in the first Chorus, two bars in, is copied to the second Chorus two bars in
+auto m = run("marker.add", {{"songId", song}, {"deviceId", g1}, {"bar", 11}, {"beat", 1}}).value.toString();
+CHECK(run("marker.copyToType", {{"songId", song}, {"deviceId", g1}, {"markerId", m}}).message == "Copied to 1 more Chorus section.");
+CHECK(doc().midiLanes.at(g1).back().bar == 15);
+CHECK(run("marker.copyToType", {{"songId", song}, {"deviceId", g1}, {"markerId", m}}).message == "Every other Chorus already has a change there.");
 run("section.set", {{"songId", song}, {"sectionId", c}, {"startBar", 7}});
 CHECK(doc().sections[1].endBar == 7);                               // the boundary moved for both
 run("section.set", {{"songId", song}, {"sectionId", c}, {"startBar", 99}});
@@ -204,10 +209,6 @@ run("automation.fadeIn", {{"songId", song}, {"target", part}, {"sectionId", c}})
 REQUIRE(doc().automation.at(part).size() == 2);                     CHECK(doc().automation.at(part)[0].db == -60.0f);
 run("automation.muteIn", {{"songId", song}, {"target", "click"}, {"sectionId", c2}});
 CHECK(doc().automation.at("click").size() == 4);
-// a change in the first Chorus, two bars in, is copied to the second Chorus two bars in
-auto m = run("marker.add", {{"songId", song}, {"deviceId", g1}, {"bar", doc().sections[1].startBar + 2}, {"beat", 1}}).value.toString();
-CHECK(run("marker.copyToType", {{"songId", song}, {"deviceId", g1}, {"markerId", m}}).message == "Copied to 1 more Chorus section.");
-CHECK(doc().midiLanes.at(g1).back().bar == doc().sections[2].startBar + 2);
 CHECK(run("setlist.setTransition", {{"setlistId", set}, {"entryId", entry}, {"kind", "crossfade"}, {"seconds", 4}}).ok);
 CHECK(run("section.remove", {{"songId", otherSong}, {"sectionId", onlyOne}}).ok == false);
 ```
@@ -324,7 +325,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[sections]"`. Expected: `finishS
 - **The playhead** is `(step, songTime)`. Playback starts in the lead-in (`songTime < 0`, `step == -1`) when the song has a count-in or pre-roll, and enters step 0 at song time 0 by moving to `sections[arrangement[0]].start` (a jump if that isn't 0).
 - **At a section's end,** inside a block: work out the next step (this task: `step + 1`). If there is none the song ends there. If the next section's start equals this section's end, carry on with no crossfade. Otherwise jump: for the next 240 samples (scaled by `sampleRate / 48000`), render one sample at a time, first the audio running on past the boundary at `1 - k/240`, then the incoming audio from the new section's start at `k/240`; after that the incoming audio alone. The outgoing tail renders parts only: no click, no MIDI, no clock. If the tail would run past the audio's end it is simply silent there.
 - A `StepChanged` event is pushed whenever `step` changes, the first time included.
-- The MIDI index, the clock and the click all work from song time, so after a jump set the MIDI index to the first event at or after the landing time (Task 4 adds the chase).
+- The MIDI index, the clock and the click all work from song time, so after a jump set the MIDI index to the first event at or after the landing time, and make the landing time the chase point (stage 2 Task 4), so program and control changes at or before it are not sent as events. In this task nothing is chased at a jump yet; Task 4 adds that.
 
 - [ ] **Step 4: Run the engine's tests**
 
@@ -479,8 +480,8 @@ Run: `powershell -File scripts/build.ps1 -Test "[jump]"`. Expected: `chooseNextS
 
 - The next step at a boundary: the playing step if looping; else the pending step if there is one (then cleared); else `step + 1`.
 - With `NextBar`, when a choice or a loop is pending, the boundary is the first entry of `barStarts` after the current song time (or the section's end if that comes first).
-- The engine keeps a second `MidiChase`, `sent_`, updated with `note()` for every program and controller message it emits. A song starting from its top resets `sent_`, so everything is sent. At a jump: end sounding notes, `scan` the song's MIDI up to the landing time, `emitChanges(sent_, …)` with the stream time of the landing sample, and set the MIDI index to the first event after the landing time. `resendMidiState` still sends a device's whole state.
-- `startAtStep`: a lead-in of one bar measured back from the step's start with the tempo there; during it the parts' envelope is 0 and the click is rendered for the positions one bar before the step's start. Song time runs from `stepStart - oneBar` so the click, clock and status all read sensibly.
+- The engine keeps a second `MidiChase`, `sent_`, updated with `note()` for every program and controller message it emits. A song starting from its top resets `sent_`, so everything is sent. At a jump: end sounding notes, `scan` the song's MIDI up to the landing time, `emitChanges(sent_, …)` with the stream time of the landing sample, make the landing time the chase point, and set the MIDI index to the first event at or after it (so a note exactly on the landing still sounds, while a program change there is covered by the chase). `resendMidiState` still sends a device's whole state.
+- `startAtStep`: a lead-in of one bar measured back from the step's start with the tempo there; during it the parts' envelope is 0 and the click is rendered for the positions one bar before the step's start. That count-off click always sounds, even in a song whose click is switched off. Song time runs from `stepStart - oneBar` so the click, clock and status all read sensibly.
 - `stop` and a song's end clear `pendingStep` and `looping`.
 
 - [ ] **Step 4: Run the engine's tests**
@@ -551,11 +552,11 @@ TEST_CASE("a hand on the fader takes over from the automation until the next son
 TEST_CASE("the click can be automated, and it all stays block-size independent", "[automation]") {
     auto run = [](int block) { Engine e; e.prepare(48000.0, 4096, 2); e.setMix(stereoMix());
         auto song = testSong("s", 2 * 96000, 0.25f, 0, true);
-        song.parts[0].automation = {{10000, 0.0f}, {60000, -24.0f}};
+        song.parts[0].automation = {{10000, 0.0f}, {60000, -6.0f}};
         song.clickAutomation = {{96000, 0.0f}, {96000, -60.0f}};
         e.cue(share(song));  e.start();  return renderOffline(e, 2, 2 * 96000, block); };
     auto reference = run(512);
-    CHECK(reference[0][96000 + 100] == Catch::Approx(0.25f).margin(0.02f));      // the part alone: no click in the second bar
+    CHECK(reference[0][96000 + 100] == Catch::Approx(0.25f * 0.5012f).margin(0.002f));   // the part alone, 6 dB down: no click in the second bar
     for (int block : {1, 64, 4096}) CHECK(run(block) == reference);
 }
 ```
@@ -566,7 +567,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[automation]"`. Expected: `AutoP
 
 - [ ] **Step 3: Implement**
 
-A part's target gain at each sample is `fader × automationGain(points, songTime)` (or just `fader` when overridden), and the existing 10 ms smoothing runs towards that target, so a step in the automation is a quick, clickless ramp. Keep a per-part index into the points so finding the segment doesn't search from the start each sample; reset it after a jump. The click's gain is multiplied by `automationGain(clickAutomation, songTime)` per tick.
+A part's target gain at each sample is `fader × automationGain(points, songTime)` (or just `fader` when overridden), and the existing 10 ms smoothing runs towards that target, so a step in the automation is a quick, clickless ramp. The first sample rendered after `setSong` snaps each part to its target there, so a song that begins inside a fade begins at the right level. Keep a per-part index into the points so finding the segment doesn't search from the start each sample; reset it after a jump. The click's gain is multiplied by `automationGain(clickAutomation, songTime)` per tick.
 
 - [ ] **Step 4: Run the tests**
 
@@ -667,7 +668,7 @@ TEST_CASE("manual cues are said where they are placed, and jumped-over ones are 
     Engine e; e.prepare(48000.0, 512, 2); e.setMix(cueMix());
     auto song = rampSong("r", 3, {1, 1, 1});
     song.cues = {{5000, clip(0.7f)}, {96000 + 5000, clip(0.8f)}, {2 * 96000 + 5000, clip(0.9f)}};
-    song.cueGain = 0.5f;  song.cuesAutomation = {{2 * 96000, -60.0f}};
+    song.cueGain = 0.5f;  song.cuesAutomation = {{2 * 96000 - 1, 0.0f}, {2 * 96000, -60.0f}};   // cues are silenced from section 2 on
     auto s = e.cue(share(song));  e.start();
     auto out = renderOffline(e, 2, 2 * 96000, 512, {{10, [&](Engine& en) { en.chooseNextStep(s, 2); }}});
     CHECK(out[1][5000 + 100] == Catch::Approx(0.35f));             // at the cue level
@@ -756,8 +757,9 @@ TEST_CASE("crossfades at the edges", "[transition]") {
     renderOffline(e, 2, 60000, 512);                                           // nothing cued when the moment came
     CHECK(e.status().state == PlayState::Stopped);
     e.cue(share(testSong("a", 96000, 1.0f)));  e.start();
-    auto stopped = renderOffline(e, 2, 96000, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }}, {80000, [](Engine& en) { en.stop(); }}});
-    CHECK(stopped[0][80000 + 2400] == 0.0f);                                   // a stop in mid-crossfade silences both
+    auto stopped = renderOffline(e, 2, 96000, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }}, {90000, [](Engine& en) { en.stop(); }}});
+    CHECK(stopped[0][89999] > 0.5f);                                           // the crossfade began at 84000 and both were sounding
+    CHECK(stopped[0][90000 + 2400] == 0.0f);                                   // a stop in mid-crossfade silences both
     CHECK(e.status().state == PlayState::Stopped);  CHECK(e.status().playingSerial == 0);
     e.collectGarbage();
 }
@@ -911,6 +913,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[buildsections],[cuelib]"`. Expe
 
 - `buildPreparedSong`: `tileSections` with `barsInSong`, converted to samples with the tempo map; `resolveArrangement`; `jumpTiming`; each section's cue is its type's `cueClip` through `options.clips`; `announceAt[i]` is the time `lead` before `sections[i].end`, where the lead is 2 beats, 1 bar or 2 bars counted back in the tempo map from the boundary, and never before the section's own start; manual cues at their bar and beat; `cueGain = dbToGain(band.cuesDb)`; automation points converted to samples for each part, "click" and "cues".
 - `CueLibrary` uses `model::loadPartAudio` and folds stereo to mono. It refuses any path that isn't inside the band folder.
+- **Your own click sound** (the spec's "user-imported click sounds"): `engine::ClickSound engine::clickSoundFromClip(const PartAudio& clip, double sampleRate)` in `src/engine/Click.h` makes a click from a recording: at most the first 100 ms, with a 5 ms fade-out at the end; the beat is the clip at -4 dB, the downbeat the clip at full level, the subdivision the clip at -10 dB. In `buildPreparedSong`, when `song.click.sound` is not "wood", "beep" or "rim", it is a path inside the band folder (`clicks/<name>.wav`): if `options.clips` has it, the song's `clickSound` is made from it; if not, the wood block is used. `song.setClick` accepts such a path. Add to this task's tests: a song whose `click.sound` is `"clicks/Cowbell.wav"`, with a clip of 0.5 for 4800 samples supplied through `clips`, has `clickSound.downbeat[100] == 0.5f`, `clickSound.beat[100] == Catch::Approx(0.5f * 0.631f).margin(0.001f)` and `clickSound.beat.size() == 4800`; with no clip supplied its `clickSound` equals `makeClickSound(0, 48000.0)`'s.
 - `VoiceMaker_windows.cpp`: `powershell -NoProfile -NonInteractive -Command <script>`, where the script loads `System.Speech`, makes a `SpeechSynthesizer`, sets its output to the WAV file and speaks the text. The text and the path are passed to the script as arguments read from `$args`, never pasted into the script. `VoiceMaker_posix.cpp`: `say -o <file> --data-format=LEI16@48000 <text>`.
 - `VoiceMaker::make` strips the text to letters, digits, spaces and `, . ' -`, limits it to 80 characters, refuses what is left if empty, runs the command, and succeeds only if the file then exists and is not empty. `makeBuiltIns` writes `cues/built-in/<type name>.wav` for each section type whose `cueClip` points there and each extra phrase as `cues/built-in/<phrase>.wav`, skipping files that exist unless `evenIfPresent`.
 - **Why the voice is made on the user's computer:** no recorded voice is shipped with the app, so there is nothing to license. Say this in `THIRD_PARTY.md` in one sentence.
@@ -938,8 +941,11 @@ git add -A && git commit -m "feat: prepare sections, cues and automation for the
 
 ```cpp
 // Action gains: NextSectionLater, NextSectionEarlier, Section1 … Section10, LoopSection, CancelSection, GoToNextSongNow
-// actionName: "nextSectionLater", "nextSectionEarlier", "section1" … "section10", "loopSection", "cancelSection", "goToNextSongNow"
-// Default keys: Down, Up, 1 … 9 and 0, L, Backspace. GoToNextSongNow has no key of its own: it is "hold →".
+// model::actionInfos() gains the same, in the same order, after "nextSongEarlier" and before "toggleView":
+//   "nextSectionLater" "Next section: later" Down;  "nextSectionEarlier" "Next section: earlier" Up;
+//   "section1" … "section10" "Choose section 1" … "Choose section 10" keys 1 … 9 and 0;
+//   "loopSection" "Loop this section" L;  "cancelSection" "Cancel the choice or loop" Backspace;
+//   "goToNextSongNow" "Go to the next song now" no key of its own: it is "hold →".
 struct StepView { juce::String name, typeId; juce::Colour colour; int bars = 0; };
 struct ArrangementView {                    // the song that is playing, or the next one when nothing plays
     std::vector<StepView> steps;
@@ -1429,6 +1435,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[cuevoice]"`. Expected: `ui/CueV
 - Under it: "+ Add a section type", "+ Import a recording" (copies an audio file into `cues/`, converted like a stem), and the line listing the other clips.
 - The right half of the mockup (pad sounds) belongs to stage 5: the panel is as wide as it needs to be and nothing takes the pad's place.
 - **Mixer and routing grid:** the Cues role now has its strip (band level in "This song", mix level per output) and its row.
+- **Your own click sound:** the Song editor's CLICK panel's sound `Choice` gains every audio file in `clicks/` by name and "Import a sound…", which copies an audio file into `clicks/`, converted like a stem, and chooses it. `CueLibrary::clipsInFolder` gains a sibling `clickSoundsInFolder()`.
 - **Pre-show check,** item `cues`, after `midi`: a Warning "The cue voice hasn't been made" · "Sections won't be announced. Make it in Setup, under Cue voice." when the setlist has a song with more than one section and a section type in use has a missing clip.
 
 - [ ] **Step 4: Run the tests**
@@ -1448,9 +1455,9 @@ git add -A && git commit -m "feat: add Setup's cue voice page, and cues in the m
 **Files:**
 - Modify: `src/model/DemoBand.cpp`, `src/ui/Screens.cpp`, `tests/ui/ScreensTest.cpp`, `docs/acceptance.md`, `README.md`, `THIRD_PARTY.md`
 
-- [ ] **Step 1: Give the demo band sections**
+- [ ] **Step 1: Give the full demo band sections**
 
-Each demo song gets sections with types (for "First Light": Intro 1–4, Verse 1 5–8, Chorus 9–12, Outro 13–16), and "First Light" gets a second arrangement, "Long ending", that repeats the Chorus, plus a fade-in on its Perc part over the Intro. Adjust earlier tests that assumed the demo songs had no sections, keeping each test's meaning (most build their own sections and should start from a song without any: have them remove the demo's first with `song.setSections`).
+`createDemoBand` still stays as it is. Add `juce::Result model::addDemoSections(CommandLayer&)`: each demo song gets sections with types (for "First Light": Intro bars 1–4, Verse 1 5–8, Chorus 9–12, Outro 13–16), and "First Light" gets an arrangement, "Long ending", that repeats the Chorus, plus a fade-in on its Perc part over the Intro. "Try the demo band", `ui::renderScreen` and `DemoSession(true)` call it after `addDemoMidi`.
 
 - [ ] **Step 2: Update the screens**
 
