@@ -61,8 +61,17 @@ public:
 
     juce::String rigId() const;        void chooseRig(const juce::String& rigId);       // remembered in Settings
     juce::String setlistId() const;    void chooseSetlist(const juce::String& setlistId);
-    void setDevice(double sampleRate, int outputChannels);       // from AudioHost, or tests; 0 channels = no device
+    // From AudioHost (or tests), once the device has prepared the engine: loads songs again at a new rate, rebuilds the
+    // mix and cues the next entry again. Never prepares the engine. 0 channels = no device.
+    void setDevice(double sampleRate, int outputChannels);
     double sampleRate() const;  int outputChannels() const;
+    // AudioHost: true while a real device is open, false when none is. While it is false nothing starts, as no block would
+    // play it. Until AudioHost says either, as in tests, advanceWithoutDevice drives the engine and counts as a device.
+    void setDeviceRunning(bool);
+    // The device went away: stops at once, lets go of whatever was asked of the engine and not yet heard, and makes the
+    // entry that was playing the next one again. When something was playing, now() is interrupted, at the bar it reached.
+    void audioInterrupted();
+    void clearInterrupted();                                     // called by the next Start or song choice
 
     NowPlaying now() const;
     void chooseNext(int index);                                  // clamped to the setlist; never interrupts
@@ -89,7 +98,7 @@ public:
     model::RigDoc rigAsHeard() const;                            // the chosen rig, with tonight's changes applied
 
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
-                                                                 // never while a real device runs (Task 6 adds the check)
+                                                                 // never while a real device runs
     void flushNow();                                             // autosave and save the settings immediately
 
 private:
@@ -122,6 +131,8 @@ private:
     };
 
     void timerCallback() override;
+
+    bool deviceMayPlay() const;                                  // a device runs, or none was ever spoken of (tests)
 
     const model::SetlistDoc* setlist() const;
     int indexOf(const juce::String& entryId) const;              // -1 when it isn't in the setlist
@@ -168,6 +179,10 @@ private:
     juce::String rig_id_, setlist_id_, edit_focus_;
     double sample_rate_ = 48000.0;
     int output_channels_ = 0;
+    std::optional<bool> device_running_;                         // what AudioHost last said; nullopt = it hasn't
+    bool interrupted_ = false;                                   // the device went away while something played
+    int interrupted_bar_ = 1;                                    // where it was then
+    double interrupted_beat_ = 1.0;
 
     juce::String next_entry_id_;                                 // "" = none
     int next_hint_ = -1;                                         // where the next entry was, for when it is removed

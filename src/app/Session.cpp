@@ -129,6 +129,34 @@ void Session::setDevice(double sampleRate, int outputChannels) {
     refresh();
 }
 
+void Session::setDeviceRunning(bool running) { device_running_ = running; }
+
+bool Session::deviceMayPlay() const { return device_running_.value_or(true); }
+
+void Session::audioInterrupted() {
+    const auto before = now();
+    const bool wasPlaying = playing_.active() || (engine_.status().inGap && !interrupted_);
+    engine_.stop();                                              // for a device that still runs; one that comes back is prepared
+    if (wasPlaying) {
+        interrupted_ = true;
+        interrupted_bar_ = before.bar;
+        interrupted_beat_ = before.beat;
+        if (playing_.active() && !playing_.single && indexOf(playing_.entryId) >= 0) setNext(playing_.entryId);
+    }
+    // A start or stop the engine hasn't taken yet may still play out once a device runs it again; nothing the session holds
+    // may take it for its own. A song started before the loss can't follow on after it either.
+    playing_ = {};
+    stop_requested_ = false;
+    recent_cues_.clear();
+    refresh();
+}
+
+void Session::clearInterrupted() {
+    if (!interrupted_) return;
+    interrupted_ = false;
+    changed();
+}
+
 void Session::setEditFocus(const juce::String& songId) {
     edit_focus_ = songId;
     refresh();
@@ -138,6 +166,7 @@ void Session::chooseNext(int index) {
     const auto* list = setlist();
     const int count = list != nullptr ? (int) list->entries.size() : 0;
     setNext(count > 0 ? entryIdAt(std::clamp(index, 0, count - 1)) : juce::String());
+    clearInterrupted();
     refresh();
 }
 
@@ -146,6 +175,9 @@ void Session::chooseNext(int index) {
 void Session::perform(Action action) {
     switch (action) {
     case Action::Start: {
+        // With no device nothing would play it: the session would sit "playing" at bar 1, and the start would go off
+        // whenever a device came.
+        if (!deviceMayPlay()) return;
         if (playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
         refreshTransport();                                      // the cue is up to date, or retried if it wasn't taken
         if (next_entry_id_.isEmpty() || cue_.serial == 0 || cue_.entryId != next_entry_id_) return;
@@ -158,6 +190,7 @@ void Session::perform(Action action) {
         cue_ = {};                                               // the engine has taken it to play
         const int playingAt = indexOf(playing_.entryId);
         setNext(entryIdAt(playingAt + 1));
+        clearInterrupted();
         refresh();
         break;
     }
@@ -170,6 +203,7 @@ void Session::perform(Action action) {
         break;
     }
     case Action::NextSongLater: {
+        clearInterrupted();
         if (next_entry_id_.isEmpty()) return;
         const int at = indexOf(next_entry_id_) + 1;
         if (entryIdAt(at).isEmpty()) return;                     // nothing after the last
@@ -178,6 +212,7 @@ void Session::perform(Action action) {
         break;
     }
     case Action::NextSongEarlier: {
+        clearInterrupted();
         const auto* list = setlist();
         if (list == nullptr || list->entries.empty()) return;
         int at;
@@ -200,7 +235,7 @@ void Session::perform(Action action) {
 }
 
 void Session::playSong(const juce::String& songId, double fromSeconds) {
-    if (playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
+    if (!deviceMayPlay() || playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
     const auto prepared = preparedFor(songId);
     if (prepared == nullptr || prepared->song->sampleRate != engine_.sampleRate()) return;   // the engine would ignore it
     const auto serial = engine_.cue(prepared->song);
@@ -215,6 +250,7 @@ void Session::playSong(const juce::String& songId, double fromSeconds) {
     engine_.startAt(at);
     playing_.askedAt = engine_.status().streamTime;              // read after the push: see engineLetGo
     cue_ = {};                                                 // the setlist's cue was replaced; it is cued again once this ends
+    clearInterrupted();
     refresh();
 }
 
@@ -382,6 +418,7 @@ void Session::tonightChanged() {
 }
 
 void Session::advanceWithoutDevice(int frames) {
+    jassert(!device_running_.value_or(false));                   // a real device's callback runs the engine
     const int channels = output_channels_ > 0 ? output_channels_ : 2;
     if ((int) scratch_.size() != channels) {
         scratch_.assign((std::size_t) channels, std::vector<float>((std::size_t) kNoDeviceBlock));
@@ -416,7 +453,7 @@ void Session::timerCallback() {
         if (autosaver_.hasPending() || settings_pending_) last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
     }
     noteSaveState();
-    if (playing_.active() || engine_.status().inGap) changed();  // the position moves
+    if (playing_.active() || (engine_.status().inGap && !interrupted_ && deviceMayPlay())) changed();   // the position moves
 }
 
 // ---- What is playing and what is next ----------------------------------------------------------------------------------
@@ -426,9 +463,12 @@ NowPlaying Session::now() const {
     const auto status = engine_.status();
     const auto* list = setlist();
     n.entryCount = list != nullptr ? (int) list->entries.size() : 0;
-    n.playing = playing_.active() || status.inGap;
+    // Once the device has gone, the engine's status is the last one it published: a gap it reports may never end.
+    const bool inGap = status.inGap && !interrupted_ && deviceMayPlay();
+    n.playing = playing_.active() || inGap;
     n.stopping = playing_.active() && (stop_requested_ || status.state == engine::PlayState::Stopping);
-    n.inGap = status.inGap;
+    n.inGap = inGap;
+    n.interrupted = interrupted_;
     n.playingIndex = playing_.active() && !playing_.single ? indexOf(playing_.entryId) : -1;
     n.nextIndex = indexOf(next_entry_id_);
     n.playingSongId = playing_.active() ? playing_.songId : juce::String();
@@ -458,6 +498,10 @@ NowPlaying Session::now() const {
     n.bpm = tempo.bpmAt(at);
     n.numerator = tempo.beatsInBar(at.bar);
     n.denominator = tempo.denominatorAt(at.bar);
+    if (interrupted_) {                                          // the screen says where it stopped
+        n.bar = interrupted_bar_;
+        n.beat = interrupted_beat_;
+    }
     return n;
 }
 
