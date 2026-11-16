@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 #include "app/AudioHost.h"
-#include "model/Defaults.h"
+#include "engine/MixSetup.h"
 #include "model/Routing.h"
 #include "model/Units.h"
 #include "ui/Format.h"
+#include "ui/OutputLabelPill.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -22,7 +24,7 @@ namespace {
 constexpr int kCellPadX = 8, kCellPadY = 7, kHeaderHeight = 66, kRowHeight = 32;
 constexpr int kMinColumnWidth = 72, kMaxColumnWidth = 140, kMinNameWidth = 150, kMaxNameWidth = 240;
 constexpr int kBarWidth = 4, kBarHeight = 14, kBarGap = 8;
-constexpr int kPillHeight = 16, kPillPadX = 7, kLevelMinWidth = 38, kLevelPadX = 6, kLevelHeight = 18;
+constexpr int kLevelMinWidth = 38, kLevelPadX = 6, kLevelHeight = 18;
 constexpr int kTrimPadX = 8, kTrimHeight = 20, kBlockWidth = 14, kBlockHeight = 2;
 constexpr int kFooterHeight = 40, kFooterPadX = 12, kFooterGap = 14;
 constexpr int kDragThreshold = 3, kPixelsPerStep = 2;
@@ -38,7 +40,6 @@ const juce::String kHint = "Every song uses these mixes. Using personal mixers i
 juce::Font nameFont() { return theme::font(theme::sizeBody, true); }
 juce::Font headFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.6f); }
 juce::Font outputFont() { return theme::font(theme::sizeSmall, true); }
-juce::Font pillFont() { return theme::font(theme::sizeCaption, true); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
 juce::Font linkFont() { return theme::font(theme::sizeSmall, true); }
 
@@ -62,16 +63,6 @@ float toTenth(float db) {
     return r == 0.0f ? 0.0f : r;
 }
 
-juce::String labelName(model::OutputLabel label) {
-    switch (label) {
-    case model::OutputLabel::Monitor: return "In-ears";
-    case model::OutputLabel::Foh: return "PA";
-    case model::OutputLabel::Timecode: return "Timecode";
-    case model::OutputLabel::Unused: return "Not used";
-    }
-    return {};
-}
-
 const char* labelKey(model::OutputLabel label) {
     switch (label) {
     case model::OutputLabel::Monitor: return "monitor";
@@ -85,42 +76,28 @@ const char* labelKey(model::OutputLabel label) {
 const model::OutputLabel kLabels[] = {model::OutputLabel::Monitor, model::OutputLabel::Foh, model::OutputLabel::Timecode,
                                       model::OutputLabel::Unused};
 
-// The .lbl-out pill's colours for each label: fill, text, border (dashed for an output that isn't used). As the Mixer's.
-struct PillLook { juce::Colour fill, text, border; bool dashed; };
-PillLook pillLook(model::OutputLabel label) {
-    switch (label) {
-    case model::OutputLabel::Foh: return {juce::Colour(110, 168, 255).withAlpha(0.15f), juce::Colour(0xff8fbcff), juce::Colour(110, 168, 255).withAlpha(0.35f), false};
-    case model::OutputLabel::Timecode: return {juce::Colour(182, 157, 255).withAlpha(0.15f), juce::Colour(0xffc4b1ff), juce::Colour(182, 157, 255).withAlpha(0.35f), false};
-    case model::OutputLabel::Unused: return {juce::Colours::transparentBlack, theme::dim, theme::hairline, true};
-    case model::OutputLabel::Monitor: break;
-    }
-    return {juce::Colours::white.withAlpha(0.1f), theme::text, theme::hairline, false};
-}
+// What a role's Colour menu offers. Never one of the four colours with a meaning (mint, ember, caution, danger), nor
+// anything within 24 of one in every channel: the mockup's orange (ff9a68) is ember to the eye and its pink (ff7d93)
+// danger, so Rose and Sky take their places here.
+struct NamedColour { const char* name; juce::Colour colour; };
+const NamedColour kRoleColours[] = {{"Rose", juce::Colour(0xffe889c8)},      {"Violet", juce::Colour(0xffe070ff)},
+                                    {"Green", juce::Colour(0xffa8dc68)},     {"Sea green", juce::Colour(0xff5ed8a2)},
+                                    {"Yellow", juce::Colour(0xffe9d568)},    {"Grey", juce::Colour(0xffb8c0cc)},
+                                    {"Teal", juce::Colour(0xff4fcabd)},      {"Sky", juce::Colour(0xff6cc8ff)},
+                                    {"Blue", juce::Colour(0xff9fb4ff)}};
+constexpr int kColourCount = static_cast<int>(std::size(kRoleColours));
 
-void drawLabelPill(juce::Graphics& g, const juce::String& text, model::OutputLabel kind, juce::Rectangle<float> area) {
-    const auto look = pillLook(kind);
-    const auto shown = shorten(text, pillFont(), area.getWidth() - 2.0f * kPillPadX);
-    const float w = std::min(area.getWidth(), widthOf(pillFont(), shown) + 2.0f * kPillPadX);
-    const auto pill = area.withSizeKeepingCentre(w, static_cast<float>(kPillHeight));
-    g.setColour(look.fill);
-    g.fillRoundedRectangle(pill, 4.0f);
-    g.setColour(look.border);
-    if (look.dashed) {
-        juce::Path outline, dashed;
-        outline.addRoundedRectangle(pill.reduced(0.5f), 4.0f);
-        const float dashes[] = {3.0f, 2.0f};
-        juce::PathStrokeType(1.0f).createDashedStroke(dashed, outline, dashes, 2);
-        g.fillPath(dashed);
-    } else {
-        g.drawRoundedRectangle(pill.reduced(0.5f), 4.0f, 1.0f);
-    }
-    g.setColour(look.text);
-    g.setFont(pillFont());
-    g.drawText(shown, pill, juce::Justification::centred, false);
-}
+// A level the user typed: a sentence when it isn't one.
+const juce::String kNotALevel = "Type a level in dB, like -6 or +3.";
+const juce::String kNotAChannel = "The first output is a whole number from 1, like 3.";
 
-// The palette's colours by name, for a role's Colour menu (model::roleColour's order).
-const char* const kColourNames[] = {"Orange", "Violet", "Green", "Mint", "Yellow", "Grey", "Teal", "Pink", "Blue"};
+// A first output the user typed: a whole number from 1.
+std::optional<int> parseChannel(const juce::String& typed) {
+    const auto s = typed.trim();
+    if (s.isEmpty() || !s.containsOnly("0123456789") || s.length() > 4) return std::nullopt;
+    const int channel = s.getIntValue();
+    return channel >= 1 ? std::optional<int>(channel) : std::nullopt;
+}
 
 juce::String sampleRateText(double rate) {
     auto text = juce::String(rate / 1000.0, 1);
@@ -152,8 +129,8 @@ RoutingState makeRoutingState(const app::Session& session, const app::AudioHost*
         state.device = binding->second.deviceName + " (" + binding->second.deviceType + ")";
 
     for (const auto& out : rig->outputs)
-        state.columns.push_back({out.id, out.name, formatChannels(out.firstChannel, out.stereo), labelName(out.label), out.label,
-                                 out.label == model::OutputLabel::Unused ? juce::String() : formatDb(out.trimDb) + " dB"});
+        state.columns.push_back({out.id, out.name, formatChannels(out.firstChannel, out.stereo), outputLabelName(out.label), out.label,
+                                 out.label == model::OutputLabel::Unused ? juce::String() : formatLevelDb(out.trimDb)});
 
     // The click first, then the parts, each in the band's order.
     std::vector<const model::Role*> roles;
@@ -230,7 +207,9 @@ public:
             g.setFont(headFont());
             g.drawText(shorten(column.channels, headFont(), static_cast<float>(channelRow.getWidth())), channelRow, juce::Justification::centred, false);
             inside.removeFromTop(4);
-            drawLabelPill(g, column.label, column.kind, inside.removeFromTop(kPillHeight).toFloat());
+            const auto pillRow = inside.removeFromTop(static_cast<int>(kOutputLabelPillHeight)).toFloat();
+            drawOutputLabelPill(g, column.kind,
+                                pillRow.withSizeKeepingCentre(std::min(pillRow.getWidth(), outputLabelPillWidth(column.kind)), kOutputLabelPillHeight));
 
             for (int r = 0; r < rows; ++r) paintCell(g, state.rows[static_cast<std::size_t>(r)].cells[static_cast<std::size_t>(c)], r, c);
 
@@ -683,7 +662,8 @@ void RoutingGrid::setOutputLabel(const juce::String& outputId, model::OutputLabe
 }
 
 // Each part in stereo from output 1/2 on, then the click in mono after them, each an in-ear output with only its own role
-// in its mix. One key for every command, so one undo takes it all back.
+// in its mix. One key for every command, so one undo takes it all back. Refused before anything changes when the rig can't
+// have that many outputs; should a command still refuse, what was done is undone, so the rig is never left half-replaced.
 void RoutingGrid::oneOutputPerRole() {
     const auto* rig = session_.model().rig(session_.rigId());
     if (!editable() || rig == nullptr) return;
@@ -694,28 +674,38 @@ void RoutingGrid::oneOutputPerRole() {
     for (const bool parts : {true, false})
         for (const auto& role : session_.model().band().roles)
             if (role.kind == (parts ? model::RoleKind::Part : model::RoleKind::Click)) roles.push_back(role);
+    if (roles.size() > static_cast<std::size_t>(engine::kMaxBuses)) {
+        say("One output per role needs " + juce::String(static_cast<int>(roles.size())) + " outputs, and a rig can have up to "
+            + juce::String(engine::kMaxBuses) + ".");
+        return;
+    }
 
     const auto key = juce::Uuid().toString();
     auto& commands = session_.commands();
+    bool changed = false;
     const auto step = [&](const juce::String& name, const juce::var& params) {
         const auto result = commands.run(name, params, key);
-        if (!result.ok) say(result.message);
+        changed = changed || result.ok;
         return result;
     };
-    [&] {
+    const auto refused = [&] {
         for (const auto& id : old)
-            if (!step("output.remove", object({{"rigId", rigId}, {"outputId", id}})).ok) return;
+            if (const auto r = step("output.remove", object({{"rigId", rigId}, {"outputId", id}})); !r.ok) return r.message;
         int channel = 1;
         for (const auto& role : roles) {
             const bool stereo = role.kind == model::RoleKind::Part;
             const auto added = step("output.add", object({{"rigId", rigId}, {"name", role.name}, {"firstChannel", channel},
                                                           {"stereo", stereo}, {"label", "monitor"}}));
-            if (!added.ok) return;
-            if (!step("mix.setLevel", object({{"rigId", rigId}, {"outputId", added.value}, {"roleId", role.id}, {"db", 0.0f}})).ok) return;
+            if (!added.ok) return added.message;
+            if (const auto r = step("mix.setLevel", object({{"rigId", rigId}, {"outputId", added.value}, {"roleId", role.id}, {"db", 0.0f}}));
+                !r.ok)
+                return r.message;
             channel += stereo ? 2 : 1;
         }
-        say({});
+        return juce::String();
     }();
+    if (refused.isNotEmpty() && changed) commands.undo();        // every step shares the key: one undo is all of them
+    say(refused);
     refresh(true);
 }
 
@@ -726,7 +716,7 @@ void RoutingGrid::outputMenu(const juce::String& outputId, juce::Component& targ
     if (out == nullptr) return;
     const bool edit = editable();
     juce::PopupMenu labels;
-    for (int i = 0; i < 4; ++i) labels.addItem(10 + i, labelName(kLabels[i]), edit, out->label == kLabels[i]);
+    for (int i = 0; i < 4; ++i) labels.addItem(10 + i, outputLabelName(kLabels[i]), edit, out->label == kLabels[i]);
     juce::PopupMenu menu;
     menu.addItem(1, "Rename" + kEllipsis, edit);
     menu.addItem(2, "Outputs" + kEllipsis, edit);
@@ -743,27 +733,32 @@ void RoutingGrid::outputMenu(const juce::String& outputId, juce::Component& targ
                        });
 }
 
-void RoutingGrid::roleMenu(const juce::String& roleId, juce::Component& target) {
-    const auto* role = session_.model().role(roleId);
-    if (role == nullptr) return;
-    const bool edit = editable();
-    juce::PopupMenu colours;
-    for (int i = 0; i < 9; ++i) {
-        const auto colour = model::roleColour(i);
-        colours.addColouredItem(10 + i, kColourNames[i], colour, edit, role->colour == colour);
-    }
+juce::PopupMenu RoutingGrid::roleMenuFor(const juce::String& roleId) const {
     juce::PopupMenu menu;
+    const auto* role = session_.model().role(roleId);
+    if (role == nullptr) return menu;
+    const bool edit = editable();
     menu.addItem(1, "Rename" + kEllipsis, edit);
-    menu.addSubMenu("Colour", colours, edit);
+    if (role->kind != model::RoleKind::Click) {                   // the click is always drawn in ember
+        juce::PopupMenu colours;
+        for (int i = 0; i < kColourCount; ++i)
+            colours.addColouredItem(10 + i, kRoleColours[i].name, kRoleColours[i].colour, edit, role->colour == kRoleColours[i].colour);
+        menu.addSubMenu("Colour", colours, edit);
+    }
     menu.addSeparator();
     menu.addItem(2, "Remove", edit && role->kind == model::RoleKind::Part);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&target).withMousePosition(),
+    return menu;
+}
+
+void RoutingGrid::roleMenu(const juce::String& roleId, juce::Component& target) {
+    if (session_.model().role(roleId) == nullptr) return;
+    roleMenuFor(roleId).showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&target).withMousePosition(),
                        [safe = juce::Component::SafePointer<RoutingGrid>(this), roleId](int result) {
                            if (safe == nullptr) return;
                            if (result == 1) safe->askRenameRole(roleId);
                            if (result == 2) safe->run("role.remove", object({{"roleId", roleId}}));
-                           if (result >= 10 && result < 19)
-                               safe->run("role.set", object({{"roleId", roleId}, {"colour", model::roleColour(result - 10).toDisplayString(false)}}));
+                           if (result >= 10 && result < 10 + kColourCount)
+                               safe->run("role.set", object({{"roleId", roleId}, {"colour", kRoleColours[result - 10].colour.toDisplayString(false)}}));
                        });
 }
 
@@ -794,11 +789,8 @@ void RoutingGrid::askCellLevel(int row, int column) {
         return;
     }
     const auto level = sentLevel(c.outputId, r.roleId);
-    askText("How loud is " + r.name + " in " + c.name + ", in dB?", level ? formatDb(*level) : "0", "Set",
-            [this, outputId = c.outputId, roleId = r.roleId](const juce::String& text) {
-                if (text.isEmpty() || text.equalsIgnoreCase("off")) setLevel(outputId, roleId, std::nullopt, {});
-                else run("mix.setLevel", object({{"rigId", session_.rigId()}, {"outputId", outputId}, {"roleId", roleId}, {"db", text}}));
-            });
+    askText("How loud is " + r.name + " in " + c.name + ", in dB?", level ? formatDbNumber(*level) : "0", "Set",
+            [this, row, column](const juce::String& text) { typeCellLevel(row, column, text); });
 }
 
 void RoutingGrid::askTrim(int column) {
@@ -806,9 +798,61 @@ void RoutingGrid::askTrim(int column) {
     const auto& c = state_.columns[static_cast<std::size_t>(column)];
     const auto* out = output(c.outputId);
     if (out == nullptr) return;
-    askText("Overall level of " + c.name + ", in dB", formatDb(out->trimDb), "Set", [this, outputId = c.outputId](const juce::String& text) {
-        run("output.set", object({{"rigId", session_.rigId()}, {"outputId", outputId}, {"trimDb", text}}));
-    });
+    askText("Overall level of " + c.name + ", in dB", formatDbNumber(out->trimDb), "Set",
+            [this, column](const juce::String& text) { typeTrim(column, text); });
+}
+
+void RoutingGrid::typeCellLevel(int row, int column, const juce::String& typed) {
+    if (!editable() || !juce::isPositiveAndBelow(row, static_cast<int>(state_.rows.size()))
+        || !juce::isPositiveAndBelow(column, static_cast<int>(state_.columns.size())))
+        return;
+    const auto& cell = state_.rows[static_cast<std::size_t>(row)].cells[static_cast<std::size_t>(column)];
+    if (!cell.allowed) {
+        say(cell.whyNot);
+        return;
+    }
+    const auto outputId = state_.columns[static_cast<std::size_t>(column)].outputId;
+    const auto roleId = state_.rows[static_cast<std::size_t>(row)].roleId;
+    const auto text = typed.trim();
+    if (text.isEmpty() || text.equalsIgnoreCase("off")) {         // stop sending it
+        setLevel(outputId, roleId, std::nullopt, {});
+        return;
+    }
+    const auto db = parseDb(text);
+    if (!db) {
+        say(kNotALevel);
+        return;
+    }
+    setLevel(outputId, roleId, toTenth(model::clampDb(*db)), {});
+}
+
+void RoutingGrid::typeTrim(int column, const juce::String& typed) {
+    if (!editable() || !juce::isPositiveAndBelow(column, static_cast<int>(state_.columns.size()))) return;
+    const auto text = typed.trim();
+    const auto db = text.equalsIgnoreCase("off") ? std::optional<float>(model::kMinDb) : parseDb(text);
+    if (!db) {
+        say(kNotALevel);
+        return;
+    }
+    run("output.set", object({{"rigId", session_.rigId()}, {"outputId", state_.columns[static_cast<std::size_t>(column)].outputId},
+                              {"trimDb", toTenth(model::clampDb(*db))}}));
+}
+
+void RoutingGrid::typeOutputChannels(const juce::String& outputId, const juce::String& typedFirst, bool stereo) {
+    if (!editable()) return;
+    if (const auto first = parseChannel(typedFirst)) setOutputChannels(outputId, *first, stereo);
+    else say(kNotAChannel);
+}
+
+void RoutingGrid::addOutput(const juce::String& name, const juce::String& typedFirst, bool stereo, model::OutputLabel label) {
+    if (!editable()) return;
+    const auto first = parseChannel(typedFirst);
+    if (!first) {
+        say(kNotAChannel);
+        return;
+    }
+    run("output.add", object({{"rigId", session_.rigId()}, {"name", name.trim()}, {"firstChannel", *first}, {"stereo", stereo},
+                              {"label", labelKey(label)}}));
 }
 
 void RoutingGrid::askRenameOutput(const juce::String& outputId) {
@@ -831,9 +875,8 @@ void RoutingGrid::askOutputChannels(const juce::String& outputId) {
     window->enterModalState(true,
                             juce::ModalCallbackFunction::create([safe = juce::Component::SafePointer<RoutingGrid>(this), window, outputId](int result) {
                                 if (safe == nullptr || result != 1) return;
-                                const auto first = window->getTextEditorContents("first").trim();
-                                safe->run("output.set", object({{"rigId", safe->session_.rigId()}, {"outputId", outputId}, {"firstChannel", first},
-                                                                {"stereo", window->getComboBoxComponent("kind")->getSelectedItemIndex() == 0}}));
+                                safe->typeOutputChannels(outputId, window->getTextEditorContents("first"),
+                                                         window->getComboBoxComponent("kind")->getSelectedItemIndex() == 0);
                             }),
                             true);
 }
@@ -853,7 +896,7 @@ void RoutingGrid::askAddOutput() {
     window->addComboBox("kind", {"Stereo", "Mono"}, {});
     window->getComboBoxComponent("kind")->setSelectedItemIndex(0, juce::dontSendNotification);
     juce::StringArray labels;
-    for (const auto label : kLabels) labels.add(labelName(label));
+    for (const auto label : kLabels) labels.add(outputLabelName(label));
     window->addComboBox("label", labels, "Label");
     window->getComboBoxComponent("label")->setSelectedItemIndex(0, juce::dontSendNotification);
     window->addButton("Add", 1, juce::KeyPress(juce::KeyPress::returnKey));
@@ -862,11 +905,8 @@ void RoutingGrid::askAddOutput() {
                             juce::ModalCallbackFunction::create([safe = juce::Component::SafePointer<RoutingGrid>(this), window](int result) {
                                 if (safe == nullptr || result != 1) return;
                                 const int label = juce::jlimit(0, 3, window->getComboBoxComponent("label")->getSelectedItemIndex());
-                                safe->run("output.add", object({{"rigId", safe->session_.rigId()},
-                                                                {"name", window->getTextEditorContents("name").trim()},
-                                                                {"firstChannel", window->getTextEditorContents("first").trim()},
-                                                                {"stereo", window->getComboBoxComponent("kind")->getSelectedItemIndex() == 0},
-                                                                {"label", labelKey(kLabels[label])}}));
+                                safe->addOutput(window->getTextEditorContents("name"), window->getTextEditorContents("first"),
+                                                window->getComboBoxComponent("kind")->getSelectedItemIndex() == 0, kLabels[label]);
                             }),
                             true);
 }

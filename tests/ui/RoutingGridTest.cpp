@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <vector>
 
@@ -9,9 +11,11 @@
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
 #include "ui/AppShell.h"
+#include "ui/Format.h"
 #include "ui/Pages.h"
 #include "ui/RoutingGrid.h"
 #include "ui/SetupPage.h"
+#include "ui/Theme.h"
 
 using namespace sqlive;
 using namespace sqlive::ui;
@@ -256,4 +260,124 @@ TEST_CASE("the setup page is the Setup tab", "[routing-ui]") {
     shell.showPage(Page::Setup);
     CHECK(page->grid().state().columns.size() == 2);
     CHECK(page->state().columns.size() == 2);
+}
+
+TEST_CASE("an output turned all the way down reads off, and typed levels are numbers with or without dB", "[routing-ui]") {
+    DemoSession d; auto& s = *d.session; auto rigId = s.rigId();
+    s.commands().run("output.set", params({{"rigId", rigId}, {"outputId", s.model().rig(rigId)->outputs[0].id}, {"trimDb", -60.0}}));
+    CHECK(makeRoutingState(s, nullptr).columns[0].trim == "off");
+    CHECK(formatLevelDb(-60.0f) == "off");  CHECK(formatLevelDb(-2.5f) == "-2.5 dB");  CHECK(formatLevelDb(0.0f) == "0 dB");
+    CHECK(formatDbNumber(-60.0f) == "-60");  CHECK(formatDbNumber(3.0f) == "+3");  CHECK(formatDbNumber(-2.54f) == "-2.5");
+    CHECK(parseDb("-6") == -6.0f);  CHECK(parseDb("+3") == 3.0f);  CHECK(parseDb(" -6 dB ") == -6.0f);  CHECK(parseDb("2.5dB") == 2.5f);
+    CHECK(parseDb("-60") == -60.0f);  CHECK(parseDb("0 DB") == 0.0f);
+    for (const char* bad : {"", "loud", "-", "dB", "1.2.3", "--3", "3-", "+-3", "six"}) {
+        INFO(bad);
+        CHECK_FALSE(parseDb(bad).has_value());
+    }
+}
+
+TEST_CASE("one output per role is refused, changing nothing, when the rig can't have that many outputs", "[routing-ui]") {
+    DemoSession d; auto& s = *d.session;
+    for (int i = 0; i < 23; ++i) s.commands().run("role.add", params({{"name", "Extra " + juce::String(i)}}));   // 32 parts and the click
+    sqlive::test::ScopedLook look;
+    ui::RoutingGrid grid(s);  grid.setBounds(0, 0, 1000, 500);
+    const auto before = s.model().rig(s.rigId())->outputs;
+    grid.oneOutputPerRole();
+    CHECK(grid.lastMessage() == "One output per role needs 33 outputs, and a rig can have up to 32.");
+    const auto& after = s.model().rig(s.rigId())->outputs;
+    REQUIRE(after.size() == before.size());
+    CHECK(after[0].id == before[0].id);  CHECK(after[0].mix == before[0].mix);
+    CHECK(s.commands().undoName() == "role.add");                 // nothing to undo of it
+}
+
+TEST_CASE("a device choice that fails puts the saved one back on show", "[routing-ui]") {
+    DemoSession d; auto& s = *d.session;
+    s.commands().run("rig.setDevice", params({{"rigId", s.rigId()}, {"computerId", s.settings().computerName()}, {"deviceType", "ASIO"}, {"deviceName", "Card A"}}));
+    sqlive::test::ScopedLook look;
+    ui::SetupPage page(s, nullptr);
+    std::vector<Choice*> choices;
+    for (auto* child : page.getChildren())
+        if (auto* choice = dynamic_cast<Choice*>(child)) choices.push_back(choice);
+    REQUIRE(choices.size() == 5);                                 // rig, driver type, device, sample rate, buffer
+    auto& devices = *choices[2];
+    CHECK(devices.items() == juce::StringArray("Card A"));
+    s.enterShow();                                                // nothing is changed in Show mode
+    devices.setItems({"Card A", "Card B"}, 1);                    // as if Card B had just been chosen from the list
+    devices.onChange(1);
+    CHECK(devices.items() == juce::StringArray("Card A"));
+    CHECK(devices.selected() == 0);
+}
+
+TEST_CASE("typed levels and outputs are read in the grid, and bad ones are refused in plain words", "[routing-ui]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    ui::RoutingGrid grid(s);  grid.setBounds(0, 0, 1000, 500);
+    const auto headphones = grid.state().columns[0].outputId;
+    grid.typeCellLevel(1, 0, "-6 dB");                            // Keys in Headphones
+    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].text == "-6");
+    grid.typeCellLevel(1, 0, "-60");                              // sent, all the way down: still sent
+    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
+    grid.typeCellLevel(1, 0, "loud");
+    CHECK(grid.lastMessage() == "Type a level in dB, like -6 or +3.");
+    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
+    grid.typeCellLevel(1, 0, "off");
+    CHECK_FALSE(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
+
+    grid.typeTrim(0, "+2dB");
+    CHECK(makeRoutingState(s, nullptr).columns[0].trim == "+2 dB");
+    grid.typeTrim(0, "two");
+    CHECK(grid.lastMessage() == "Type a level in dB, like -6 or +3.");
+    grid.typeTrim(0, "off");
+    CHECK(makeRoutingState(s, nullptr).columns[0].trim == "off");
+
+    grid.typeOutputChannels(headphones, "three", true);
+    CHECK(grid.lastMessage() == "The first output is a whole number from 1, like 3.");
+    grid.typeOutputChannels(headphones, "0", true);
+    CHECK(grid.lastMessage() == "The first output is a whole number from 1, like 3.");
+    grid.typeOutputChannels(headphones, " 3 ", false);
+    CHECK(makeRoutingState(s, nullptr).columns[0].channels == "3");
+
+    grid.addOutput("PA", "x", true, model::OutputLabel::Foh);
+    CHECK(grid.lastMessage() == "The first output is a whole number from 1, like 3.");
+    CHECK(makeRoutingState(s, nullptr).columns.size() == 1);
+    grid.addOutput(" PA ", "5", true, model::OutputLabel::Foh);
+    REQUIRE(makeRoutingState(s, nullptr).columns.size() == 2);
+    CHECK(makeRoutingState(s, nullptr).columns[1].name == "PA");  CHECK(makeRoutingState(s, nullptr).columns[1].label == "PA");
+    CHECK(makeRoutingState(s, nullptr).columns[1].channels == "5/6");
+}
+
+TEST_CASE("a role's menu offers colours that mean nothing else, and none for the click", "[routing-ui]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    ui::RoutingGrid grid(s);
+    const auto items = [&](const juce::String& roleId) {
+        std::vector<juce::PopupMenu::Item> found;
+        const auto menu = grid.roleMenuFor(roleId);
+        for (juce::PopupMenu::MenuItemIterator it(menu, true); it.next();) found.push_back(it.getItem());
+        return found;
+    };
+    const auto named = [](const std::vector<juce::PopupMenu::Item>& list, const juce::String& text) {
+        return std::any_of(list.begin(), list.end(), [&](const auto& item) { return item.text == text; });
+    };
+    const auto& rows = grid.state().rows;
+    REQUIRE(rows[0].name == "Click");
+    const auto click = items(rows[0].roleId);
+    CHECK(named(click, juce::String("Rename") + juce::String::fromUTF8("\xe2\x80\xa6")));
+    CHECK_FALSE(named(click, "Colour"));
+
+    const auto keys = items(rows[1].roleId);
+    CHECK(named(keys, "Colour"));
+    int colours = 0;
+    for (const auto& item : keys) {
+        if (item.itemID < 10) continue;
+        ++colours;
+        INFO(item.text << " " << item.colour.toDisplayString(false));
+        CHECK_FALSE(item.text.containsIgnoreCase("mint"));
+        for (const auto meaning : {theme::mint, theme::ember, theme::caution, theme::danger}) {
+            const int distance = std::max({std::abs(item.colour.getRed() - meaning.getRed()), std::abs(item.colour.getGreen() - meaning.getGreen()),
+                                           std::abs(item.colour.getBlue() - meaning.getBlue())});
+            CHECK(distance > 24);
+        }
+    }
+    CHECK(colours == 9);
 }

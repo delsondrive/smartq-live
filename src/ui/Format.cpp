@@ -22,19 +22,33 @@ juce::String formatTime(double seconds) {
     return (negative ? "-" : "") + juce::String(whole / 60) + ":" + juce::String(whole % 60).paddedLeft('0', 2);
 }
 
-juce::String formatDb(float db) {
-    if (db <= kOffDb) return "off";
-    const float r = tenths(db);
-    const bool whole = r == std::round(r);
-    const auto number = whole ? juce::String(static_cast<int>(std::round(r))) : juce::String(r, 1);
-    return r > 0.0f ? "+" + number : number;
-}
+juce::String formatDb(float db) { return db <= kOffDb ? juce::String("off") : formatDbNumber(db); }
 
 juce::String formatStripDb(float db) {
     if (db <= kOffDb) return "off";
     const float r = tenths(db);
     const auto number = juce::String(r, 1);
     return r > 0.0f ? "+" + number : number;
+}
+
+juce::String formatLevelDb(float db) { return db <= kOffDb ? juce::String("off") : formatDb(db) + " dB"; }
+
+juce::String formatDbNumber(float db) {
+    const float r = tenths(db);
+    const auto number = r == std::round(r) ? juce::String(static_cast<int>(std::round(r))) : juce::String(r, 1);
+    return r > 0.0f ? "+" + number : number;
+}
+
+std::optional<float> parseDb(const juce::String& typed) {
+    auto s = typed.trim();
+    if (s.endsWithIgnoreCase("db")) s = s.dropLastCharacters(2).trimEnd();
+    const auto digits = s.trimCharactersAtStart("+-");
+    // A sign at most, then digits with at most one point, and at least one digit.
+    if (s.length() - digits.length() > 1 || !digits.containsOnly("0123456789.") || !digits.containsAnyOf("0123456789")
+        || digits.indexOfChar('.') != digits.lastIndexOfChar('.'))
+        return std::nullopt;
+    const float db = s.getFloatValue();
+    return std::isfinite(db) ? std::optional<float>(db) : std::nullopt;
 }
 
 juce::String formatBpm(double bpm) {

@@ -174,10 +174,15 @@ void SetupPage::refreshInterfaces() {
     devices_.setNeedsAttention(device < 0);
 }
 
+// A change refused (or asked for in Show mode) puts every control back to what the rig says: a dropdown already shows the
+// choice that was made, and the interface lists are otherwise made again only when the rig's interface changes.
 bool SetupPage::run(const juce::String& command, const juce::var& params) {
-    if (!editable()) return false;
-    const auto result = session_.commands().run(command, params);
+    const auto result = editable() ? session_.commands().run(command, params) : model::CommandResult::failure({});
     say(result.ok ? juce::String() : result.message);
+    if (!result.ok) {
+        type_.clear();
+        interfaces_for_.clear();
+    }
     refresh(true);
     return result.ok;
 }

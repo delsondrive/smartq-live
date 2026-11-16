@@ -5,6 +5,7 @@
 
 #include "model/Units.h"
 #include "ui/Format.h"
+#include "ui/OutputLabelPill.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -19,14 +20,13 @@ namespace {
 constexpr int kHeaderHeight = 46, kPadX = 16, kPadBottom = 14, kGap = 14, kControlHeight = 28;
 constexpr int kSongsMinWidth = 160, kSongsMaxWidth = 280, kListMaxWidth = 240;
 constexpr int kSideWidth = 300, kBoxPadX = 12, kBoxPadY = 10, kTitleHeight = 16, kTitleGap = 6, kRowGap = 10;
-constexpr int kRowHeight = 24, kValueMinWidth = 80, kValuePadX = 8, kPillPadX = 7, kPillHeight = 16;
+constexpr int kRowHeight = 24, kValueMinWidth = 80, kValuePadX = 8;
 constexpr float kTrimStepDb = 0.1f, kFineTrimStepDb = 0.025f;   // a pixel of drag
 
 juce::Font hintFont() { return theme::font(theme::sizeSmall); }
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 juce::Font valueFont() { return theme::font(theme::sizeBody, true); }
 juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
-juce::Font pillFont() { return theme::font(theme::sizeCaption, true); }
 
 float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
@@ -40,20 +40,6 @@ void keepOffKeyboard(juce::Component& component) {
 float toTenth(float db) {
     const float r = std::round(db * 10.0f) / 10.0f;
     return r == 0.0f ? 0.0f : r;
-}
-
-juce::String trimText(float db) { return db <= model::kMinDb ? juce::String("off") : formatDb(db) + " dB"; }
-
-// The .lbl-out pill's colours for each label: fill, text, border.
-struct PillLook { juce::Colour fill, text, border; bool dashed; };
-PillLook pillLook(model::OutputLabel label) {
-    switch (label) {
-    case model::OutputLabel::Foh: return {juce::Colour(110, 168, 255).withAlpha(0.15f), juce::Colour(0xff8fbcff), juce::Colour(110, 168, 255).withAlpha(0.35f), false};
-    case model::OutputLabel::Timecode: return {juce::Colour(182, 157, 255).withAlpha(0.15f), juce::Colour(0xffc4b1ff), juce::Colour(182, 157, 255).withAlpha(0.35f), false};
-    case model::OutputLabel::Unused: return {juce::Colours::transparentBlack, theme::dim, theme::hairline, true};
-    case model::OutputLabel::Monitor: break;
-    }
-    return {juce::Colours::white.withAlpha(0.1f), theme::text, theme::hairline, false};
 }
 
 // The sentence's height in the side panel at that width.
@@ -87,7 +73,7 @@ public:
         repaint();
         return true;
     }
-    int idealWidth() const { return std::max(kValueMinWidth, ceilToInt(widthOf(valueFont(), trimText(db_))) + 2 * kValuePadX); }
+    int idealWidth() const { return std::max(kValueMinWidth, ceilToInt(widthOf(valueFont(), formatLevelDb(db_))) + 2 * kValuePadX); }
 
     void paint(juce::Graphics& g) override {
         const auto r = getLocalBounds().toFloat();
@@ -97,7 +83,7 @@ public:
         g.drawRoundedRectangle(r.reduced(0.5f), theme::radiusField, 1.0f);
         g.setColour(changed_ ? theme::caution : theme::text);
         g.setFont(valueFont());
-        g.drawText(trimText(db_), getLocalBounds().reduced(kValuePadX, 0), juce::Justification::centredRight, false);
+        g.drawText(formatLevelDb(db_), getLocalBounds().reduced(kValuePadX, 0), juce::Justification::centredRight, false);
     }
     void mouseDown(const juce::MouseEvent& e) override {
         if (e.mods.isPopupMenu()) return;
@@ -318,7 +304,7 @@ void MixerPage::paint(juce::Graphics& g) {
     const float right = static_cast<float>(sideTitle_.getRight());
     const juce::String dot = juce::String::fromUTF8(" \xc2\xb7 ");   // " · "
     const bool hasPill = state.panelLabel.isNotEmpty();
-    const float pillWidth = hasPill ? widthOf(pillFont(), state.panelLabel) + 2.0f * kPillPadX : 0.0f;
+    const float pillWidth = hasPill ? outputLabelPillWidth(state.panelLabelKind) : 0.0f;
     const juce::String channels = state.panelChannels.isNotEmpty() ? " " + state.panelChannels : juce::String();
     const float tail = (hasPill ? widthOf(caps, dot) + pillWidth : 0.0f) + widthOf(caps, channels);
     const auto title = shorten(state.panelTitle, caps, std::max(0.0f, right - x - tail));
@@ -332,23 +318,8 @@ void MixerPage::paint(juce::Graphics& g) {
     drawCaps(title);
     if (hasPill) {
         drawCaps(dot);
-        const auto look = pillLook(state.panelLabelKind);
-        const auto pill = juce::Rectangle<float>(x, y + 0.5f * (h - kPillHeight), pillWidth, kPillHeight);
-        g.setColour(look.fill);
-        g.fillRoundedRectangle(pill, 4.0f);
-        g.setColour(look.border);
-        if (look.dashed) {
-            juce::Path outline, dashedOutline;
-            outline.addRoundedRectangle(pill.reduced(0.5f), 4.0f);
-            const float dashes[] = {3.0f, 2.0f};
-            juce::PathStrokeType(1.0f).createDashedStroke(dashedOutline, outline, dashes, 2);
-            g.fillPath(dashedOutline);
-        } else {
-            g.drawRoundedRectangle(pill.reduced(0.5f), 4.0f, 1.0f);
-        }
-        g.setColour(look.text);
-        g.setFont(pillFont());
-        g.drawText(state.panelLabel, pill, juce::Justification::centred, false);
+        drawOutputLabelPill(g, state.panelLabelKind,
+                            juce::Rectangle<float>(x, y + 0.5f * (h - kOutputLabelPillHeight), pillWidth, kOutputLabelPillHeight));
         x += pillWidth;
         g.setFont(caps);
         g.setColour(theme::dim);

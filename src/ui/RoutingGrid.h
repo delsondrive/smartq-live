@@ -60,7 +60,7 @@ RoutingState makeRoutingState(const app::Session&, const app::AudioHost*);
 // a faint "·" when it could be, and a short dash with model::whyNot as its tooltip when it can't. A click sends a role
 // at 0 dB or stops sending it; a vertical drag changes the level, 0.5 dB for every 2 px, one undo step a drag; a
 // double-click asks for a number. The last row, "Overall level", is each output's trim, dragged the same way. A role's
-// name has a right-click menu: Rename, Colour, Remove.
+// name has a right-click menu: Rename, Colour (not for the click, always ember), Remove.
 //
 // Every change is a command, in Edit mode only; in Show mode nothing here changes anything, and nothing takes the
 // keyboard. A refusal, or what a command says it did, shows under the grid for 4 s. It refreshes on Session::changes()
@@ -81,6 +81,13 @@ public:
     void setOutputChannels(const juce::String& outputId, int firstChannel, bool stereo);
     void setOutputLabel(const juce::String& outputId, model::OutputLabel);
     void oneOutputPerRole();                                      // as one undo step; the page asks first
+    // What the dialogs do with what was typed. Levels are numbers in dB ("-6", "+3", "-6 dB"; "off" stops a send or turns an
+    // output all the way down), first outputs whole numbers from 1. Anything else is refused with a sentence that says so.
+    void typeCellLevel(int row, int column, const juce::String& typed);
+    void typeTrim(int column, const juce::String& typed);
+    void typeOutputChannels(const juce::String& outputId, const juce::String& typedFirst, bool stereo);
+    void addOutput(const juce::String& name, const juce::String& typedFirst, bool stereo, model::OutputLabel);
+    juce::PopupMenu roleMenuFor(const juce::String& roleId) const;   // what a role's right-click offers (no Colour for the click)
     juce::String lastMessage() const { return message_; }        // why the last gesture was refused, shown under the grid for 4 s
 
     // Pressing an output's header: when this returns true (Test tone is on), the press is taken and no menu opens.

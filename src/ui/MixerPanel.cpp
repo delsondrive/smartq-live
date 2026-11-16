@@ -6,6 +6,7 @@
 #include "model/Routing.h"
 #include "model/Units.h"
 #include "ui/Format.h"
+#include "ui/OutputLabelPill.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -41,16 +42,6 @@ juce::String soundName(const juce::String& sound) {
     if (sound == "beep") return "Beep";
     if (sound == "rim") return "Rim";
     return "Wood block";
-}
-
-juce::String labelName(model::OutputLabel label) {
-    switch (label) {
-    case model::OutputLabel::Monitor: return "In-ears";
-    case model::OutputLabel::Foh: return "PA";
-    case model::OutputLabel::Timecode: return "Timecode";
-    case model::OutputLabel::Unused: return "Not used";
-    }
-    return {};
 }
 
 int groupOf(model::RoleKind kind) {
@@ -163,7 +154,7 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
         }
     } else {
         state.panelTitle = output->name.toUpperCase();
-        state.panelLabel = labelName(output->label);
+        state.panelLabel = outputLabelName(output->label);
         state.panelLabelKind = output->label;
         state.panelChannels = "OUT " + formatChannels(output->firstChannel, output->stereo);
 
