@@ -127,3 +127,14 @@ TEST_CASE("converted audio has no seams between blocks, up or down", "[import]")
         CHECK(drift < c.tolerance);
     }
 }
+TEST_CASE("lowering the rate filters out what the new rate can't hold", "[import]") {
+    sqlive::test::TempDir t;
+    auto source = writeSine(t.dir().getChildFile("high.wav"), 96000.0, 1, 1.0, 30000.0, 0.5f);   // above the new 24 kHz limit
+    auto target = t.dir().getChildFile("out.wav");
+    REQUIRE(convertToBandWav(source, target, 48000.0, [](double) { return true; }).wasOk());
+    auto audio = readWav(target);
+    REQUIRE(audio.size() == 1);
+    REQUIRE(audio[0].size() > 9600);
+    float peak = 0; for (size_t i = 4800; i < audio[0].size() - 4800; ++i) peak = std::max(peak, std::abs(audio[0][i]));
+    CHECK(peak <= 0.5f * 0.001f);                                   // at least 60 dB down, not folded back to 18 kHz
+}

@@ -9,7 +9,9 @@ namespace sqlive::model {
 
 // Feeds one channel's WindowedSincInterpolator exactly the input its next outputs need, so the stream has no seams between
 // blocks. Output m is the input at m * speed: the interpolator's 100-sample latency is taken up by a first output thrown away.
-// Downsampling isn't low-pass filtered yet: content above the new Nyquist frequency can alias.
+// When the rate goes down (speed above 1) the input is low-pass filtered first, with a linear-phase FIR whose cutoff is
+// 0.45 of the new rate, so nothing above the new Nyquist frequency folds back; the filter's delay is dropped, so the
+// output still lines up with the input.
 class Resampler {
 public:
     Resampler(int channels, double speed);
@@ -24,11 +26,17 @@ private:
 
     // Makes up to maxFrames outputs at `speed` from the pending input, into `out`, or (one frame to throw away) into `scratch`.
     int run(double speed, juce::AudioBuffer<float>* out, float* scratch, int maxFrames);
+    // Low-passes one channel's input onto its pending input.
+    void filterInto(size_t channel, const float* input, int frames);
 
     double speed_, pos_ = 1.0;   // pos_ mirrors each interpolator's own position, which starts at 1 after a reset
     bool primed_ = false;
     std::vector<juce::WindowedSincInterpolator> interpolators_;
     std::vector<std::vector<float>> pending_;
+    std::vector<double> taps_;                  // the low-pass, symmetric; empty when the rate doesn't go down
+    std::vector<std::vector<float>> history_;   // per channel, the last taps_.size() - 1 inputs
+    std::vector<float> window_;                 // scratch: history then the new input
+    int delay_left_ = 0;                        // filter outputs still to drop, its delay
 };
 
 enum class ReadEnd { Done, ReadFailed, SinkFailed, Stopped };
