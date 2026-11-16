@@ -157,6 +157,16 @@ bool BandFolder::adoptSongFolder(const juce::String& songId, const juce::File& f
 
 void BandFolder::forgetSongFolder(const juce::String& songId) { places_.erase({DocKind::Song, songId}); }
 
+bool BandFolder::adoptFile(const DocKey& key, const juce::File& file) {
+    if (key.kind != DocKind::Setlist && key.kind != DocKind::Rig) return false;
+    const auto dir = root_folder_.getChildFile(key.kind == DocKind::Setlist ? "setlists" : "rigs");
+    if (place(key) != juce::File() || ! file.existsAsFile() || file.getParentDirectory() != dir) return false;
+    for (auto& [other, where] : places_)
+        if (where == file) return false;   // another document's
+    places_[key] = file;
+    return true;
+}
+
 juce::File BandFolder::audioFile(const SongDoc& song, const PartDoc& part) const {
     // The file comes from a synced folder that anyone in the band can edit, so it may name only something inside the song's
     // folder; anything else is treated as a missing file.

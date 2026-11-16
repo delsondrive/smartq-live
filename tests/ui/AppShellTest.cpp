@@ -82,3 +82,26 @@ TEST_CASE("the top bar draws the Q full-size and centred in the logo's place", "
     CHECK(std::abs((left + right) / 2 - (16 + 13)) <= 2);
     CHECK(std::abs((top + bottom) / 2 - 31) <= 2);
 }
+TEST_CASE("files changed on another computer bring a banner, and Check files opens the files dialog", "[shell]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    ui::AppShell shell(s, nullptr);  shell.setBounds(0, 0, 1280, 760);
+    CHECK_FALSE(shell.showingOutsideChangesBanner());
+    auto band = s.folder().root().getChildFile("band.json");
+    band.replaceWithText(band.loadFileAsString().replace("\"Demo band\"", "\"Theirs\""));
+    band.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::seconds(5));
+    s.advanceWithoutDevice(0);  d.settle();
+    CHECK(shell.showingOutsideChangesBanner());
+    s.keepMine();  d.settle();
+    CHECK_FALSE(shell.showingOutsideChangesBanner());
+
+    shell.openFilesDialog();  CHECK_FALSE(shell.showingFilesDialog());           // nothing to check
+    auto song = s.folder().fileFor({model::DocKind::Song, d.setlist().entries[0].songId});
+    song.getSiblingFile("song-LAPTOP.json").replaceWithText(song.loadFileAsString());
+    s.advanceWithoutDevice(0);  d.settle();
+    auto pills = shell.topBar().state().pills;
+    CHECK(std::any_of(pills.begin(), pills.end(), [](const TopBarState::Pill& p) { return p.text == "Check files"; }));
+    shell.openFilesDialog();  CHECK(shell.showingFilesDialog());
+    s.enterShow();  d.settle();
+    CHECK_FALSE(shell.showingFilesDialog());                                       // nothing may change the band folder in a show
+}

@@ -42,7 +42,8 @@ juce::String pageName(Page);
 
 // The top bar, 62 px high. Edit mode: logo, the four tabs, a gap, "↶ Undo", the EDIT/SHOW switch. Show mode, main view:
 // logo, clock, chips, beat lights, the transport (⏮ ▶ ⏭), status pills, the switch. Show mode, stage view: logo, a gap,
-// pills, the switch. Clicking the logo in Edit mode opens the About panel.
+// pills, the switch. Clicking the logo in Edit mode opens the About panel. In Edit mode the "Check files" pill, when there
+// is one, sits before Undo, and a click on it calls onCheckFiles.
 class TopBar : public juce::Component, private juce::Timer {
 public:
     static constexpr int height = 62;
@@ -58,6 +59,7 @@ public:
     std::function<void(app::Action)> onAction;                    // the transport: Start, Stop (a held ▶), the song arrows
     std::function<void()> onUndo;
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
+    std::function<void()> onCheckFiles;                           // Edit mode: the "Check files" pill was clicked
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -85,6 +87,7 @@ private:
     std::vector<std::unique_ptr<StatusPill>> pills_;
 
     juce::Rectangle<int> logo_, clock_, modeSwitch_;
+    juce::Rectangle<int> checkFiles_;                             // the "Check files" pill while it can be clicked; empty otherwise
     std::vector<juce::Rectangle<int>> tabs_;
     int hoveredTab_ = -1;
     double mouseHoldStart_ = -1.0;                                // ms; -1 = the ▶ isn't held with the mouse

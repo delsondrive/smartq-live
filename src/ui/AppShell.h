@@ -8,6 +8,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
+#include "ui/FilesDialog.h"
 #include "ui/InterruptedBanner.h"
 #include "ui/KeyboardBanner.h"
 #include "ui/TopBar.h"
@@ -23,7 +24,8 @@ class PreShowDialog;
 
 // The page host: the top bar, then the content (an Edit page chosen by tab, or in Show mode the main or stage view, which
 // Tab switches), then banners over the content's top edge (the red InterruptedBanner, and under it the amber
-// KeyboardBanner; while a show song is cut off, the ComesBackBox near the bottom), then a dialog over everything, on a
+// KeyboardBanner; while a show song is cut off, the ComesBackBox near the bottom; in Edit mode, while files changed on
+// another computer wait for an answer, the OutsideChangesBanner), then a dialog over everything, on a
 // veil. It refreshes on Session::changes() and 30 times a second for the clock. Pages and views are plugged in by plugInPages (Pages.h); a page not plugged in yet shows nothing.
 //
 // In Show mode nothing here writes the band folder: the top bar shows no Undo, and an undo asked for anyway is ignored.
@@ -54,6 +56,10 @@ public:
     bool showingComesBackBox() const;                             // the "WHEN IT COMES BACK" box: a show song was cut off
     bool showingTonightQuestion() const;
     void answerTonightQuestion(bool keep);                        // "Keep them" or "Drop them"; ignored when it isn't asked
+    // Edit mode: the "Check files" pill opens the FilesDialog (one dialog at a time). It closes when Show mode starts.
+    void openFilesDialog();
+    bool showingFilesDialog() const;
+    bool showingOutsideChangesBanner() const;                     // files changed on another computer wait for an answer
 
     TopBar& topBar() { return topBar_; }
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
@@ -88,7 +94,8 @@ private:
     InterruptedBanner interrupted_;
     ComesBackBox comesBack_;
     KeyboardBanner banner_;
-    std::unique_ptr<Veil> preShow_, tonight_;
+    OutsideChangesBanner outside_;
+    std::unique_ptr<Veil> preShow_, tonight_, files_;
     std::vector<std::unique_ptr<Veil>> closed_;                   // hidden, waiting to be deleted
     juce::ScopedMessageBox dialog_;
 };

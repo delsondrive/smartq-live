@@ -15,7 +15,7 @@ struct CheckInputs { bool deviceOpen = false; juce::String deviceName; double de
 
 // The checks before a show, in the order they are shown; a line is left out when it has nothing to say.
 // Ids: audio, routing (one per problem), files (at most one), setlist, conflicts, power.
-// Reads the session's setlist, rigAsHeard() and the band folder (conflict copies: one scan of every JSON file).
+// Reads the session's setlist, rigAsHeard(), conflictCopies() (the list it keeps; never a scan) and the part files.
 std::vector<CheckItem> runPreShowCheck(const Session&, const CheckInputs&);
 bool mayEnterShow(const std::vector<CheckItem>&);                // no Blocker
 

@@ -8,6 +8,7 @@
 
 #include <juce_events/juce_events.h>
 
+#include "app/FolderWatch.h"
 #include "app/Settings.h"
 #include "app/SongCache.h"
 #include "app/Tonight.h"
@@ -15,6 +16,7 @@
 #include "model/Autosaver.h"
 #include "model/BandFolder.h"
 #include "model/BandModel.h"
+#include "model/CloudFiles.h"
 #include "model/CommandLayer.h"
 #include "model/SongImport.h"
 
@@ -113,6 +115,21 @@ public:
                                                                  // is still empty
     model::ImportResult commitImport(model::ConvertedSong);      // model::commitImportedSong(c, folder(), commands())
 
+    // Files another computer changed. In Edit mode the band folder is looked at every 2 s (and on each advanceWithoutDevice),
+    // never in Show mode, so a show goes on with the documents it started with; leaving Show mode looks at once. What
+    // changed waits for the user's answer; nothing is taken silently. All three do nothing in Show mode.
+    std::vector<OutsideChange> outsideChanges() const;           // waiting for the user's answer, in key order
+    // Loads them from disk as one undoable step, the command "folder.reload" (its undo is an ordinary change, and saved).
+    // What was loaded is not written back. A file that can't be read stays waiting, and is noted in loadReport().
+    void takeOutsideChanges();
+    void keepMine();                                             // writes this app's version over them at once. One that came
+                                                                 // in (Added) is left on disk, and offered again if it changes
+    // Conflict copies, as of the last look at the band folder (or resolveConflict); never a fresh scan.
+    std::vector<model::ConflictCopy> conflictCopies() const;
+    // Keeps one of the two: the loser goes to trash/, and a copy kept takes the original's place and is loaded as one undoable
+    // step. Refreshes the list. Fails in Show mode, or when a file is gone or can't be read.
+    juce::Result resolveConflict(const model::ConflictCopy&, bool keepTheCopy);
+
 private:
     // A song as the engine plays it, with what it was built from, so a change to either builds it again.
     struct Prepared {
@@ -170,6 +187,9 @@ private:
     void forgetDeadCues(const engine::EngineStatus&);
     void noteSaveState();
     void changed();
+    void pollFolder();                                           // Edit mode: outside changes and conflict copies
+    // Runs "folder.reload" with these texts ("" = removed), then tells the autosaver and the watch that the disk has them.
+    void loadFromDisk(const std::map<model::DocKey, juce::String>& texts);
 
     model::BandDoc bandAsHeard() const;
     void restoreShow();                                          // from the show memory, when opening
@@ -227,6 +247,11 @@ private:
     bool save_failed_ = false;
     juce::String save_error_;
     SaveState last_save_state_ = SaveState::Saved;
+
+    std::unique_ptr<FolderWatch> folder_watch_;                  // made once the band is loaded
+    std::vector<OutsideChange> outside_changes_;
+    std::vector<model::ConflictCopy> conflict_copies_;
+    double last_poll_ms_ = 0.0;
 
     std::vector<std::vector<float>> scratch_;                    // advanceWithoutDevice's output channels
     std::vector<float*> scratch_channels_;

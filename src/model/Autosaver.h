@@ -13,10 +13,13 @@ class Autosaver {
 public:
     Autosaver(BandFolder&, const BandModel&);
     void noteChanged(const std::vector<DocKey>&);
+    void forget(const std::vector<DocKey>&);               // drops these from pending: they are not written back
     bool hasPending() const;
     juce::Result flush();                                  // saves every pending document; what fails stays pending
     // Once per flush: the first failure, or success. Also called, with success, for a flush that had nothing pending.
     std::function<void(const juce::Result&)> onSaved;
+    // Called by flush for each document it wrote (or moved to trash/), just after it did.
+    std::function<void(const DocKey&)> onWrote;
 
 private:
     BandFolder& folder_;

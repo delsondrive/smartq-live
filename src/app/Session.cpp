@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "model/CoreCommands.h"
+#include "model/DocumentsJson.h"
+#include "model/FileNames.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
 #include "model/Units.h"
@@ -32,12 +34,87 @@ bool sameWanted(const std::vector<WantedSong>& a, const std::vector<WantedSong>&
                       [](const WantedSong& x, const WantedSong& y) { return x.doc == y.doc && x.files == y.files; });
 }
 
+// ---- Files changed on another computer ----
+
+constexpr double kFolderPollMs = 2000.0;
+
+// "folder.reload" names each document "<kind>:<id>": "band:", "song:<id>", "setlist:<id>", "rig:<id>".
+const char* kindName(model::DocKind kind) {
+    switch (kind) {
+    case model::DocKind::Band: return "band";
+    case model::DocKind::Song: return "song";
+    case model::DocKind::Setlist: return "setlist";
+    case model::DocKind::Rig: return "rig";
+    }
+    return "";
+}
+
+juce::String keyName(const model::DocKey& key) { return juce::String(kindName(key.kind)) + ":" + key.id; }
+
+bool parseKeyName(const juce::String& name, model::DocKey& key) {
+    const auto kind = name.upToFirstOccurrenceOf(":", false, false);
+    for (auto k : {model::DocKind::Band, model::DocKind::Song, model::DocKind::Setlist, model::DocKind::Rig}) {
+        if (kind != kindName(k)) continue;
+        key = {k, name.fromFirstOccurrenceOf(":", false, false)};
+        return name.containsChar(':') && (k == model::DocKind::Band) == key.id.isEmpty();
+    }
+    return false;
+}
+
+// The text is a document of this kind (fromJson repairs anything but text that isn't a JSON object).
+bool readableAs(model::DocKind kind, const juce::String& text) {
+    model::ParseNotes notes;
+    switch (kind) {
+    case model::DocKind::Band: { model::BandDoc d; return model::fromJson(text, d, notes); }
+    case model::DocKind::Song: { model::SongDoc d; return model::fromJson(text, d, notes); }
+    case model::DocKind::Setlist: { model::SetlistDoc d; return model::fromJson(text, d, notes); }
+    case model::DocKind::Rig: { model::RigDoc d; return model::fromJson(text, d, notes); }
+    }
+    return false;
+}
+
+// {documents: {"<kind>:<id>": JSON text, or "" for a removed one}}: sets each document from the text read from disk.
+model::CommandResult reloadDocuments(model::BandModel& m, const juce::var& params) {
+    const auto* documents = params.getProperty("documents", {}).getDynamicObject();
+    if (documents == nullptr) return model::CommandResult::failure("There was nothing to load.");
+    for (const auto& property : documents->getProperties()) {
+        model::DocKey key;
+        if (!parseKeyName(property.name.toString(), key))
+            return model::CommandResult::failure("There is no document called " + property.name.toString() + ".");
+        const auto text = property.value.toString();
+        if (text.isNotEmpty() && !readableAs(key.kind, text))
+            return model::CommandResult::failure("A file from another computer couldn't be read, so nothing was loaded.");
+        if (key.kind == model::DocKind::Band) {
+            if (text.isEmpty()) return model::CommandResult::failure("A band can't be without its band.json.");
+            m.editBand();                                        // applyText sets the band without noting it as changed
+        }
+        m.applyText(key, text);
+    }
+    return model::CommandResult::success();
+}
+
+bool sameCopies(const std::vector<model::ConflictCopy>& a, const std::vector<model::ConflictCopy>& b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const model::ConflictCopy& x, const model::ConflictCopy& y) {
+        return x.original == y.original && x.copy == y.copy && x.id == y.id;
+    });
+}
+
+// Where a file that lost a conflict goes: trash/<date-time> <its name>, with the song's folder name for a song's file.
+juce::File trashTargetFor(const juce::File& bandRoot, const juce::File& file) {
+    const auto stamp = juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S");
+    const auto dir = file.getParentDirectory();
+    const bool inSong = dir.getParentDirectory() == bandRoot.getChildFile("songs");
+    const auto name = stamp + " " + (inSong ? dir.getFileName() + " " : juce::String()) + file.getFileNameWithoutExtension();
+    return model::uniqueChild(bandRoot.getChildFile("trash"), name, file.getFileExtension());
+}
+
 }  // namespace
 
 Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudgetBytes)
     : settings_(settings), folder_(std::move(bandRoot)), cache_(cacheBudgetBytes) {
     load_report_ = folder_.load(model_);
     model::registerCoreCommands(commands_);
+    commands_.registerCommand("folder.reload", reloadDocuments);
     commands_.onChanged = [this](const std::vector<model::DocKey>& keys) {
         autosaver_.noteChanged(keys);
         last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
@@ -47,6 +124,16 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
         save_failed_ = result.failed();
         save_error_ = result.failed() ? result.getErrorMessage() : juce::String();
     };
+    folder_watch_ = std::make_unique<FolderWatch>(*this);
+    autosaver_.onWrote = [this](const model::DocKey& key) {
+        folder_watch_->noteOwnWrite(key);
+        // This app's version is on disk now: what another computer had put there is no longer there to take.
+        outside_changes_.erase(std::remove_if(outside_changes_.begin(), outside_changes_.end(),
+                                              [&](const OutsideChange& c) { return c.key == key; }),
+                               outside_changes_.end());
+    };
+    conflict_copies_ = model::findConflictCopies(folder_.root());   // the first look; then each poll in Edit mode
+    last_poll_ms_ = juce::Time::getMillisecondCounterHiRes();
     cache_.onChanged = [this](const juce::String&) { refresh(); };
 
     // Until a device is chosen the engine runs at a default rate, so advanceWithoutDevice can drive it. With a device,
@@ -272,6 +359,7 @@ bool Session::leaveShow() {
     if (now().playing) return false;
     mode_ = Mode::Edit;
     writeShowMemory();                                           // no longer in the show; tonight's changes wait for the answer
+    pollFolder();                                                // what changed on other computers during the show
     refresh();
     return true;
 }
@@ -437,6 +525,7 @@ void Session::advanceWithoutDevice(int frames) {
         if (handleEngineEvents()) refresh();
     }
     refreshTransport();
+    pollFolder();
     changed();
 }
 
@@ -460,6 +549,132 @@ model::ImportResult Session::commitImport(model::ConvertedSong converted) {
     return model::commitImportedSong(std::move(converted), folder_, commands_);
 }
 
+// ---- Files changed on another computer ---------------------------------------------------------------------------------
+
+std::vector<OutsideChange> Session::outsideChanges() const { return outside_changes_; }
+std::vector<model::ConflictCopy> Session::conflictCopies() const { return conflict_copies_; }
+
+void Session::pollFolder() {
+    if (mode_ == Mode::Show) return;                             // a show goes on with what it started with
+    last_poll_ms_ = juce::Time::getMillisecondCounterHiRes();
+    bool differs = false;
+    for (auto& change : folder_watch_->poll()) {
+        const auto same = std::find_if(outside_changes_.begin(), outside_changes_.end(),
+                                       [&](const OutsideChange& c) { return c.key == change.key; });
+        if (same != outside_changes_.end()) outside_changes_.erase(same);
+        // One that came in and went again before it was loaded: nothing is left to offer.
+        if (change.kind != OutsideChange::Kind::Removed || documentLoaded(model_, change.key))
+            outside_changes_.push_back(std::move(change));
+        differs = true;
+    }
+    std::stable_sort(outside_changes_.begin(), outside_changes_.end(),
+                     [](const OutsideChange& a, const OutsideChange& b) { return a.key < b.key; });
+    auto copies = model::findConflictCopies(folder_.root());
+    if (!sameCopies(copies, conflict_copies_)) {
+        conflict_copies_ = std::move(copies);
+        differs = true;
+    }
+    if (differs) changed();
+}
+
+void Session::loadFromDisk(const std::map<model::DocKey, juce::String>& texts) {
+    if (texts.empty()) return;
+    auto* documents = new juce::DynamicObject();
+    const juce::var holder(documents);
+    for (const auto& [key, text] : texts) documents->setProperty(keyName(key), text);
+    auto* params = new juce::DynamicObject();
+    const juce::var paramsHolder(params);
+    params->setProperty("documents", holder);
+    if (!commands_.run("folder.reload", paramsHolder).ok) return;
+    // The command noted them to the autosaver like any change; but the disk already has them.
+    std::vector<model::DocKey> keys;
+    for (const auto& [key, text] : texts) keys.push_back(key);
+    autosaver_.forget(keys);
+    for (const auto& key : keys) folder_watch_->noteOwnWrite(key);
+    noteSaveState();
+}
+
+void Session::takeOutsideChanges() {
+    if (mode_ == Mode::Show || outside_changes_.empty()) return;
+    std::map<model::DocKey, juce::String> texts;
+    std::vector<OutsideChange> waiting;
+    const auto leftOut = [&](const OutsideChange& change, const juce::File& file) {
+        load_report_.notes.addIfNotAlreadyThere(file.getFullPathName() + " couldn't be read, so it was left out.");
+        waiting.push_back(change);
+    };
+    for (const auto& change : outside_changes_) {
+        if (change.kind == OutsideChange::Kind::Removed) {
+            if (change.key.kind == model::DocKind::Band) waiting.push_back(change);   // a band can't go: keep mine is the answer
+            else texts[change.key] = {};
+            continue;
+        }
+        const auto file = change.kind == OutsideChange::Kind::Added ? change.file : folder_.fileFor(change.key);
+        const auto text = file.loadFileAsString();
+        if (!readableAs(change.key.kind, text)) {
+            leftOut(change, file);
+            continue;
+        }
+        if (change.kind == OutsideChange::Kind::Added) {
+            // It lives in a folder or file this app hasn't seen: remembered as the document's, so it is saved there.
+            const bool adopted = change.key.kind == model::DocKind::Song
+                                     ? folder_.adoptSongFolder(change.key.id, file.getParentDirectory())
+                                           || folder_.songFolder(change.key.id) == file.getParentDirectory()
+                                     : folder_.adoptFile(change.key, file) || folder_.fileFor(change.key) == file;
+            if (!adopted) {
+                leftOut(change, file);
+                continue;
+            }
+        }
+        texts[change.key] = text;
+    }
+    outside_changes_ = std::move(waiting);
+    loadFromDisk(texts);
+    changed();
+}
+
+void Session::keepMine() {
+    if (mode_ == Mode::Show || outside_changes_.empty()) return;
+    std::vector<model::DocKey> keys;
+    for (const auto& change : outside_changes_) keys.push_back(change.key);
+    outside_changes_.clear();
+    autosaver_.noteChanged(keys);
+    flushNow();                                                  // what can't be written stays pending, and is retried
+    changed();
+}
+
+juce::Result Session::resolveConflict(const model::ConflictCopy& conflict, bool keepTheCopy) {
+    if (mode_ == Mode::Show) return juce::Result::fail("Show mode never changes the band folder. Choose after the show.");
+    const auto finish = [this](juce::Result result) {
+        conflict_copies_ = model::findConflictCopies(folder_.root());
+        changed();
+        return result;
+    };
+    const auto key = conflictDocument(folder_.root(), conflict);
+    if (!key.has_value()) return finish(juce::Result::fail(conflict.original.getFullPathName() + " isn't one of the band's documents."));
+    for (const auto& file : {conflict.original, conflict.copy})
+        if (!file.existsAsFile()) return finish(juce::Result::fail(file.getFullPathName() + " is no longer there."));
+    juce::String text;
+    if (keepTheCopy) {
+        text = conflict.copy.loadFileAsString();
+        if (!readableAs(key->kind, text)) return finish(juce::Result::fail(conflict.copy.getFullPathName() + " couldn't be read."));
+    }
+
+    // The version that loses is kept in the trash.
+    const auto loser = keepTheCopy ? conflict.original : conflict.copy;
+    const auto trashed = trashTargetFor(folder_.root(), loser);
+    trashed.getParentDirectory().createDirectory();
+    if (!loser.moveFileTo(trashed)) return finish(juce::Result::fail("Couldn't move " + loser.getFullPathName() + " to the trash."));
+    if (!keepTheCopy) return finish(juce::Result::ok());
+
+    if (!conflict.copy.moveFileTo(conflict.original)) {
+        trashed.moveFileTo(conflict.original);                   // put the original back
+        return finish(juce::Result::fail("Couldn't put " + conflict.copy.getFileName() + " in place of "
+                                         + conflict.original.getFileName() + "."));
+    }
+    if (folder_.fileFor(*key) == conflict.original) loadFromDisk({{*key, text}});   // the loaded document's file: load the copy
+    return finish(juce::Result::ok());
+}
+
 void Session::timerCallback() {
     if (handleEngineEvents()) refresh();
     else refreshTransport();                                     // retries a cue the engine's full queue refused
@@ -470,6 +685,7 @@ void Session::timerCallback() {
         if (autosaver_.hasPending() || settings_pending_) last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
     }
     noteSaveState();
+    if (mode_ == Mode::Edit && juce::Time::getMillisecondCounterHiRes() - last_poll_ms_ >= kFolderPollMs) pollFolder();
     if (playing_.active() || (engine_.status().inGap && !interrupted_ && deviceMayPlay())) changed();   // the position moves
 }
 

@@ -27,6 +27,8 @@ const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");      // " · "
 
 const juce::Colour kOnEmber{0xff160f10};                             // the mockup's text on an ember fill
 
+const juce::String kCheckFiles = "Check files";
+
 juce::Font tabFont() { return theme::font(theme::sizeBody, true); }
 juce::Font switchFont() { return theme::font(theme::sizeSmall, true); }
 juce::Font clockSubFont() { return theme::font(theme::sizeSmall); }
@@ -121,7 +123,8 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
     if (host != nullptr && host->isLost()) t.pills.push_back({"Audio lost", Level::Bad});
     else if (host != nullptr && host->isOpen()) t.pills.push_back({"Audio", Level::Ok});
     else t.pills.push_back({"No audio", Level::Bad});
-    if (!session.loadReport().notes.isEmpty()) t.pills.push_back({"Check files", Level::Warning});
+    // The conflict copies are the list the session keeps from its last look at the band folder: nothing here scans.
+    if (!session.loadReport().notes.isEmpty() || !session.conflictCopies().empty()) t.pills.push_back({kCheckFiles, Level::Warning});
     return t;
 }
 
@@ -385,9 +388,18 @@ void TopBar::layout() {
     }
     undo_->setVisible(edit);
 
-    // Show mode: the status pills, right to left before the switch.
+    // Show mode: the status pills, right to left before the switch. Edit mode: only "Check files", before Undo, where a
+    // click on it opens the files dialog (in Show mode it only says so: nothing there may change the band folder).
     const bool showPills = !edit;
-    for (std::size_t i = 0; i < pills_.size(); ++i) pills_[i]->setVisible(showPills && i < state_.pills.size());
+    checkFiles_ = {};
+    for (std::size_t i = 0; i < pills_.size(); ++i) {
+        const bool checkFiles = edit && i < state_.pills.size() && state_.pills[i].text == kCheckFiles;
+        pills_[i]->setVisible((showPills || checkFiles) && i < state_.pills.size());
+        if (!checkFiles) continue;
+        const int pw = pills_[i]->idealWidth();
+        centreOn(*pills_[i], undo_->getX() - kGap - pw, pw, 24, centreY);
+        checkFiles_ = pills_[i]->getBounds();
+    }
     if (showPills) {
         int x = right;
         for (std::size_t i = state_.pills.size(); i-- > 0;) {
@@ -524,6 +536,10 @@ void TopBar::mouseDown(const juce::MouseEvent& e) {
         if (wanted != state_.mode && onMode) onMode(wanted);
         return;
     }
+    if (checkFiles_.contains(p)) {
+        if (onCheckFiles) onCheckFiles();
+        return;
+    }
     if (state_.mode == Mode::Edit && logo_.contains(p)) showAbout();
 }
 
@@ -534,7 +550,8 @@ void TopBar::mouseMove(const juce::MouseEvent& e) {
         hoveredTab_ = tab;
         repaint();
     }
-    const bool clickable = tab >= 0 || modeSwitch_.contains(p) || (state_.mode == Mode::Edit && logo_.contains(p));
+    const bool clickable = tab >= 0 || modeSwitch_.contains(p) || checkFiles_.contains(p)
+                           || (state_.mode == Mode::Edit && logo_.contains(p));
     setMouseCursor(clickable ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 

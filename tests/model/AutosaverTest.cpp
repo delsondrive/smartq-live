@@ -43,3 +43,20 @@ TEST_CASE("a save that fails stays pending and says why", "[autosave]") {
     CHECK(saver.flush().wasOk());
     CHECK(file.loadFileAsString().contains("\"Blocked\""));
 }
+TEST_CASE("the autosaver says what it wrote and can forget a pending document", "[autosave]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    CommandLayer commands(model); registerCoreCommands(commands);
+    Autosaver saver(folder, model);
+    commands.onChanged = [&](const std::vector<DocKey>& keys) { saver.noteChanged(keys); };
+    std::vector<DocKey> wrote; saver.onWrote = [&](const DocKey& key) { wrote.push_back(key); };
+    commands.run("band.rename", params({{"name", "One"}}));
+    CHECK(saver.flush().wasOk());
+    REQUIRE(wrote.size() == 1);  CHECK(wrote[0] == DocKey{DocKind::Band, {}});
+    commands.run("band.rename", params({{"name", "Two"}}));
+    saver.forget({DocKey{DocKind::Band, {}}});
+    CHECK_FALSE(saver.hasPending());
+    CHECK(saver.flush().wasOk());
+    CHECK(wrote.size() == 1);                                     // nothing more was written
+    CHECK(root.getChildFile("band.json").loadFileAsString().contains("\"One\""));
+}

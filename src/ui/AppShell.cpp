@@ -116,7 +116,7 @@ private:
 };
 
 AppShell::AppShell(app::Session& session, app::AudioHost* host)
-    : session_(session), host_(host), topBar_(session), interrupted_(session, host) {
+    : session_(session), host_(host), topBar_(session), interrupted_(session, host), outside_(session) {
     setWantsKeyboardFocus(true);                                  // keys reach the window's ShowController from here
     setOpaque(true);
 
@@ -127,12 +127,14 @@ AppShell::AppShell(app::Session& session, app::AudioHost* host)
         if (session_.mode() == Mode::Edit && session_.commands().canUndo()) session_.commands().undo();
     };
     topBar_.onOpenAnotherBand = [this] { if (onOpenAnotherBand) onOpenAnotherBand(); };
+    topBar_.onCheckFiles = [this] { openFilesDialog(); };
     addAndMakeVisible(topBar_);
 
     addChildComponent(interrupted_);
     addChildComponent(comesBack_);
     banner_.onClick = [this] { takeKeyboard(); };
     addChildComponent(banner_);
+    addChildComponent(outside_);
 
     session_.changes().addChangeListener(this);
     refresh();
@@ -158,7 +160,7 @@ void AppShell::showPage(Page page) {
 void AppShell::requestMode(Mode mode) {
     if (mode == session_.mode()) return;
     if (mode == Mode::Show) {
-        if (preShow_ != nullptr || tonight_ != nullptr) return;   // one dialog at a time; the one up is answered first
+        if (preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr) return;   // one dialog at a time
         auto dialog = std::make_unique<PreShowDialog>(session_, host_);
         auto* d = dialog.get();
         d->onGo = [this] {
@@ -223,6 +225,8 @@ bool AppShell::showingPreShowDialog() const { return preShow_ != nullptr; }
 bool AppShell::showingInterruptedBanner() const { return interrupted_.isVisible(); }
 bool AppShell::showingComesBackBox() const { return comesBack_.isVisible(); }
 bool AppShell::showingTonightQuestion() const { return tonight_ != nullptr; }
+bool AppShell::showingFilesDialog() const { return files_ != nullptr; }
+bool AppShell::showingOutsideChangesBanner() const { return outside_.isVisible(); }
 
 void AppShell::answerTonightQuestion(bool keep) {
     if (tonight_ == nullptr || session_.mode() != Mode::Edit) return;
@@ -245,7 +249,8 @@ void AppShell::resized() {
     interrupted_.setBounds(area.withHeight(InterruptedBanner::height));
     if (interrupted_.isVisible()) area.removeFromTop(InterruptedBanner::height);
     banner_.setBounds(area.withHeight(KeyboardBanner::height));
-    for (auto* veil : {preShow_.get(), tonight_.get()})
+    outside_.setBounds(area.withHeight(OutsideChangesBanner::height));   // Edit mode only: the two above are Show mode's
+    for (auto* veil : {preShow_.get(), tonight_.get(), files_.get()})
         if (veil != nullptr) veil->setBounds(getLocalBounds());
 }
 
@@ -274,6 +279,8 @@ void AppShell::refreshBanners() {
     // The box goes with the banner while the song it was playing waits to start again from the top.
     const bool box = interrupted_.wanted() && session_.now().interrupted;
     if (box != comesBack_.isVisible()) comesBack_.setVisible(box);
+    outside_.refresh();
+    if (outside_.wanted() != outside_.isVisible()) outside_.setVisible(outside_.wanted());
     if (interrupted_.wanted() == interrupted_.isVisible()) return;
     interrupted_.setVisible(interrupted_.wanted());
     resized();
@@ -285,6 +292,7 @@ void AppShell::followMode() {
         // In Show mode the pre-show check has nothing left to say, and nothing may write the band folder.
         close(preShow_);
         close(tonight_);
+        close(files_);
         return;
     }
     // In Edit mode tonight's changes only come from a show that has ended (here, or before a restart), so whenever there
@@ -292,6 +300,19 @@ void AppShell::followMode() {
     if (session_.hasTonightChanges()) askAboutTonight();
     else close(tonight_);                                         // answered some other way
     if (tonight_ != nullptr) static_cast<TonightQuestion&>(tonight_->content()).setCount(session_.tonightChangeCount());
+    if (files_ != nullptr) static_cast<FilesDialog&>(files_->content()).refresh();   // may close it: nothing left to show
+}
+
+void AppShell::openFilesDialog() {
+    if (session_.mode() != Mode::Edit || preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr) return;
+    if (makeFilesState(session_).isEmpty()) return;               // nothing to check
+    auto dialog = std::make_unique<FilesDialog>(session_);
+    auto* d = dialog.get();
+    d->onClose = [this] { close(files_); };
+    files_ = std::make_unique<Veil>(std::move(dialog), FilesDialog::width, [d] { return d->idealHeight(); });
+    addAndMakeVisible(*files_);
+    files_->setBounds(getLocalBounds());
+    if (d->isShowing()) d->grabKeyboardFocus();
 }
 
 void AppShell::askAboutTonight() {
@@ -323,7 +344,8 @@ void AppShell::raiseOverlays() {
     interrupted_.toFront(false);
     comesBack_.toFront(false);
     banner_.toFront(false);
-    for (auto* veil : {preShow_.get(), tonight_.get()})
+    outside_.toFront(false);
+    for (auto* veil : {preShow_.get(), tonight_.get(), files_.get()})
         if (veil != nullptr) veil->toFront(false);
 }
 

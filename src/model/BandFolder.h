@@ -26,6 +26,9 @@ public:
     juce::File reserveSongFolder(const juce::String& title) const;
     bool adoptSongFolder(const juce::String& songId, const juce::File& folder);   // remembers a reserved folder as the song's
     void forgetSongFolder(const juce::String& songId);                            // undoes adoptSongFolder
+    // A setlist or rig file that came in from another computer: remembers it as that document's, so it is saved there.
+    // False for another kind, a file outside setlists/ or rigs/, a document that already has one, or a file another has.
+    bool adoptFile(const DocKey&, const juce::File& file);
     juce::File audioFile(const SongDoc&, const PartDoc&) const;  // the song's folder + part.file; {} unless inside that folder
 
 private:
