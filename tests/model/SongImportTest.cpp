@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <thread>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -99,6 +101,49 @@ TEST_CASE("importing makes a song with its audio, and tidies up when it can't", 
     CHECK(root.getChildFile("songs").getNumberOfChildFiles(juce::File::findDirectories) == before);   // nothing left behind
     ImportPlan nothing; nothing.title = "Empty";
     CHECK(importSong(nothing, folder, commands, [](double) { return true; }).result.failed());
+}
+TEST_CASE("the slow part of an import runs on another thread and the song is added afterwards", "[import]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model); CommandLayer commands(model); registerCoreCommands(commands);
+    auto dir = t.dir().getChildFile("Late Song");
+    writeSine(dir.getChildFile("Keys.wav"), 44100.0, 2, 1.0, 440.0, 0.5f);
+    writeSine(dir.getChildFile("Bass.wav"), 48000.0, 1, 2.0, 110.0, 0.5f);
+    auto plan = inspectFiles({dir}, model.band());
+
+    const auto songDir = folder.reserveSongFolder(importTitle(plan));
+    REQUIRE(songDir.isDirectory());
+    CHECK(songDir == root.getChildFile("songs/Late Song"));
+    CHECK(folder.reserveSongFolder("Late Song") == root.getChildFile("songs/Late Song 2"));   // the first is taken now
+    root.getChildFile("songs/Late Song 2").deleteFile();
+    const double rate = model.band().sampleRate;
+    ConvertedSong converted;
+    std::atomic<double> progress{0.0};
+    std::thread worker([&] { converted = convertSongFiles(plan, songDir, rate, [&](double p) { progress = p; return true; }); });
+    worker.join();
+    REQUIRE(converted.result.wasOk());
+    CHECK(progress.load() == Catch::Approx(1.0));
+    CHECK(model.songIds().empty());                                // nothing in the band yet
+    CHECK(converted.song.parts.size() == 2);
+    CHECK(songDir.getChildFile("audio/Keys.wav").existsAsFile());
+
+    auto done = commitImportedSong(std::move(converted), folder, commands);
+    REQUIRE(done.result.wasOk());
+    auto* song = model.song(done.songId);
+    REQUIRE(song != nullptr);
+    CHECK(song->title == "Late Song");
+    CHECK(folder.songFolder(done.songId) == songDir);
+    CHECK(folder.audioFile(*song, song->parts[0]).existsAsFile());
+    CHECK(commands.undoName() == "song.add");
+
+    // A conversion that fails leaves nothing, and committing it adds nothing.
+    const auto other = folder.reserveSongFolder("Stopped");
+    auto stopped = convertSongFiles(plan, other, rate, [](double p) { return p < 0.3; });
+    CHECK(stopped.result.failed());
+    CHECK_FALSE(other.exists());
+    CHECK(commitImportedSong(std::move(stopped), folder, commands).result.failed());
+    CHECK(model.songIds().size() == 1);
+    CHECK(convertSongFiles(plan, songDir, rate, [](double) { return true; }).result.failed());   // never into a used folder
+    CHECK(songDir.getChildFile("audio/Keys.wav").existsAsFile());
 }
 TEST_CASE("a shared start is taken off only up to a separator", "[import]") {
     sqlive::test::TempDir t; BandDoc band; band.roles = defaultRoles();

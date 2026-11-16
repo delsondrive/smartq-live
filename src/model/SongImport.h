@@ -27,9 +27,30 @@ ImportPlan inspectFiles(const juce::Array<juce::File>& dropped, const BandDoc&);
 juce::Result convertToBandWav(const juce::File& source, const juce::File& target, double targetRate,
                               const std::function<bool(double progress)>& keepGoing);
 
+// An import is three steps, so the slow one can run on a background thread:
+//   1. BandFolder::reserveSongFolder(title), on the message thread, picks the folder;
+//   2. convertSongFiles, on any thread, writes the audio into it;
+//   3. commitImportedSong, on the message thread, adds the song to the band.
+// importSong does all three on the calling thread.
+
+// The song's title as an import names it: the plan's, trimmed, or "Untitled".
+juce::String importTitle(const ImportPlan&);
+
+// What convertSongFiles made: the song document and the folder it wrote, or why it couldn't (with nothing left behind).
+struct ConvertedSong { juce::Result result = juce::Result::ok(); SongDoc song; juce::File folder; };
+
+// Converts each kept file into songFolder/audio/ at bandRate and returns the song document for them. Touches no model
+// and no BandFolder, so it is safe on any thread. songFolder must be missing or empty; it is made if missing, and on
+// failure or cancel it is deleted with everything in it. Progress runs 0..1 across all the kept files.
+ConvertedSong convertSongFiles(const ImportPlan&, const juce::File& songFolder, double bandRate,
+                               const std::function<bool(double progress)>& keepGoing);
+
 struct ImportResult { juce::Result result = juce::Result::ok(); juce::String songId; };
-// Makes the song's folder, converts each kept file into its audio/ at the band's rate and adds the song with "song.add".
-// Progress runs 0..1 across all the kept files. On failure or cancel the folder it made is deleted and the model is unchanged.
+// Message thread. Registers the converted song's folder with the band folder and adds the song with "song.add"; if that
+// fails, or the conversion had, the folder is deleted and the model is unchanged.
+ImportResult commitImportedSong(ConvertedSong, BandFolder&, CommandLayer&);
+
+// All three steps on the calling thread, at the band's rate. On failure or cancel nothing is left and the model is unchanged.
 ImportResult importSong(const ImportPlan&, BandFolder&, CommandLayer&, const std::function<bool(double progress)>& keepGoing);
 
 }  // namespace sqlive::model

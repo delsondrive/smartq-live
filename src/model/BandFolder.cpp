@@ -35,7 +35,8 @@ std::vector<Found> dedupe(std::vector<Found> found, juce::StringArray& notes) {
     for (auto& f : found) {
         auto it = std::find_if(kept.begin(), kept.end(), [&](const Found& k) { return k.id == f.id; });
         if (it == kept.end()) kept.push_back(f);
-        else notes.add(it->place.getFullPathName() + " and " + f.place.getFullPathName() + " are the same item. Only " + it->place.getFileName() + " was loaded.");
+        else notes.add(it->place.getFullPathName() + " and " + f.place.getFullPathName() + " are the same item. Only "
+                       + it->place.getFileName() + " was loaded.");
     }
     return kept;
 }
@@ -48,7 +49,7 @@ juce::File trashTarget(const juce::File& root, const juce::File& item) {
 }
 }  // namespace
 
-BandFolder::BandFolder(juce::File r) : rootFolder(std::move(r)) {}
+BandFolder::BandFolder(juce::File r) : root_folder_(std::move(r)) {}
 
 bool BandFolder::looksLikeBandFolder(const juce::File& f) { return f.getChildFile("band.json").existsAsFile(); }
 
@@ -57,17 +58,21 @@ juce::Result BandFolder::create(const juce::File& root, const juce::String& band
     BandDoc band; band.id = newId(); band.name = bandName; band.roles = defaultRoles();
     auto rig = defaultRig(band);
     SetlistDoc setlist; setlist.id = newId(); setlist.name = "Setlist 1";
-    if (! root.getChildFile("songs").createDirectory()) return juce::Result::fail("Couldn't make the folder " + root.getFullPathName() + ".");
-    if (auto r = writeFileAtomically(root.getChildFile("rigs").getChildFile(safeFileName(rig.name) + ".json"), toJson(rig)); r.failed()) return r;
-    if (auto r = writeFileAtomically(root.getChildFile("setlists").getChildFile(safeFileName(setlist.name) + ".json"), toJson(setlist)); r.failed()) return r;
+    if (! root.getChildFile("songs").createDirectory())
+        return juce::Result::fail("Couldn't make the folder " + root.getFullPathName() + ".");
+    const auto rigFile = root.getChildFile("rigs").getChildFile(safeFileName(rig.name) + ".json");
+    if (auto r = writeFileAtomically(rigFile, toJson(rig)); r.failed()) return r;
+    const auto setlistFile = root.getChildFile("setlists").getChildFile(safeFileName(setlist.name) + ".json");
+    if (auto r = writeFileAtomically(setlistFile, toJson(setlist)); r.failed()) return r;
     return writeFileAtomically(root.getChildFile("band.json"), toJson(band));   // last, so a half-made folder isn't taken for a band
 }
 
 LoadReport BandFolder::load(BandModel& model) {
     LoadReport report;
-    places.clear(); trashed.clear();
+    model = BandModel{};   // what was in it before belongs to no folder now
+    places_.clear(); trashed_.clear();
 
-    auto bandFile = rootFolder.getChildFile("band.json");
+    auto bandFile = root_folder_.getChildFile("band.json");
     if (bandFile.existsAsFile()) {
         BandDoc band;
         if (readDoc(bandFile, band, report.notes)) { model.editBand() = std::move(band); report.bandFound = true; }
@@ -75,16 +80,19 @@ LoadReport BandFolder::load(BandModel& model) {
 
     {
         std::vector<Found> found; std::map<juce::String, SongDoc> docs;
-        for (auto& dir : rootFolder.getChildFile("songs").findChildFiles(juce::File::findDirectories, false)) {
+        for (auto& dir : root_folder_.getChildFile("songs").findChildFiles(juce::File::findDirectories, false)) {
             auto file = dir.getChildFile("song.json");
-            if (! file.existsAsFile()) { report.notes.add(dir.getFullPathName() + " has no song.json yet. It may still be syncing."); continue; }
+            if (! file.existsAsFile()) {
+                report.notes.add(dir.getFullPathName() + " has no song.json yet. It may still be syncing.");
+                continue;
+            }
             SongDoc d;
             if (! readDoc(file, d, report.notes)) continue;
             found.push_back({d.id, dir});
             docs[dir.getFullPathName()] = std::move(d);
         }
         for (auto& f : dedupe(found, report.notes)) {
-            places[{DocKind::Song, f.id}] = f.place;
+            places_[{DocKind::Song, f.id}] = f.place;
             model.putSong(std::move(docs[f.place.getFullPathName()]));
             ++report.songs;
         }
@@ -92,14 +100,14 @@ LoadReport BandFolder::load(BandModel& model) {
     auto loadFiles = [&](const char* sub, DocKind kind, auto proto, auto put, int& count) {
         using Doc = decltype(proto);
         std::vector<Found> found; std::map<juce::String, Doc> docs;
-        for (auto& file : rootFolder.getChildFile(sub).findChildFiles(juce::File::findFiles, false, "*.json")) {
+        for (auto& file : root_folder_.getChildFile(sub).findChildFiles(juce::File::findFiles, false, "*.json")) {
             Doc d;
             if (! readDoc(file, d, report.notes)) continue;
             found.push_back({d.id, file});
             docs[file.getFullPathName()] = std::move(d);
         }
         for (auto& f : dedupe(found, report.notes)) {
-            places[{kind, f.id}] = f.place;
+            places_[{kind, f.id}] = f.place;
             put(std::move(docs[f.place.getFullPathName()]));
             ++count;
         }
@@ -110,19 +118,44 @@ LoadReport BandFolder::load(BandModel& model) {
 }
 
 juce::File BandFolder::place(const DocKey& key) const {
-    auto it = places.find(key);
-    return it == places.end() ? juce::File() : it->second;
+    auto it = places_.find(key);
+    return it == places_.end() ? juce::File() : it->second;
 }
 
 juce::File BandFolder::songFolder(const juce::String& songId) const { return place({DocKind::Song, songId}); }
 
 juce::File BandFolder::assignSongFolder(const juce::String& songId, const juce::String& title) {
     if (auto existing = songFolder(songId); existing != juce::File()) return existing;
-    auto dir = uniqueChild(rootFolder.getChildFile("songs"), safeFileName(title), "");
+    auto dir = uniqueChild(root_folder_.getChildFile("songs"), safeFileName(title), "");
     dir.createDirectory();
-    places[{DocKind::Song, songId}] = dir;
+    places_[{DocKind::Song, songId}] = dir;
     return dir;
 }
+
+juce::File BandFolder::reserveSongFolder(const juce::String& title) const {
+    const auto songs = root_folder_.getChildFile("songs");
+    const auto name = safeFileName(title);
+    const auto taken = [&](const juce::File& dir) {
+        if (dir.exists()) return true;
+        for (auto& [key, place] : places_)
+            if (key.kind == DocKind::Song && place == dir) return true;
+        return false;
+    };
+    auto dir = songs.getChildFile(name);
+    for (int n = 2; taken(dir); ++n) dir = songs.getChildFile(name + " " + juce::String(n));
+    return dir.createDirectory() ? dir : juce::File();
+}
+
+bool BandFolder::adoptSongFolder(const juce::String& songId, const juce::File& folder) {
+    if (songFolder(songId) != juce::File() || ! folder.isDirectory() || folder.getParentDirectory() != root_folder_.getChildFile("songs"))
+        return false;
+    for (auto& [key, place] : places_)
+        if (key.kind == DocKind::Song && place == folder) return false;   // another song's
+    places_[{DocKind::Song, songId}] = folder;
+    return true;
+}
+
+void BandFolder::forgetSongFolder(const juce::String& songId) { places_.erase({DocKind::Song, songId}); }
 
 juce::File BandFolder::audioFile(const SongDoc& song, const PartDoc& part) const {
     // The file comes from a synced folder that anyone in the band can edit, so it may name only something inside the song's
@@ -134,44 +167,46 @@ juce::File BandFolder::audioFile(const SongDoc& song, const PartDoc& part) const
 }
 
 juce::File BandFolder::fileFor(const DocKey& key) const {
-    if (key.kind == DocKind::Band) return rootFolder.getChildFile("band.json");
+    if (key.kind == DocKind::Band) return root_folder_.getChildFile("band.json");
     auto p = place(key);
-    if (key.kind == DocKind::Song) return (p == juce::File() ? rootFolder.getChildFile("songs").getChildFile(key.id) : p).getChildFile("song.json");
+    if (key.kind == DocKind::Song)
+        return (p == juce::File() ? root_folder_.getChildFile("songs").getChildFile(key.id) : p).getChildFile("song.json");
     if (p != juce::File()) return p;
-    return rootFolder.getChildFile(key.kind == DocKind::Setlist ? "setlists" : "rigs").getChildFile(key.id + ".json");
+    return root_folder_.getChildFile(key.kind == DocKind::Setlist ? "setlists" : "rigs").getChildFile(key.id + ".json");
 }
 
 juce::Result BandFolder::moveToTrash(const DocKey& key) {
     auto p = place(key);
     if (p == juce::File() || ! p.exists()) return juce::Result::ok();
-    auto target = trashTarget(rootFolder, p);
+    auto target = trashTarget(root_folder_, p);
     target.getParentDirectory().createDirectory();
     if (! p.moveFileTo(target)) return juce::Result::fail("Couldn't move " + p.getFullPathName() + " to the trash.");
-    trashed[key] = target;
+    trashed_[key] = target;
     return juce::Result::ok();
 }
 
 juce::Result BandFolder::restoreFromTrash(const DocKey& key) {
-    auto it = trashed.find(key);
-    if (it == trashed.end()) return juce::Result::ok();
+    auto it = trashed_.find(key);
+    if (it == trashed_.end()) return juce::Result::ok();
     auto from = it->second;
-    if (! from.exists()) { trashed.erase(it); return juce::Result::ok(); }
+    if (! from.exists()) { trashed_.erase(it); return juce::Result::ok(); }
     auto to = place(key);
     if (to.exists()) {   // something else took its place meanwhile
         auto parent = to.getParentDirectory();
-        to = from.isDirectory() ? uniqueChild(parent, to.getFileName(), "") : uniqueChild(parent, to.getFileNameWithoutExtension(), to.getFileExtension());
+        to = from.isDirectory() ? uniqueChild(parent, to.getFileName(), "")
+                                : uniqueChild(parent, to.getFileNameWithoutExtension(), to.getFileExtension());
     }
     to.getParentDirectory().createDirectory();
     if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
-    places[key] = to;
-    trashed.erase(it);
+    places_[key] = to;
+    trashed_.erase(it);
     return juce::Result::ok();
 }
 
 juce::Result BandFolder::save(const DocKey& key, const BandModel& model) {
     switch (key.kind) {
         case DocKind::Band:
-            return writeFileAtomically(rootFolder.getChildFile("band.json"), toJson(model.band()));
+            return writeFileAtomically(root_folder_.getChildFile("band.json"), toJson(model.band()));
         case DocKind::Song: {
             auto* d = model.song(key.id);
             if (d == nullptr) return moveToTrash(key);
@@ -187,9 +222,9 @@ juce::Result BandFolder::save(const DocKey& key, const BandModel& model) {
             if (auto r = restoreFromTrash(key); r.failed()) return r;
             auto file = place(key);
             if (file == juce::File()) {
-                auto dir = rootFolder.getChildFile(isSetlist ? "setlists" : "rigs");
+                auto dir = root_folder_.getChildFile(isSetlist ? "setlists" : "rigs");
                 file = uniqueChild(dir, safeFileName(isSetlist ? sl->name : rg->name), ".json");
-                places[key] = file;
+                places_[key] = file;
             }
             return writeFileAtomically(file, isSetlist ? toJson(*sl) : toJson(*rg));
         }

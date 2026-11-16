@@ -192,8 +192,22 @@ juce::Result convertToBandWav(const juce::File& source, const juce::File& target
     return result;
 }
 
-ImportResult importSong(const ImportPlan& plan, BandFolder& folder, CommandLayer& commands,
-                        const std::function<bool(double progress)>& keepGoing) {
+juce::String importTitle(const ImportPlan& plan) {
+    return plan.title.trim().isNotEmpty() ? plan.title.trim() : juce::String("Untitled");
+}
+
+ConvertedSong convertSongFiles(const ImportPlan& plan, const juce::File& dir, double rate,
+                               const std::function<bool(double progress)>& keepGoing) {
+    const auto fail = [](const juce::String& why) { return ConvertedSong{juce::Result::fail(why), {}, {}}; };
+    if (dir == juce::File()) return fail("Couldn't make a folder for the song in the band folder.");
+    // Never into a folder that holds something already: on failure everything in it is deleted.
+    if (dir.exists() && (! dir.isDirectory() || dir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) > 0))
+        return fail("The folder " + dir.getFullPathName() + " is already in use.");
+    const auto giveUp = [&dir](juce::Result why) {
+        dir.deleteRecursively();
+        return ConvertedSong{why, {}, {}};
+    };
+
     std::vector<const ImportFile*> kept;
     double totalSeconds = 0.0;
     for (const auto& f : plan.files)
@@ -201,24 +215,18 @@ ImportResult importSong(const ImportPlan& plan, BandFolder& folder, CommandLayer
             kept.push_back(&f);
             totalSeconds += f.seconds;
         }
-    if (kept.empty()) return {juce::Result::fail("There is nothing to import."), {}};
+    if (kept.empty()) return giveUp(juce::Result::fail("There is nothing to import."));
 
     SongDoc song;
     song.id = newId();
-    song.title = plan.title.trim().isNotEmpty() ? plan.title.trim() : juce::String("Untitled");
+    song.title = importTitle(plan);
     song.tempo = {TempoPointDoc{}};
     song.tempo[0].bpm = 120.0;
 
-    const auto dir = folder.assignSongFolder(song.id, song.title);
-    if (! dir.isDirectory()) return {juce::Result::fail("Couldn't make a folder for the song in the band folder."), {}};
-    const auto giveUp = [&dir](juce::Result why) {
-        dir.deleteRecursively();
-        return ImportResult{why, {}};
-    };
+    if (! dir.createDirectory()) return giveUp(juce::Result::fail("Couldn't make a folder for the song in the band folder."));
     const auto audioDir = dir.getChildFile("audio");
     if (! audioDir.createDirectory()) return giveUp(juce::Result::fail("Couldn't make the song's audio folder."));
 
-    const double rate = commands.model().band().sampleRate;
     double secondsDone = 0.0;
     for (size_t i = 0; i < kept.size(); ++i) {
         const auto& f = *kept[i];
@@ -239,13 +247,35 @@ ImportResult importSong(const ImportPlan& plan, BandFolder& folder, CommandLayer
         song.parts.push_back(part);
         song.lengthSeconds = std::max(song.lengthSeconds, f.seconds);
     }
+    return {juce::Result::ok(), std::move(song), dir};
+}
 
+ImportResult commitImportedSong(ConvertedSong converted, BandFolder& folder, CommandLayer& commands) {
+    if (converted.result.failed()) {
+        if (converted.folder != juce::File()) converted.folder.deleteRecursively();
+        return {converted.result, {}};
+    }
+    const auto id = converted.song.id;
+    if (! folder.adoptSongFolder(id, converted.folder)) {
+        converted.folder.deleteRecursively();
+        return {juce::Result::fail("Couldn't add the song's folder to the band folder."), {}};
+    }
     auto* params = new juce::DynamicObject();
     juce::var holder(params);
-    params->setProperty("song", toVar(song));
+    params->setProperty("song", toVar(converted.song));
     auto added = commands.run("song.add", holder);
-    if (! added.ok) return giveUp(juce::Result::fail(added.message));
-    return {juce::Result::ok(), song.id};
+    if (! added.ok) {
+        folder.forgetSongFolder(id);
+        converted.folder.deleteRecursively();
+        return {juce::Result::fail(added.message), {}};
+    }
+    return {juce::Result::ok(), id};
+}
+
+ImportResult importSong(const ImportPlan& plan, BandFolder& folder, CommandLayer& commands,
+                        const std::function<bool(double progress)>& keepGoing) {
+    const auto dir = folder.reserveSongFolder(importTitle(plan));
+    return commitImportedSong(convertSongFiles(plan, dir, commands.model().band().sampleRate, keepGoing), folder, commands);
 }
 
 }  // namespace sqlive::model

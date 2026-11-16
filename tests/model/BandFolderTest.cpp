@@ -90,6 +90,22 @@ TEST_CASE("a half-synced folder loads what it can and says what it couldn't", "[
     CHECK_FALSE(missing.bandFound);
     CHECK_FALSE(root.getChildFile("band.json").exists());           // loading never writes
 }
+TEST_CASE("loading into a model that holds another band replaces all of it", "[folder]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandModel model;
+    SongDoc stray; stray.id = "stray"; stray.title = "From another band";
+    model.putSong(stray);
+    RigDoc rig; rig.id = "old-rig"; model.putRig(rig);
+    model.editBand().roles.push_back({"old-role", "Old", RoleKind::Part, {}, {}});
+    BandFolder folder(root);
+    auto report = folder.load(model);
+    CHECK(report.bandFound);
+    CHECK(model.song("stray") == nullptr);
+    CHECK(model.rig("old-rig") == nullptr);
+    CHECK(model.rigIds().size() == 1);
+    CHECK(model.role("old-role") == nullptr);
+    CHECK(model.band().roles.size() == 12);
+}
 TEST_CASE("a part's file is found only inside its song's folder", "[folder]") {
     sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
     BandFolder folder(root); BandModel model; folder.load(model);
