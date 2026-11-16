@@ -74,7 +74,7 @@ tests/engine/  tests/model/  tests/app/  tests/ui/
 | `sqlive_tests` | `juce_add_console_app` | `tests/**/*.cpp` + `${SQLIVE_CORE_SOURCES}` | the same, plus `Catch2::Catch2WithMain` |
 
 - `SQLIVE_CORE_SOURCES` is `src/model/*.cpp`, `src/app/*.cpp`, `src/ui/*.cpp` and the generated `BuildInfo.cpp`, globbed with `CONFIGURE_DEPENDS`. It is compiled into both the app and the tests. There is no JUCE-linked library target: Smart Q found that route compiles or links the JUCE modules wrongly.
-- JUCE modules for both: `juce_audio_utils` (brings devices, formats, basics, gui), `juce_gui_extra`. Definitions: `JUCE_ASIO=1`, `JUCE_WEB_BROWSER=0`, `JUCE_USE_CURL=0`, `JUCE_MODAL_LOOPS_PERMITTED=1`, `JUCE_DISPLAY_SPLASH_SCREEN=0`, `JUCE_APPLICATION_NAME_STRING="Smart Q Live"`.
+- JUCE modules for both: `juce_audio_utils` (brings devices, formats, basics, gui), `juce_gui_extra`. Definitions: `JUCE_ASIO=1`, `JUCE_WEB_BROWSER=0`, `JUCE_USE_CURL=0`, `JUCE_MODAL_LOOPS_PERMITTED=1`, `JUCE_APPLICATION_NAME_STRING="Smart Q Live"`.
 - App: `PRODUCT_NAME "Smart Q Live"`, `COMPANY_NAME "Smart Q"`, `BUNDLE_ID com.smartq.SmartQLive`.
 - `scripts/build.ps1` is Smart Q's script with the names changed: tests target `sqlive_tests`, test executable `build\tests\Release\sqlive_tests.exe`.
 
