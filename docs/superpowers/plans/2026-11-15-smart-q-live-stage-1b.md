@@ -123,7 +123,7 @@ git add -A && git commit -m "feat: remember this computer's band folders, rig an
 struct LoadedSong {
     juce::String songId;
     double sampleRate = 48000.0;
-    std::vector<std::shared_ptr<const engine::PartAudio>> audio;   // one per SongDoc part, in order; nullptr = couldn't be loaded
+    std::map<juce::String, std::shared_ptr<const engine::PartAudio>> audio;   // by part id; absent = couldn't be loaded
     std::vector<float> overviewMin, overviewMax;                   // 1200 points each, over the longest part, every loaded part summed
     juce::StringArray problems;                                    // "Keys: the audio file is missing."
     std::int64_t bytes = 0;
@@ -162,6 +162,7 @@ TEST_CASE("wanted songs are loaded in order and reported", "[cache]") {
     auto loaded = cache.loaded(a.id);
     REQUIRE(loaded != nullptr);
     CHECK(loaded->audio.size() == a.parts.size());
+    for (auto& part : a.parts) CHECK(loaded->audio.count(part.id) == 1);
     CHECK(loaded->overviewMax.size() == 1200);
     CHECK(*std::max_element(loaded->overviewMax.begin(), loaded->overviewMax.end()) > 0.01f);
     CHECK(loaded->problems.isEmpty());
@@ -188,7 +189,7 @@ TEST_CASE("a missing part is a problem, not a failure; no parts at all is a fail
     cache.setWanted({a, b});
     REQUIRE(cache.waitUntilIdle(20000));
     REQUIRE(cache.state(a.id) == SongCache::State::Ready);
-    CHECK(cache.loaded(a.id)->audio[0] == nullptr);
+    CHECK(cache.loaded(a.id)->audio.count(a.parts[0].id) == 0);
     CHECK(cache.loaded(a.id)->problems[0] == a.parts[0].name + ": the audio file is missing.");
     CHECK(cache.state(b.id) == SongCache::State::Failed);
     CHECK(cache.loaded(b.id) == nullptr);
@@ -201,7 +202,8 @@ TEST_CASE("a new sample rate or a forgotten song loads again", "[cache]") {
     CHECK(cache.state(a.id) != SongCache::State::Ready);
     cache.setWanted({a});  REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.loaded(a.id)->sampleRate == 44100.0);
-    CHECK(cache.loaded(a.id)->audio[0]->left.size() < first->audio[0]->left.size());
+    const auto& id0 = a.parts[0].id;
+    CHECK(cache.loaded(a.id)->audio.at(id0)->left.size() < first->audio.at(id0)->left.size());
     cache.forget(a.id);
     CHECK(cache.state(a.id) != SongCache::State::Ready);
 }
@@ -215,7 +217,8 @@ Run: `powershell -File scripts/build.ps1 -Test "[cache]"`. Expected: `app/SongCa
 
 - One background `juce::Thread` named "Smart Q Live loader". State lives behind a `juce::CriticalSection` that is never held while reading a file.
 - **Which songs are kept:** walk the wanted list in order, adding each song's `bytesInMemory`; keep the first two whatever they cost, then keep each next one while the total stays within the budget, and stop at the first that doesn't fit. Loaded songs outside that set are dropped at once. Loading follows the same order; a song whose turn is overtaken by a new `setWanted` is abandoned through `keepGoing`.
-- Problems per part, in these words: `"<part>: the audio file is missing."`, `"<part>: the audio file couldn't be read."`.
+- Problems per part, in these words: `"<part>: the audio file is missing."`, `"<part>: the audio file couldn't be read."`. `BandFolder::audioFile` returns `{}` for a part whose `file` points outside the song's folder; that is "missing" too.
+- `audio` holds each loaded part's audio under its part id, the shape `model::buildPreparedSong` takes (`audioByPartId`), so audio can never land on the wrong part when the part list changes between loading and playing.
 - The overview: for each of 1200 equal slices of the longest part, the minimum and maximum of the sum of all loaded parts (mono parts counted once, stereo parts as the mean of their sides), each part scaled by its own `gainDb`.
 - `onChanged` is delivered on the message thread through the `AsyncUpdater`, once per song whose state or progress changed.
 
@@ -399,14 +402,14 @@ Run: `powershell -File scripts/build.ps1 -Test "[session]"`. Expected: `app/Sess
 
 - [ ] **Step 3: Implement `Session`**
 
-- **Opening.** Load the folder; register the core commands; wire `commands().onChanged` to the autosaver and to a refresh. Choose the rig from `Settings::rigFor`, falling back to the first rig; the setlist from `Settings::setlistFor`, falling back to the first. Prepare the engine at 48000 with no channels until `setDevice` is called.
-- **Prepared songs.** For each setlist entry near the playhead, when the cache has it `Ready`, build a `PreparedSong` with `buildPreparedSong` and keep it with a map from part id to its index in the prepared song. Rebuild it when its song document changes.
+- **Opening.** Load the folder; register the core commands; wire `commands().onChanged` to the autosaver and to a refresh. Choose the rig from `Settings::rigFor`, falling back to the first rig; the setlist from `Settings::setlistFor`, falling back to the first. Prepare the engine with `engine.prepare(48000.0, 512)` (prepare takes no channel count; `process` renders into however many channels it is given, up to `engine::kMaxDeviceChannels`) until `setDevice` is called. With a device, `AudioHost` prepares the engine, not the session (Task 6).
+- **Prepared songs.** For each setlist entry near the playhead, when the cache has it `Ready`, build a `PreparedSong` with `buildPreparedSong(song, band, loaded->audio, rate)`: `LoadedSong::audio` is already by part id. Keep it with a map from part id to its index in the prepared song, made from each `PreparedPart::partId` (`prepared.parts[i].partId` is the part at engine index `i`; a part that was left out has no index). Rebuild it when its song document changes.
 - **What the cache is asked for,** in order: the Edit focus song (Edit mode only), the playing song, the next song, the entry before the next, then the entries after the next in order, then the remaining ones.
 - **Cueing.** Whenever the next entry, its readiness or its prepared song changes, call `engine.cue` with it, or `clearCue` when there is none or it isn't ready. The follow-on is `Stop` in song-by-song mode; in continuous mode it is the playing entry's transition.
 - **Events.** A 30 Hz timer (and `advanceWithoutDevice`) pops the engine's events and calls `collectGarbage`:
   - `Started`: the playing entry is the one whose cue had that serial (looked up by entry id, so reordering is harmless); the next entry becomes the one after it, or none.
   - `Ended`: nothing plays. The next entry stays as it is.
-  - `Stopped`: nothing plays, and the next entry becomes the one that was playing, if it is still in the setlist.
+  - `Stopped`: nothing plays, and the next entry becomes the one that was playing, if it is still in the setlist. A `Stopped` with `inGap` set came during a gap: the song it names had already ended and the next entry is already the one after it, so the next entry is left alone.
 - **Indices.** Keep entry ids, not indices; work the indices out when asked. If the next entry is removed, the entry now in its place takes over, or the last one, or none.
 - **Position.** `now()` reads `engine.status()` and converts `songTime` with the playing song's tempo map. When nothing plays it describes the next song at bar 1.
 - `perform(Action::Start)` does nothing unless the engine is stopped and the next song is `Ready`.
@@ -714,6 +717,7 @@ public:
     void setTestTone(int channel);                                // -1 = off; a 440 Hz sine at -20 dB on that channel
     std::function<void()> onChanged;                              // message thread
     void renderBlock(float* const* out, int numChannels, int frames) noexcept;   // what the callback does; public for tests
+    void deviceStarting(double sampleRate, int bufferSize);       // what audioDeviceAboutToStart does on its own thread: engine.prepare
     void deviceLost();  void deviceBack(double sampleRate, int outputChannels);  // what the device callbacks lead to; public for tests
 };
 // Added to Session:
@@ -750,7 +754,7 @@ TEST_CASE("losing the interface pauses the show and nothing restarts by itself",
     CHECK(now.interrupted);  CHECK_FALSE(now.playing);
     CHECK(now.nextIndex == 0);                                    // the interrupted song is selected again
     CHECK(now.bar == bar);                                        // and the screen can still say where it stopped
-    host.deviceBack(48000.0, 2);
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);   // as the device coming back would
     CHECK_FALSE(host.isLost());
     d.session->advanceWithoutDevice(48000);
     CHECK_FALSE(d.session->now().playing);                        // it waits for the drummer
@@ -763,6 +767,8 @@ TEST_CASE("an interface that comes back different is taken as it is", "[audiohos
     DemoSession d; app::AudioHost host(*d.session);
     d.session->perform(Action::Start);  d.session->advanceWithoutDevice(4800);
     host.deviceLost();
+    host.deviceStarting(44100.0, 512);                            // the engine is prepared at the new rate before any block
+    CHECK(d.session->engine().status().state == engine::PlayState::Stopped);
     host.deviceBack(44100.0, 8);
     d.settle();
     CHECK(d.session->sampleRate() == 44100.0);  CHECK(d.session->outputChannels() == 8);
@@ -789,9 +795,9 @@ Run: `powershell -File scripts/build.ps1 -Test "[audiohost]"`. Expected: `app/Au
 
 - It owns a `juce::AudioDeviceManager`. `open` sets the device type and an `AudioDeviceSetup` with the output device name, sample rate, buffer size, no input, and every output channel active. On success it calls `Session::setDevice(rate, channels)` and `onChanged`.
 - `audioDeviceIOCallbackWithContext` calls `renderBlock`, which calls `Engine::process` and then adds the test tone.
-- `audioDeviceAboutToStart` calls `deviceBack` on the message thread with the device's rate and active output count. `audioDeviceStopped` and `audioDeviceError`, when not caused by `close`, call `deviceLost` on the message thread.
+- `audioDeviceAboutToStart`, on every start, first calls `deviceStarting(rate, block)` right there, synchronously: it calls `engine.prepare(rate, block)` before the first callback, while `process` cannot run (that is the only time `Engine::prepare` may be called; see `Engine.h`). So a device that comes back always starts stopped and silent, at its own rate. Then it calls `deviceBack` on the message thread with the device's rate and active output count. `audioDeviceStopped` and `audioDeviceError`, when not caused by `close`, call `deviceLost` on the message thread.
 - `deviceLost` marks it lost, calls `Session::audioInterrupted`, and starts a 2 s timer that tries `open` with the last choice until it works. `deviceBack` clears the flag and calls `Session::setDevice`.
-- `Session::audioInterrupted`: remember the bar and beat, stop the engine, set `interrupted`, and make the interrupted entry the next one. While `interrupted`, `now()` reports the remembered bar. `Start`, `chooseNext` and the arrow actions clear it. `Session::setDevice` with a new rate calls `SongCache::setSampleRate` and `Engine::prepare` (the engine is stopped at that point), and always rebuilds the mix.
+- `Session::audioInterrupted`: remember the bar and beat, stop the engine, set `interrupted`, and make the interrupted entry the next one. While `interrupted`, `now()` reports the remembered bar. `Start`, `chooseNext` and the arrow actions clear it. `Session::setDevice` never calls `Engine::prepare` (the host already has): with a new rate it calls `SongCache::setSampleRate`; it always rebuilds the mix; and it cues the next entry again. `prepare` at a new rate dropped the old cue, and `start` ignores a song made for another rate, so nothing made for the old rate can play.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1299,7 +1305,7 @@ git add -A && git commit -m "feat: add the Setlists page" && git push origin mai
 - Test: `tests/ui/NewSongDialogTest.cpp`
 
 **Interfaces:**
-- Consumes: `model::inspectFiles`, `importSong`, `ImportPlan`.
+- Consumes: `model::inspectFiles`, `ImportPlan`, `importTitle`, `BandFolder::reserveSongFolder`, `convertSongFiles`, `ConvertedSong`, `commitImportedSong`. (Not `importSong`: it does everything on the calling thread.)
 - Produces:
 
 ```cpp
@@ -1312,7 +1318,7 @@ struct NewSongState {
 NewSongState makeNewSongState(const model::ImportPlan&, const Session&);
 class NewSongDialog : public juce::Component { public: NewSongDialog(Session&, juce::Array<juce::File> dropped);
     const model::ImportPlan& plan() const;  void setRole(int row, const juce::String& roleId);  void setLeftOut(int row, bool);  void setTitle(const juce::String&);
-    void create();                                                // runs the import on a background thread with a progress bar
+    void create();                                                // converts on a background thread with a progress bar, then commits
     std::function<void(juce::String songId)> onCreated;  std::function<void()> onCancelled; … };
 ```
 
@@ -1358,6 +1364,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[newsong]"`. Expected: `ui/NewSo
 - The table: FILE, PREVIEW (a small waveform drawn from a quick scan of the file), ROLE (a `Choice` of the band's part roles, plus "Choose a role…" in `caution` when empty, plus "Leave out" at the end), HEARD IN (from the current rig: count the outputs whose mix has that role: "PA and <n> in-ears" when a FOH output is among them, "<n> in-ears" otherwise, "nowhere yet" for none), and the mark. A click file shows "Leave out" and "The app makes its own click". A file with a problem shows the problem in `danger`.
 - The right-hand panel is left out in this stage (it shows what came from a MIDI file, which stage 2 adds). In its place, under the table: "Tempo and sections are set in the Song editor after this."
 - Footer: a tick box "Add this song to “<current setlist>”" (on by default), the `waiting` text in `caution`, "Cancel", and "Create song" (primary; enabled when `canCreate`). While importing: a progress bar and "Cancel"; a failure shows its reason and leaves the dialog open.
+- **Creating runs in three steps,** because the model and the band folder belong to the message thread. On the message thread, `create` takes a copy of the plan and calls `s.folder().reserveSongFolder(model::importTitle(plan))`. A background thread (a `juce::Thread` the dialog owns, stopped and joined in its destructor) runs `model::convertSongFiles(plan, folder, bandRate, keepGoing)`, where `keepGoing` posts the progress to the message thread and returns false once Cancel is pressed; it touches neither the model nor the `BandFolder`. When it finishes it posts the `ConvertedSong` back, and on the message thread `model::commitImportedSong(std::move(converted), s.folder(), s.commands())` registers the folder and runs `song.add` (a failure or a cancel has already deleted the folder; the commit deletes it if `song.add` fails).
 - After creating: when the tick box is on, run `setlist.addSong`; then `onCreated`. `MainWindow` opens the new song in the Song editor.
 - **A song too big for this computer** is said here, not on stage: when the kept files would take more than half of the cache's budget in memory, the footer shows in `caution`: "This song needs <x> GB of memory. This computer keeps <y> GB for songs, so it may load slowly or not at all." The song can still be created.
 
