@@ -4,6 +4,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "app/ControlInput.h"
 #include "app/Session.h"
 #include "app/ShowController.h"
 #include "ui/AppShell.h"
@@ -21,7 +22,8 @@ bool mayCloseNow(const app::Session&);
 bool keyboardElsewhere(bool inShow, bool active, int modalCount);
 
 // The app's window: a native title bar, resizable down to 1100 x 680, opening at 1280 x 800 in the middle of the screen,
-// with an AppShell as its content. It owns the ShowController and wires it and every page in (plugInPages).
+// with an AppShell as its content. It owns the ShowController and the app's one ControlInput (every MIDI input, so a learned
+// pedal works whichever window has the keyboard), and wires them and every page in (plugInPages).
 //
 // In Show mode the ShowController listens to the keys, the window takes kiosk mode (when allowed) and the screen saver is
 // off; leaving Show mode undoes all three. Whenever the window stops being active the controller forgets every held key,
@@ -39,6 +41,7 @@ public:
     void setKioskAllowed(bool);                                   // allowed unless told otherwise
     AppShell& shell() { return shell_; }
     app::ShowController& showController() { return controller_; }
+    app::ControlInput& controlInput() { return controlInput_; }   // the app's one: every MIDI input, for learned pedals
 
     std::function<void()> onClose;                                // the close button, unless a song plays in Show mode
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
@@ -53,6 +56,7 @@ private:
 
     app::Session& session_;
     app::ShowController controller_;
+    app::ControlInput controlInput_;                              // after controller_, which it presses
     AppShell shell_;
     juce::TooltipWindow tooltips_;
     bool inShow_ = false, kioskAllowed_ = true, kiosk_ = false;

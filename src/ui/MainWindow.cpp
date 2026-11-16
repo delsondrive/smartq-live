@@ -11,6 +11,7 @@ MainWindow::MainWindow(app::Session& session, app::AudioHost* host)
     : juce::DocumentWindow("Smart Q Live", theme::bg1, juce::DocumentWindow::allButtons),
       session_(session),
       controller_(session),
+      controlInput_(session, controller_),
       shell_(session, host),
       tooltips_(nullptr, 600) {
     shell_.setShowController(&controller_);
