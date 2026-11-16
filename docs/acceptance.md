@@ -41,7 +41,7 @@ Not built yet, so do not look for them: MIDI for pedalboards, sections, spoken c
 - [ ] Turn **Test tone** off. The tone stops at once.
 - [ ] Click **Done**. You are back where you came from.
 - [ ] Quit the app and start it again. It remembers your interface, your sample rate and your buffer.
-- [ ] Start it with the interface unplugged. It opens and does not crash. Click **SHOW**: the check says **Choose one in Setup, or plug yours in.**, and in Show mode the pill at the top says **No audio**. Plug the interface in and choose it in Setup. It works.
+- [ ] Start it with the interface unplugged. It opens and does not crash. Click **SHOW**: the check says **Choose one in Setup, or plug yours in.** and the check blocks the show. Plug the interface in and choose it in Setup. It works.
 
 ## 2. Adding a song
 
@@ -167,7 +167,7 @@ Show mode never changes the band folder. A fader you move in a show is for tonig
 - [ ] Leave Show mode. It asks **Keep tonight's level changes?** and says **1 level was changed during the show.** Click **Keep them**. The new level is saved in the band folder and is no longer amber.
 - [ ] Do it again, changing two levels. It says **2 levels were changed during the show.** Click **Drop them**. The levels go back to the band folder's, and the amber goes.
 - [ ] Change two levels, leave Show mode and click **Keep them**. Click **Undo**. Both levels go back together in one step, and they are not amber again.
-- [ ] Change a level, then close the app with the song stopped and start it again. In Edit mode the question about tonight's changes is still there, with **Show mode never changes the band folder. Choose after the show.** Answer it.
+- [ ] Change a level, then close the app with the song stopped and start it again. In Edit mode the question about tonight's changes is still there. Answer it.
 - [ ] Change nothing and leave Show mode. It does not ask.
 
 ## 9. Things going wrong
@@ -184,7 +184,7 @@ Do each of these on purpose, to see that the app does the safe thing.
 - [ ] Change the sample rate or the buffer size in the interface's own control panel, with a song loaded. The app copes. If it cannot use the new setting, it tells you and does not crash. After it comes back, songs play at the right speed and pitch. **(by ear)**
 - [ ] Unplug the interface and plug it back in at a different sample rate. Songs play at the right speed and pitch. **(by ear)**
 - [ ] Unplug the interface and leave it out, so Windows moves to its default device (the laptop's speakers). The app does not play through that device. It stays on the red banner, and nothing plays until your interface is back.
-- [ ] In Edit mode, unplug the interface during a song. There is no banner. The song stops. (The status pills only show in Show mode, so go into Show mode afterwards: the pill is red **Audio lost** until the interface is back, then mint **Audio**.) Nothing plays by itself when the interface comes back.
+- [ ] In Edit mode, unplug the interface during a song. There is no banner. The song stops. Nothing on screen shows the loss yet in Edit mode (the status pill can only be seen if you were already in Show mode when the interface went). Write down what you see. Nothing plays by itself when the interface comes back.
 
 **The window and the keyboard**
 
