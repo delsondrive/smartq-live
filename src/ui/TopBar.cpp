@@ -127,7 +127,8 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
     if (host != nullptr && host->isLost()) t.pills.push_back({"Audio lost", Level::Bad});
     else if (host != nullptr && host->isOpen()) t.pills.push_back({"Audio", Level::Ok});
     else t.pills.push_back({"No audio", Level::Bad});
-    // MIDI: how many devices are connected, or which is missing; nothing without devices or ports (tests, screenshots).
+    // MIDI: how many devices are connected, which is missing, or that none has a port here; nothing without devices or
+    // ports (tests, screenshots).
     if (const auto* ports = session.midi(); ports != nullptr && !session.model().band().midiDevices.empty()) {
         const auto missing = ports->missingDeviceNames();
         if (!missing.isEmpty()) {
@@ -135,6 +136,8 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
             t.pills.push_back({"MIDI: " + who + " missing", Level::Warning, true});
         } else if (const int connected = ports->connectedCount(); connected > 0) {
             t.pills.push_back({"MIDI " + juce::String(connected), Level::Ok});
+        } else {
+            t.pills.push_back({"MIDI: not connected", Level::Warning, true});   // no device has a port on this computer
         }
     }
     // The conflict copies are the list the session keeps from its last look at the band folder: nothing here scans.
@@ -403,7 +406,7 @@ void TopBar::layout() {
     }
     undo_->setVisible(edit);
     // Show mode: the status pills, right to left before the switch. Edit mode: only what needs a look, right to left before
-    // Undo: the audio pill when audio isn't OK, the MIDI pill when a device is missing (editToo), and "Check files", where a
+    // Undo: the audio pill when audio isn't OK, the MIDI pill when it is a Warning (editToo), and "Check files", where a
     // click opens the files dialog (in Show mode it only says so: nothing there may change the band folder).
     const bool showPills = !edit;
     checkFiles_ = {};

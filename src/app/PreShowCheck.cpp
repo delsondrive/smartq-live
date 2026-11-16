@@ -41,18 +41,21 @@ void addRouting(std::vector<CheckItem>& items, const Session& session, const Che
         items.push_back(item(p.blocksShow ? Level::Blocker : Level::Warning, "routing", "Routing", p.message));
 }
 
-// Each device bound to a port here that isn't found, or one line saying they all are; nothing without devices or ports.
+// Each device bound to a port here that isn't found; a warning when no device has a port here; else one line saying they
+// are connected. Nothing without devices or ports.
 void addMidi(std::vector<CheckItem>& items, const Session& session) {
     const auto* ports = session.midi();
     if (ports == nullptr || session.model().band().midiDevices.empty()) return;
     const auto missing = ports->missingDeviceNames();
-    if (missing.isEmpty()) {
-        items.push_back(item(Level::Ok, "midi", "Pedalboards", juce::String(ports->connectedCount()) + " connected"));
-        return;
-    }
     for (const auto& name : missing)
         items.push_back(item(Level::Warning, "midi", name + " isn't connected",
-                             "Its MIDI port wasn't found. Plug it in, or go on without it."));
+                             "its MIDI port wasn't found. Plug it in, or go on without it."));
+    if (!missing.isEmpty()) return;
+    if (const int connected = ports->connectedCount(); connected > 0)
+        items.push_back(item(Level::Ok, "midi", "Pedalboards", juce::String(connected) + " connected"));
+    else
+        items.push_back(item(Level::Warning, "midi", juce::String::fromUTF8("Pedalboards \xc2\xb7 not connected"),
+                             "No pedalboard has a MIDI port on this laptop. Choose them in Setup, or go on without them."));
 }
 
 void addFiles(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {

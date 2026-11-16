@@ -25,12 +25,17 @@ using sqlive::test::params;
 using sqlive::test::pc;
 
 namespace {
-// This computer's MIDI outputs, as a test says they are: never a real port.
-struct FakePorts { juce::StringArray present; std::map<juce::String, std::vector<std::vector<std::uint8_t>>> sent;
+// This computer's MIDI outputs, as a test says they are: never a real port. A port in `refused` is listed but can't be
+// opened (another program holds it); `ids` gives a port's system identifier (its name when it has none).
+struct FakePorts { juce::StringArray present, refused; std::map<juce::String, juce::String> ids; std::map<juce::String, int> opens, closes;
+    std::map<juce::String, std::vector<std::vector<std::uint8_t>>> sent;
     MidiPorts::Lister lister() { return [this] { return present; }; }
+    MidiPorts::Lister identifiers() { return [this] { juce::StringArray out; for (auto& n : present) out.add(ids.count(n) > 0 ? ids[n] : n); return out; }; }
     MidiPorts::Opener opener() { return [this](const juce::String& name) -> std::unique_ptr<MidiPorts::Output> {
-        if (!present.contains(name)) return nullptr;
-        struct Out : MidiPorts::Output { FakePorts& f; juce::String n; Out(FakePorts& ff, juce::String nn) : f(ff), n(nn) {} void send(const std::uint8_t* b, int s) override { f.sent[n].emplace_back(b, b + s); } };
+        if (!present.contains(name) || refused.contains(name)) return nullptr;
+        ++opens[name];
+        struct Out : MidiPorts::Output { FakePorts& f; juce::String n; Out(FakePorts& ff, juce::String nn) : f(ff), n(nn) {} ~Out() override { ++f.closes[n]; }
+                                         void send(const std::uint8_t* b, int s) override { f.sent[n].emplace_back(b, b + s); } };
         return std::make_unique<Out>(*this, name); }; } };
 }
 TEST_CASE("devices are bound to this computer's ports by the rig", "[ports]") {
@@ -73,6 +78,9 @@ TEST_CASE("a port that comes back is sent its device's current patch", "[ports]"
     s.advanceWithoutDevice(512);
     REQUIRE(s.engine().popMidi(m));                                 // the engine was asked to say it again
     CHECK(m.data[0] == 0xC0);
+    CHECK(m.serial == s.engine().status().playingSerial);  CHECK(m.device == 0);
+    fake.sent.clear();  ports.send(m);                             // and the dispatcher sends it to the port that came back
+    REQUIRE(fake.sent["Port A"].size() == 1);  CHECK(fake.sent["Port A"][0] == std::vector<std::uint8_t>{0xC0, 0});
     auto midiItem = [&] {
         auto items = app::runPreShowCheck(s, {true, "Test", 48000.0, 512, 2, {}});
         auto found = std::find_if(items.begin(), items.end(), [](auto& i) { return i.id == "midi"; });
@@ -84,6 +92,7 @@ TEST_CASE("a port that comes back is sent its device's current patch", "[ports]"
     auto missing = midiItem();
     REQUIRE(missing.has_value());
     CHECK(missing->level == app::CheckItem::Level::Warning);  CHECK(missing->title == "Guitar 1 isn't connected");
+    CHECK(missing->detail == "its MIDI port wasn't found. Plug it in, or go on without it.");
     s.attachMidi(nullptr);
     CHECK_FALSE(midiItem().has_value());                            // no ports attached (tests, screenshots): no MIDI line
 }
@@ -163,4 +172,81 @@ TEST_CASE("a song that has played keeps its ports for its last messages, however
     CHECK(fake.sent["Port A"][1] == std::vector<std::uint8_t>{0x80, 60, 0});
     m.serial = 3;  ports.send(m);                                   // a cue that never played, long replaced: let go of
     CHECK(fake.sent["Port A"].size() == 2);
+}
+TEST_CASE("a port that comes back while a song plays in another device order is sent its patch by that song's order", "[ports]") {
+    DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A", "Port C"};
+    auto here = s.settings().computerName();  auto song = d.setlist().entries[0].songId;
+    auto lights = s.commands().run("device.add", params({{"name", "Lights"}})).value.toString();
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", lights}, {"computerId", here}, {"port", "Port C"}}));
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", here}, {"port", "Port A"}}));
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 1}, {"beat", 1}, {"messages", messages({pc(7)})}}));
+    d.settle();
+    app::MidiPorts ports(s, fake.lister(), fake.opener());  s.attachMidi(&ports);  ports.refresh();
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 4);
+    s.commands().run("device.remove", params({{"deviceId", lights}}));  ports.refresh();   // Guitar 1 is now the band's first
+    fake.present = {"Port C"};  ports.refresh();                    // unplugged
+    engine::OutMidi m; while (s.engine().popMidi(m)) {}
+    fake.present = {"Port A", "Port C"};  ports.refresh();          // and back
+    s.advanceWithoutDevice(512);
+    REQUIRE(s.engine().popMidi(m));
+    CHECK(m.serial == s.engine().status().playingSerial);
+    CHECK(m.device == 1);                                           // its place in the playing song, not in the band now
+    fake.sent.clear();  ports.send(m);
+    REQUIRE(fake.sent["Port A"].size() == 1);  CHECK(fake.sent["Port A"][0] == std::vector<std::uint8_t>{0xC0, 7});
+    CHECK(fake.sent["Port C"].empty());
+}
+TEST_CASE("a port another program held is opened once it is free, and one unplugged and back between two looks is opened again", "[ports]") {
+    DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};  fake.refused = {"Port A"};  fake.ids["Port A"] = "usb-1";
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", s.settings().computerName()}, {"port", "Port A"}}));
+    app::MidiPorts ports(s, fake.lister(), fake.opener(), fake.identifiers());  ports.refresh();
+    CHECK(ports.status(g1) == MidiPorts::Status::NotFound);         // listed, but another program has it
+    fake.refused.clear();                                           // it lets go: nothing in the list changes
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(1300);   // the 1 s look
+    CHECK(ports.status(g1) == MidiPorts::Status::Connected);  CHECK(fake.opens["Port A"] == 1);
+    fake.ids["Port A"] = "usb-2";                                   // unplugged and back between two looks: the same name, a new port
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(1300);
+    CHECK(fake.opens["Port A"] == 2);  CHECK(fake.closes["Port A"] == 1);  CHECK(ports.status(g1) == MidiPorts::Status::Connected);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(1300);
+    CHECK(fake.opens["Port A"] == 2);                               // nothing changed since: left open
+}
+TEST_CASE("devices with no port on this computer are said to be not connected", "[ports]") {
+    DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};
+    sqlive::test::ScopedLook look;
+    s.commands().run("device.add", params({{"name", "Guitar 1"}}));
+    app::MidiPorts ports(s, fake.lister(), fake.opener());  s.attachMidi(&ports);  ports.refresh();
+    auto items = app::runPreShowCheck(s, {true, "Test", 48000.0, 512, 2, {}});
+    auto item = std::find_if(items.begin(), items.end(), [](auto& i) { return i.id == "midi"; });
+    REQUIRE(item != items.end());
+    CHECK(item->level == app::CheckItem::Level::Warning);  CHECK(item->title == juce::String::fromUTF8("Pedalboards \xc2\xb7 not connected"));
+    CHECK(item->detail == "No pedalboard has a MIDI port on this laptop. Choose them in Setup, or go on without them.");
+    for (auto mode : {Mode::Edit, Mode::Show}) {
+        if (mode == Mode::Show) s.enterShow();
+        auto state = ui::makeTopBarState(s, nullptr, nullptr, ui::Page::Setup);
+        auto pill = std::find_if(state.pills.begin(), state.pills.end(), [](auto& p) { return p.text.startsWith("MIDI"); });
+        REQUIRE(pill != state.pills.end());
+        CHECK(pill->text == "MIDI: not connected");  CHECK(pill->level == ui::StatusPill::Level::Warning);  CHECK(pill->editToo);
+        ui::TopBar bar(s);  bar.setBounds(0, 0, 1280, 62);  bar.setState(state);
+        bool drawn = false;
+        for (auto* child : bar.getChildren())
+            if (auto* p = dynamic_cast<ui::StatusPill*>(child); p != nullptr && p->isVisible() && p->text() == "MIDI: not connected") drawn = true;
+        CHECK(drawn);
+    }
+}
+TEST_CASE("a song that played keeps its ports for its last messages, even when none was sent before it stopped", "[ports]") {
+    DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", s.settings().computerName()}, {"port", "Port A"}}));
+    d.settle();
+    app::MidiPorts ports(s, fake.lister(), fake.opener());  s.attachMidi(&ports);  ports.refresh();
+    s.perform(Action::Start);  s.advanceWithoutDevice(512);
+    const auto played = s.engine().status().playingSerial;
+    REQUIRE(played != 0);
+    s.perform(Action::Stop);  s.advanceWithoutDevice(48000);         // stopped; its 0xFC is still held (a device restarting)
+    REQUIRE(s.engine().status().playingSerial == 0);
+    for (std::uint64_t k = 1; k <= 40; ++k) ports.noteSong(played + 100 + k, {g1.toStdString()});   // the next song, cued again and again
+    engine::OutMidi m; m.serial = played; m.device = 0; m.size = 1; m.data[0] = 0xFC;
+    ports.send(m);
+    REQUIRE(fake.sent["Port A"].size() == 1);
 }

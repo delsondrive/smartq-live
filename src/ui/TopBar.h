@@ -44,8 +44,8 @@ juce::String pageName(Page);
 // The top bar, 62 px high. Edit mode: logo, the four tabs, a gap, "↶ Undo", the EDIT/SHOW switch. Show mode, main view:
 // logo, clock, chips, beat lights, the transport (⏮ ▶ ⏭), status pills, the switch. Show mode, stage view: logo, a gap,
 // pills, the switch. Clicking the logo in Edit mode opens the About panel. In Edit mode only the pills that need a look sit
-// before Undo: the audio pill when audio isn't OK ("No audio", "Audio lost"), the MIDI pill when a device is missing, and
-// "Check files", when there is one, where a click calls onCheckFiles.
+// before Undo: the audio pill when audio isn't OK ("No audio", "Audio lost"), the MIDI pill when a device is missing or
+// none has a port here, and "Check files", when there is one, where a click calls onCheckFiles.
 class TopBar : public juce::Component, private juce::Timer {
 public:
     static constexpr int height = 62;

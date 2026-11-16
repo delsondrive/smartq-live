@@ -191,6 +191,7 @@ void Session::attachMidi(MidiPorts* ports) {
     for (const auto& [serial, cue] : recent_cues_) noteMidi(serial, cue.prepared);
     noteMidi(cue_.serial, cue_.prepared);
     noteMidi(playing_.serial, playing_.prepared);
+    if (midi_ != nullptr && playing_.serial != 0) midi_->notePlaying(playing_.serial);
 }
 
 MidiPorts* Session::midi() const { return midi_; }
@@ -888,6 +889,7 @@ bool Session::handleEngineEvents() {
     // A safety net: the engine plays a song whose start no event told of. Whatever it plays is reported as playing.
     if (!knowsWhatPlays(status)) {
         last_started_serial_ = std::max(last_started_serial_, status.playingSerial);
+        if (midi_ != nullptr) midi_->notePlaying(status.playingSerial);
         adoptPlaying(status.playingSerial, status.streamTime, nullptr);
         any = true;
     }
@@ -969,6 +971,7 @@ void Session::handleEvent(const engine::EngineEvent& event) {
     using Type = engine::EngineEvent::Type;
     switch (event.type) {
     case Type::Started: {
+        if (midi_ != nullptr) midi_->notePlaying(event.serial);   // its last messages keep their ports
         last_started_serial_ = std::max(last_started_serial_, event.serial);
         const Cue taken = cue_;
         if (cue_.serial != 0 && cue_.serial <= event.serial) cue_ = {};   // taken to play, or replaced by a later cue that was

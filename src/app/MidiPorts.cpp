@@ -14,7 +14,7 @@ namespace {
 
 constexpr int kListMs = 1000;                         // how often the list of outputs is looked at
 constexpr std::size_t kNewestSongs = 8;               // the newest songs noted are kept
-constexpr std::size_t kSentSongs = 4;                 // and the newest that have sent something, for their last messages
+constexpr std::size_t kPlayedSongs = 4;               // and the newest that played, for their last messages
 
 // A real output: what juce::MidiOutput opened, sent to at once.
 class RealOutput : public MidiPorts::Output {
@@ -30,6 +30,12 @@ juce::StringArray listOutputs() {
     juce::StringArray names;
     for (const auto& device : juce::MidiOutput::getAvailableDevices()) names.add(device.name);
     return names;
+}
+
+juce::StringArray listIdentifiers() {
+    juce::StringArray ids;
+    for (const auto& device : juce::MidiOutput::getAvailableDevices()) ids.add(device.identifier);
+    return ids;
 }
 
 std::unique_ptr<MidiPorts::Output> openOutput(const juce::String& name) {
@@ -55,10 +61,12 @@ juce::String portOf(const model::ComputerBinding* here, const juce::String& devi
 
 }  // namespace
 
-MidiPorts::MidiPorts(Session& session) : MidiPorts(session, listOutputs, openOutput) {}
+MidiPorts::MidiPorts(Session& session) : MidiPorts(session, listOutputs, openOutput, listIdentifiers) {}
 
-MidiPorts::MidiPorts(Session& session, Lister lister, Opener opener)
-    : session_(session), lister_(std::move(lister)), opener_(std::move(opener)) {
+MidiPorts::MidiPorts(Session& session, Lister lister, Opener opener) : MidiPorts(session, std::move(lister), std::move(opener), {}) {}
+
+MidiPorts::MidiPorts(Session& session, Lister lister, Opener opener, Lister identifiers)
+    : session_(session), lister_(std::move(lister)), opener_(std::move(opener)), identifiers_(std::move(identifiers)) {
     session_.changes().addChangeListener(this);
     refresh();
     startTimer(kListMs);
@@ -113,37 +121,61 @@ bool MidiPorts::bindingsChanged() const {
     return false;
 }
 
+juce::StringArray MidiPorts::identifiersOf(const juce::StringArray& names) const {
+    if (!identifiers_) return names;
+    auto ids = identifiers_();
+    return ids.size() == names.size() ? ids : names;  // listed between two enumerations: the next look sees it settled
+}
+
+bool MidiPorts::needsALook(const juce::StringArray& names, const juce::StringArray& ids) const {
+    if (names != listed_ || ids != listedIds_) return true;
+    // A port that is listed but couldn't be opened (another program held it) is tried again.
+    for (const auto& d : devices_)
+        if (d.status == Status::NotFound && names.contains(d.port)) return true;
+    return false;
+}
+
 void MidiPorts::refresh() {
     const auto listedBefore = listed_;
     listed_ = lister_();
+    listedIds_ = identifiersOf(listed_);
     auto next = bindings();
 
-    // The ports wanted: bound to a device here, and in the list. One already open stays open; one no longer wanted closes.
-    std::set<juce::String> wanted;
+    // The ports wanted: bound to a device here, and in the list, with their identifiers now. One already open on the same
+    // identifier stays open; one no longer wanted closes; one whose identifier changed (unplugged and back between two
+    // looks) is opened again, and so is one that couldn't be opened last time.
+    std::map<juce::String, juce::String> wanted;
     for (const auto& d : next)
-        if (d.port.isNotEmpty() && listed_.contains(d.port)) wanted.insert(d.port);
-    std::map<juce::String, std::unique_ptr<Output>> opened;
-    for (const auto& port : wanted)
-        if (open_.count(port) == 0)
-            if (auto out = opener_(port)) opened.emplace(port, std::move(out));   // opening can be slow: not under the lock
+        if (const int at = listed_.indexOf(d.port); d.port.isNotEmpty() && at >= 0) wanted[d.port] = listedIds_[at];
+    const auto current = [&](const juce::String& port) {
+        const auto open = open_.find(port);
+        const auto want = wanted.find(port);
+        return open != open_.end() && want != wanted.end() && open->second.id == want->second;
+    };
+    std::map<juce::String, OpenPort> opened;
+    for (const auto& [port, id] : wanted)
+        if (!current(port))
+            if (auto out = opener_(port)) opened[port] = {id, std::move(out)};   // opening can be slow: not under the lock
 
     for (auto& d : next) {
-        const bool isOpen = wanted.count(d.port) > 0 && (opened.count(d.port) > 0 || open_.count(d.port) > 0);
-        d.status = d.port.isEmpty() ? Status::NoPort : isOpen ? Status::Connected : Status::NotFound;
+        const bool connected = current(d.port) || opened.count(d.port) > 0;
+        d.status = d.port.isEmpty() ? Status::NoPort : connected ? Status::Connected : Status::NotFound;
     }
 
-    // Devices that were not found and are back: told the state the playing song puts them in now, once their tables are in.
+    // Devices that were not found, or whose port was opened again, and are connected now: told the state the playing song
+    // puts them in now, once their tables are in.
     juce::StringArray back;
     for (const auto& d : next)
-        if (d.status == Status::Connected && status(d.id) == Status::NotFound) back.add(d.id);
+        if (d.status == Status::Connected && (status(d.id) == Status::NotFound || (opened.count(d.port) > 0 && open_.count(d.port) > 0)))
+            back.add(d.id);
     const auto same = [](const Device& a, const Device& b) { return a.id == b.id && a.name == b.name && a.status == b.status; };
     const bool changed = listed_ != listedBefore || !std::equal(next.begin(), next.end(), devices_.begin(), devices_.end(), same);
 
-    std::map<juce::String, std::unique_ptr<Output>> closing;
+    std::map<juce::String, OpenPort> closing;
     {
         const juce::ScopedLock sl(lock_);
         for (auto it = open_.begin(); it != open_.end();) {
-            if (wanted.count(it->first) > 0) { ++it; continue; }
+            if (current(it->first)) { ++it; continue; }
             auto gone = std::next(it);
             closing.insert(open_.extract(it));
             it = gone;
@@ -169,7 +201,7 @@ MidiPorts::Output* MidiPorts::outputFor(const juce::String& deviceId) const {
         if (device.id != deviceId) continue;
         if (device.status != Status::Connected) return nullptr;
         const auto found = open_.find(device.port);
-        return found != open_.end() ? found->second.get() : nullptr;
+        return found != open_.end() ? found->second.out.get() : nullptr;
     }
     return nullptr;
 }
@@ -180,7 +212,8 @@ void MidiPorts::fillTable(Table& table) const {
 }
 
 void MidiPorts::timerCallback() {
-    if (lister_() != listed_) refresh();
+    const auto names = lister_();
+    if (needsALook(names, identifiersOf(names))) refresh();
 }
 
 void MidiPorts::changeListenerCallback(juce::ChangeBroadcaster*) {
@@ -206,18 +239,18 @@ void MidiPorts::noteSong(std::uint64_t serial, const std::vector<std::string>& d
         } else {
             songs_.merge(added);
         }
-        // The newest songs, the newest that have sent something (their last note-offs and 0xFC may still be on their way),
+        // The newest songs, the newest that played (their last note-offs and 0xFC may still be on their way),
         // and the one playing, are kept.
         const std::size_t total = songs_.size();
-        const auto totalSent = (std::size_t) std::count_if(songs_.begin(), songs_.end(), [](const auto& s) { return s.second.sent; });
-        std::size_t index = 0, sentBefore = 0;
+        const auto totalPlayed = (std::size_t) std::count_if(songs_.begin(), songs_.end(), [](const auto& s) { return s.second.played; });
+        std::size_t index = 0, playedBefore = 0;
         for (auto it = songs_.begin(); it != songs_.end();) {
-            const bool sent = it->second.sent;
+            const bool played = it->second.played;
             const std::size_t newer = total - 1 - index;
-            const std::size_t newerSent = totalSent - sentBefore - (sent ? 1 : 0);
+            const std::size_t newerPlayed = totalPlayed - playedBefore - (played ? 1 : 0);
             ++index;
-            if (sent) ++sentBefore;
-            if (newer < kNewestSongs || (sent && newerSent < kSentSongs) || it->first == playing) {
+            if (played) ++playedBefore;
+            if (newer < kNewestSongs || (played && newerPlayed < kPlayedSongs) || it->first == playing) {
                 ++it;
                 continue;
             }
@@ -228,6 +261,11 @@ void MidiPorts::noteSong(std::uint64_t serial, const std::vector<std::string>& d
     }
 }
 
+void MidiPorts::notePlaying(std::uint64_t serial) {
+    const juce::ScopedLock sl(lock_);
+    if (const auto song = songs_.find(serial); song != songs_.end()) song->second.played = true;
+}
+
 // ---- Sending -----------------------------------------------------------------------------------------------------------
 
 void MidiPorts::send(const engine::OutMidi& m) {
@@ -236,7 +274,7 @@ void MidiPorts::send(const engine::OutMidi& m) {
     const auto song = songs_.find(m.serial);
     if (song == songs_.end()) return;                 // a song never noted: nothing can say which port it means
     auto& table = song->second;
-    table.sent = true;
+    table.played = true;
     if (m.device >= table.ids.size() || m.device >= table.outputs.size()) return;
     if (auto* out = table.outputs[m.device]) out->send(m.data, m.size);
 }
