@@ -15,8 +15,6 @@ namespace sqlive::engine {
 // render are split into blocks. prepare allocates; nothing else does. The song and the mix must outlive their use here.
 class SongRenderer {
 public:
-    static constexpr int kMaxParts = 128;          // parts beyond this are not played
-
     void prepare(double sampleRate, int maxBlockFrames);
     void setSong(const PreparedSong*) noexcept;       // snaps every part gain to the song's
     void setMix(const MixSetup*) noexcept;            // snaps the first time or when the bus layout changed; otherwise glides

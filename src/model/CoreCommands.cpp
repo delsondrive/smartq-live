@@ -4,6 +4,8 @@
 #include <cmath>
 #include <optional>
 
+#include "engine/MixSetup.h"
+#include "engine/PreparedSong.h"
 #include "model/Defaults.h"
 #include "model/DocumentsJson.h"
 #include "model/Routing.h"
@@ -183,6 +185,7 @@ void registerCoreCommands(CommandLayer& layer) {
 
     // --- roles
     add("role.add", [](BandModel& m, const Params& p) {
+        if (m.band().roles.size() >= (size_t) engine::kMaxRoles) refuse("A band can have up to " + String(engine::kMaxRoles) + " roles.");
         auto name = p.text("name");
         checkRoleName(m, name, {});
         auto& roles = m.editBand().roles;
@@ -215,6 +218,7 @@ void registerCoreCommands(CommandLayer& layer) {
         SongDoc doc; ParseNotes notes;
         if (! fromVar(p.raw("song"), doc, notes)) refuse("That isn't a song.");
         if (m.song(doc.id) != nullptr) refuse("There is already a song with that id.");
+        if (doc.parts.size() > (size_t) engine::kMaxParts) refuse("A song can have up to " + String(engine::kMaxParts) + " parts.");
         auto id = doc.id;
         m.putSong(std::move(doc));
         return CommandResult::success(id);
@@ -389,6 +393,7 @@ void registerCoreCommands(CommandLayer& layer) {
     // --- outputs and mixes
     add("output.add", [](BandModel& m, const Params& p) {
         auto& rig = rigOf(m, p);
+        if (rig.outputs.size() >= (size_t) engine::kMaxBuses) refuse("A rig can have up to " + String(engine::kMaxBuses) + " outputs.");
         OutputDoc out; out.id = newId();
         out.name = nonEmpty(p.text("name"), "An output needs a name.");
         out.firstChannel = p.whole("firstChannel", 1, 1024);

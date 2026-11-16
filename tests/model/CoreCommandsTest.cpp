@@ -262,3 +262,25 @@ TEST_CASE("no output may share a channel with one that goes to the PA", "[core]"
           == "Bass would share output 2 with Headphones, which goes to the PA.");
     CHECK(f.run("output.set", params({{"rigId", rigId}, {"outputId", phones}, {"name", "Phones"}})).ok);
 }
+
+TEST_CASE("a band, a rig and a song hold no more than the engine can play", "[core]") {
+    Fixture f;
+    for (int i = (int) f.model.band().roles.size(); i < 64; ++i)
+        REQUIRE(f.run("role.add", params({{"name", "Role " + juce::String(i)}})).ok);
+    CHECK(f.run("role.add", params({{"name", "One too many"}})).message == "A band can have up to 64 roles.");
+    CHECK(f.model.band().roles.size() == 64);
+
+    for (int i = (int) f.rig().outputs.size(); i < 32; ++i)
+        REQUIRE(f.run("output.add", params({{"rigId", f.rigId()}, {"name", "Out " + juce::String(i)}, {"firstChannel", 3 + 2 * i},
+                                             {"stereo", true}, {"label", "monitor"}})).ok);
+    CHECK(f.run("output.add", params({{"rigId", f.rigId()}, {"name", "Extra"}, {"firstChannel", 99}, {"stereo", true}, {"label", "monitor"}}))
+              .message == "A rig can have up to 32 outputs.");
+
+    auto songWith = [](int parts) {
+        SongDoc s; s.id = newId(); s.title = "Big";
+        for (int i = 0; i < parts; ++i) { PartDoc p; p.id = newId(); p.name = "P"; s.parts.push_back(p); }
+        return toVar(s);
+    };
+    CHECK(f.run("song.add", params({{"song", songWith(129)}})).message == "A song can have up to 128 parts.");
+    CHECK(f.run("song.add", params({{"song", songWith(128)}})).ok);
+}

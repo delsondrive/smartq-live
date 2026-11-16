@@ -10,6 +10,8 @@
 
 namespace sqlive::engine {
 
+inline constexpr int kMaxParts = 128;   // parts of a song beyond this are not played
+
 struct PartAudio {
     std::vector<float> left, right;   // right empty = mono; otherwise the same length
 };
