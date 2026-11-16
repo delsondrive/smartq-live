@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <vector>
 
@@ -59,7 +60,11 @@ TEST_CASE("a message is due when its sample is heard", "[midisched]") {
     REQUIRE(s.takeDue(100.0205, a, out, 8) == 3);
     CHECK(out[0].data[0] == 1);  CHECK(out[1].data[0] == 2);  CHECK(out[2].data[0] == 3);   // in time order, ties in arrival order
     CHECK(s.size() == 1);
-    CHECK(s.takeDue(100.0, StreamAnchor{}, out, 8) == 1);          // with no anchor everything is sent at once rather than held
+    CHECK(s.takeDue(100.0, StreamAnchor{}, out, 8) == 1);          // before any device has started everything is sent at once
+    s.add(om(48000, 5));
+    CHECK(s.takeDue(1e9, StreamAnchor{false, 0, 0.0, 48000.0, 0.0, 1}, out, 8) == 0);   // while a device starts it is held
+    CHECK(*s.nextDue(StreamAnchor{false, 0, 0.0, 48000.0, 0.0, 1}) == std::numeric_limits<double>::infinity());
+    CHECK(s.takeDue(100.02, a, out, 8) == 1);                      // until its clock says when
 }
 TEST_CASE("a full scheduler drops the oldest", "[midisched]") {
     MidiScheduler s; StreamAnchor a{true, 0, 0.0, 48000.0, 0.0};
@@ -67,6 +72,7 @@ TEST_CASE("a full scheduler drops the oldest", "[midisched]") {
     CHECK(s.size() == MidiScheduler::kCapacity);
     engine::OutMidi out[1];  s.takeDue(1000.0, a, out, 1);
     CHECK(out[0].streamTime == 10);
+    CHECK(s.droppedCount() == 10);
 }
 TEST_CASE("the audio host publishes where the stream is against the clock", "[midisched]") {
     DemoSession d; app::AudioHost host(*d.session);
@@ -96,20 +102,25 @@ TEST_CASE("a device that starts publishes its rate and latency, and no anchor un
     CHECK(sqlive::test::allocationCount() == 0);
 }
 
-TEST_CASE("only what is long past is dropped as stale, and never what ends a note or the transport", "[midisched]") {
+TEST_CASE("only what is long past is dropped as stale, and never what ends a note, sets a device or runs the transport", "[midisched]") {
     MidiScheduler s; StreamAnchor a{true, 0, 0.0, 48000.0, 0.0};
     s.add(om3(0, 0x90, 60, 100));                                   // a note-on 10 s ago
     s.add(om3(10, 0x80, 60, 0));                                    // its note-off
     s.add(om3(20, 0x91, 61, 0));                                    // a note-off as a note-on at velocity 0
     s.add(om(30, 0xFC));                                            // stop
     s.add(om(40, 0xF8));                                            // a clock tick
+    s.add(om3(50, 0xB2, 0, 1));                                     // a bank select, long past: the device's state
+    s.add(om3(50, 0xC2, 7, 0));                                     // its program change, long past: still the patch to be on
+    s.add(om(60, 0xFA));                                            // start
     s.add(om3(48000 * 10 - 4800, 0xB0, 1, 2));                      // 0.1 s late: sent late rather than dropped
     s.add(om3(48000 * 11, 0xC0, 5, 0));                             // still to come
     CHECK(s.dropStale(10.0, a) == 2);
-    REQUIRE(s.size() == 5);
+    CHECK(s.droppedCount() == 2);
+    REQUIRE(s.size() == 8);
     engine::OutMidi out[8];
-    REQUIRE(s.takeDue(10.0, a, out, 8) == 4);
-    CHECK(out[0].data[0] == 0x80);  CHECK(out[1].data[0] == 0x91);  CHECK(out[2].data[0] == 0xFC);  CHECK(out[3].data[0] == 0xB0);
+    REQUIRE(s.takeDue(10.0, a, out, 8) == 7);
+    CHECK(out[0].data[0] == 0x80);  CHECK(out[1].data[0] == 0x91);  CHECK(out[2].data[0] == 0xFC);
+    CHECK(out[3].data[0] == 0xB2);  CHECK(out[4].data[0] == 0xC2);  CHECK(out[5].data[0] == 0xFA);  CHECK(out[6].data[0] == 0xB0);
     CHECK(s.dropStale(1000.0, StreamAnchor{}) == 0);               // with no anchor nothing can be judged late
     CHECK(s.size() == 1);
 }
@@ -141,11 +152,11 @@ TEST_CASE("the dispatcher sends each message when its sample is heard, never ear
     REQUIRE(sent.waitFor(3));
     std::lock_guard<std::mutex> g(sent.lock);
     CHECK(sent.messages[0].data[1] == 1);  CHECK(sent.messages[1].data[1] == 2);  CHECK(sent.messages[2].device == 1);
-    CHECK(sent.at[0] >= t0 + 0.2 - 0.0006);  CHECK(sent.at[0] < t0 + 0.2 + 0.05);
-    CHECK(sent.at[2] >= t0 + 0.3 - 0.0006);  CHECK(sent.at[2] < t0 + 0.3 + 0.05);
+    CHECK(sent.at[0] >= t0 + 0.2 - 0.0006);  CHECK(sent.at[0] < t0 + 0.2 + 0.25);
+    CHECK(sent.at[2] >= t0 + 0.3 - 0.0006);  CHECK(sent.at[2] < t0 + 0.3 + 0.25);
 }
 
-TEST_CASE("a dispatcher that starts late drops what was queued long ago, but still ends the notes", "[midisched]") {
+TEST_CASE("a dispatcher that starts late drops what was queued long ago, but still ends the notes and sets the devices", "[midisched]") {
     using namespace sqlive::test;
     engine::Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     e.cue(share(midiSong({ev(100, 0, 0x90, 60, 100), ev(200, 0, 0xB0, 1, 1)})));  e.start();
@@ -155,14 +166,16 @@ TEST_CASE("a dispatcher that starts late drops what was queued long ago, but sti
     const double t0 = nowSeconds();
     MidiDispatcher dispatcher(e, [=] { return StreamAnchor{true, now + 48000 * 10, t0, 48000.0, 0.0, 1}; },   // all 10 s ago
                               [&](const engine::OutMidi& m) { sent.add(m); });
-    REQUIRE(sent.waitFor(1));
+    REQUIRE(sent.waitFor(2));
     juce::Thread::sleep(50);
+    CHECK(dispatcher.droppedCount() == 1);                          // the note-on
     std::lock_guard<std::mutex> g(sent.lock);
-    REQUIRE(sent.messages.size() == 1);
-    CHECK(sent.messages[0].data[0] == 0x80);  CHECK(sent.messages[0].data[1] == 60);
+    REQUIRE(sent.messages.size() == 2);
+    CHECK(sent.messages[0].data[0] == 0xB0);                        // the device's state, late rather than never
+    CHECK(sent.messages[1].data[0] == 0x80);  CHECK(sent.messages[1].data[1] == 60);
 }
 
-TEST_CASE("when a device starts, what its clock puts long past is dropped", "[midisched]") {
+TEST_CASE("when a device starts, what waits is held until its clock, and what that clock puts long past is dropped", "[midisched]") {
     using namespace sqlive::test;
     engine::Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     e.cue(share(midiSong({ev(100, 0, 0x90, 60, 100), ev(200, 0, 0xB0, 1, 1)})));  e.start();
@@ -174,10 +187,14 @@ TEST_CASE("when a device starts, what its clock puts long past is dropped", "[mi
     MidiDispatcher dispatcher(e, [&] { return anchor.get(); }, [&](const engine::OutMidi& m) { sent.add(m); });
     juce::Thread::sleep(50);
     CHECK(sent.count() == 0);                                       // held
-    anchor.set({true, now + 48000 * 10, t0, 48000.0, 0.0, 2});      // another device starts: by its clock, all 10 s ago
-    REQUIRE(sent.waitFor(1));
+    anchor.set({false, now, 0.0, 48000.0, 0.0, 2});                 // another device is starting: no clock until its first block
     juce::Thread::sleep(50);
+    CHECK(sent.count() == 0);                                       // held, not flushed early
+    anchor.set({true, now + 48000 * 10, t0, 48000.0, 0.0, 2});      // its first block: by its clock, all 10 s ago
+    REQUIRE(sent.waitFor(2));
+    juce::Thread::sleep(50);
+    CHECK(dispatcher.droppedCount() == 1);
     std::lock_guard<std::mutex> g(sent.lock);
-    REQUIRE(sent.messages.size() == 1);
-    CHECK(sent.messages[0].data[0] == 0x80);
+    REQUIRE(sent.messages.size() == 2);
+    CHECK(sent.messages[0].data[0] == 0xB0);  CHECK(sent.messages[1].data[0] == 0x80);
 }

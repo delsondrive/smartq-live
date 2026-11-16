@@ -5,6 +5,7 @@
 
 #include "app/AudioHost.h"
 #include "app/BuildInfo.h"
+#include "app/MidiPorts.h"
 #include "app/ShowController.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
@@ -58,6 +59,9 @@ juce::String undoWords(const juce::String& command) {
     if (command.startsWith("song.")) return "change the song";
     if (command.startsWith("rig.")) return "change the rig";
     if (command.startsWith("role.")) return "change the roles";
+    if (command.startsWith("device.")) return "change the MIDI devices";
+    if (command.startsWith("marker.")) return "change the pedal changes";
+    if (command == "controls.set") return "change the controls";
     return "the last change";
 }
 
@@ -81,7 +85,8 @@ void centreOn(juce::Component& c, int x, int width, int height, int centreY) { c
 bool TopBarState::operator==(const TopBarState& o) const {
     if (pills.size() != o.pills.size()) return false;
     for (std::size_t i = 0; i < pills.size(); ++i)
-        if (pills[i].text != o.pills[i].text || pills[i].level != o.pills[i].level) return false;
+        if (pills[i].text != o.pills[i].text || pills[i].level != o.pills[i].level || pills[i].editToo != o.pills[i].editToo)
+            return false;
     return mode == o.mode && page == o.page && stageView == o.stageView && clock == o.clock && clockSub == o.clockSub
            && chips == o.chips && beatsInBar == o.beatsInBar && beatNow == o.beatNow && playing == o.playing
            && canUndo == o.canUndo && undoTip == o.undoTip && holdProgress == o.holdProgress;
@@ -122,6 +127,16 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
     if (host != nullptr && host->isLost()) t.pills.push_back({"Audio lost", Level::Bad});
     else if (host != nullptr && host->isOpen()) t.pills.push_back({"Audio", Level::Ok});
     else t.pills.push_back({"No audio", Level::Bad});
+    // MIDI: how many devices are connected, or which is missing; nothing without devices or ports (tests, screenshots).
+    if (const auto* ports = session.midi(); ports != nullptr && !session.model().band().midiDevices.empty()) {
+        const auto missing = ports->missingDeviceNames();
+        if (!missing.isEmpty()) {
+            const auto who = missing.size() == 1 ? missing[0] : juce::String(missing.size());
+            t.pills.push_back({"MIDI: " + who + " missing", Level::Warning, true});
+        } else if (const int connected = ports->connectedCount(); connected > 0) {
+            t.pills.push_back({"MIDI " + juce::String(connected), Level::Ok});
+        }
+    }
     // The conflict copies are the list the session keeps from its last look at the band folder: nothing here scans.
     if (!session.loadReport().notes.isEmpty() || !session.conflictCopies().empty()) t.pills.push_back({kCheckFiles, Level::Warning});
     return t;
@@ -387,17 +402,17 @@ void TopBar::layout() {
         undo_->setBounds(right - uw, centreY - 15, uw, 30);
     }
     undo_->setVisible(edit);
-
     // Show mode: the status pills, right to left before the switch. Edit mode: only what needs a look, right to left before
-    // Undo: the audio pill when audio isn't OK, and "Check files", where a click opens the files dialog (in Show mode it
-    // only says so: nothing there may change the band folder).
+    // Undo: the audio pill when audio isn't OK, the MIDI pill when a device is missing (editToo), and "Check files", where a
+    // click opens the files dialog (in Show mode it only says so: nothing there may change the band folder).
     const bool showPills = !edit;
     checkFiles_ = {};
     int editX = undo_->getX() - kGap;
     for (std::size_t i = pills_.size(); i-- > 0;) {
         const bool inState = i < state_.pills.size();
         const bool checkFiles = inState && state_.pills[i].text == kCheckFiles;
-        const bool shownInEdit = edit && inState && (checkFiles || state_.pills[i].level == StatusPill::Level::Bad);
+        const bool shownInEdit =
+            edit && inState && (checkFiles || state_.pills[i].editToo || state_.pills[i].level == StatusPill::Level::Bad);
         pills_[i]->setVisible(inState && (showPills || shownInEdit));
         if (!shownInEdit) continue;
         const int pw = pills_[i]->idealWidth();

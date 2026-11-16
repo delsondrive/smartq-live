@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "app/MidiPorts.h"
 #include "model/CloudFiles.h"
 #include "model/Routing.h"
 
@@ -38,6 +39,20 @@ void addRouting(std::vector<CheckItem>& items, const Session& session, const Che
     }
     for (const auto& p : problems)
         items.push_back(item(p.blocksShow ? Level::Blocker : Level::Warning, "routing", "Routing", p.message));
+}
+
+// Each device bound to a port here that isn't found, or one line saying they all are; nothing without devices or ports.
+void addMidi(std::vector<CheckItem>& items, const Session& session) {
+    const auto* ports = session.midi();
+    if (ports == nullptr || session.model().band().midiDevices.empty()) return;
+    const auto missing = ports->missingDeviceNames();
+    if (missing.isEmpty()) {
+        items.push_back(item(Level::Ok, "midi", "Pedalboards", juce::String(ports->connectedCount()) + " connected"));
+        return;
+    }
+    for (const auto& name : missing)
+        items.push_back(item(Level::Warning, "midi", name + " isn't connected",
+                             "Its MIDI port wasn't found. Plug it in, or go on without it."));
 }
 
 void addFiles(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
@@ -80,6 +95,7 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
     std::vector<CheckItem> items;
     items.push_back(audioItem(session, in));
     addRouting(items, session, in);
+    addMidi(items, session);
     const auto* setlist = session.model().setlist(session.setlistId());
     addFiles(items, session, setlist);
     if (setlist == nullptr || setlist->entries.empty())

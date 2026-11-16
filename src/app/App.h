@@ -6,6 +6,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/AudioHost.h"
+#include "app/MidiDispatcher.h"
+#include "app/MidiPorts.h"
 #include "app/Session.h"
 #include "app/Settings.h"
 
@@ -26,7 +28,8 @@ namespace sqlive::app {
 class App {
 public:
     App(juce::File settingsFile, const juce::StringArray& commandLine);
-    ~App();                                                       // the window first, then the device, then the session (flushed)
+    ~App();                                                       // the window, the MIDI dispatcher and ports, the device, then
+                                                                  // the session (flushed)
 
     bool wantsWindow() const;                                     // false: nothing is on screen and nothing will be; quit
     std::function<void()> onQuit;                                 // the app should quit (the window was closed)
@@ -50,6 +53,8 @@ private:
     Settings settings_;
     std::unique_ptr<Session> session_;
     std::unique_ptr<AudioHost> host_;
+    std::unique_ptr<MidiPorts> midi_;                             // this computer's MIDI outputs, attached to the session
+    std::unique_ptr<MidiDispatcher> dispatcher_;                  // the engine's one MIDI consumer: sends through midi_ by host_'s clock
     std::unique_ptr<ui::MainWindow> window_;
     std::unique_ptr<StartWindow> start_;
     juce::ScopedMessageBox message_;

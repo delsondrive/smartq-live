@@ -9,12 +9,14 @@ namespace {
 static_assert((MidiScheduler::kCapacity & (MidiScheduler::kCapacity - 1)) == 0, "the ring wraps with a mask");
 constexpr int kMask = MidiScheduler::kCapacity - 1;
 
-bool endsSomething(const engine::OutMidi& m) {
+// What is sent late rather than dropped as stale: what ends something, what sets a device's state, and the transport.
+bool keptWhenLate(const engine::OutMidi& m) {
     if (m.size < 1) return false;
     const std::uint8_t kind = m.data[0] & 0xF0;
     if (kind == 0x80) return true;                                     // note-off
     if (kind == 0x90 && m.size >= 3 && m.data[2] == 0) return true;    // note-on at velocity 0
-    return m.data[0] == 0xFC;                                          // stop
+    if (kind == 0xB0 || kind == 0xC0) return true;                     // control and program changes: the device's state
+    return m.data[0] == 0xFA || m.data[0] == 0xFC;                     // start and stop
 }
 
 }  // namespace
@@ -31,6 +33,7 @@ void MidiScheduler::popFront() noexcept {
 
 void MidiScheduler::add(const engine::OutMidi& m) noexcept {
     if (count_ == kCapacity) {
+        ++dropped_;
         if (m.streamTime < at(0).streamTime) return;                   // it is the oldest itself
         popFront();
     }
@@ -45,6 +48,7 @@ void MidiScheduler::add(const engine::OutMidi& m) noexcept {
 }
 
 double MidiScheduler::wallTimeFor(std::int64_t streamTime, const StreamAnchor& a) noexcept {
+    if (!a.valid && a.deviceStarts > 0) return std::numeric_limits<double>::infinity();   // a device is starting: held
     if (!a.valid || a.sampleRate <= 0.0) return -std::numeric_limits<double>::infinity();
     return a.wallSeconds + static_cast<double>(streamTime - a.streamTime) / a.sampleRate + a.outputLatencySeconds;
 }
@@ -68,16 +72,18 @@ int MidiScheduler::dropStale(double wallNow, const StreamAnchor& a) noexcept {
     int kept = 0;
     for (int i = 0; i < count_; ++i) {
         const auto& m = at(i);
-        if (wallTimeFor(m.streamTime, a) < wallNow - kStaleSeconds && !endsSomething(m)) continue;
+        if (wallTimeFor(m.streamTime, a) < wallNow - kStaleSeconds && !keptWhenLate(m)) continue;
         if (kept != i) at(kept) = m;
         ++kept;
     }
     const int dropped = count_ - kept;
+    dropped_ += static_cast<std::uint64_t>(dropped);
     count_ = kept;
     return dropped;
 }
 
 int MidiScheduler::size() const noexcept { return count_; }
+std::uint64_t MidiScheduler::droppedCount() const noexcept { return dropped_; }
 
 void MidiScheduler::clear() noexcept {
     head_ = 0;

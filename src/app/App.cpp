@@ -80,6 +80,14 @@ void App::openBand(const juce::File& root) {
     settings_.save();
 
     host_ = std::make_unique<AudioHost>(*session_);
+    midi_ = std::make_unique<MidiPorts>(*session_);
+    session_->attachMidi(midi_.get());
+    // A port unplugged or back: the views read the ports when the session's changes fire, so they are fired.
+    midi_->onChanged = [session = session_.get()] { session->changes().sendChangeMessage(); };
+    // Each message is sent when its sample is heard by the audio device's clock; the dispatcher is the engine's only reader.
+    dispatcher_ = std::make_unique<MidiDispatcher>(
+        session_->engine(), [host = host_.get()] { return host->anchor(); },
+        [ports = midi_.get()](const engine::OutMidi& m) { ports->send(m); });
     if (host_->hasBindingForThisComputer()) {
         // A failure is taken as the device lost: the "Audio lost" pill shows, and it is tried again every 2 s.
         host_->openFromRig();
@@ -97,6 +105,9 @@ void App::showMainWindow() {
 
 void App::closeBand() {
     window_.reset();                                              // its ShowController and pages hold the session
+    dispatcher_.reset();                                          // its thread sends through the ports by the host's clock
+    if (session_ != nullptr) session_->attachMidi(nullptr);
+    midi_.reset();                                                // closes the MIDI ports
     host_.reset();                                                // closes the device
     if (session_ != nullptr) session_->flushForClose();
     session_.reset();

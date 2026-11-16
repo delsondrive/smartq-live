@@ -25,6 +25,8 @@
 
 namespace sqlive::app {
 
+class MidiPorts;
+
 enum class Mode { Edit, Show };
 enum class Action { Start, Stop, NextSongLater, NextSongEarlier, ToggleView };
 enum class Readiness { None, Loading, Ready, Failed };
@@ -93,6 +95,11 @@ public:
     bool stageView() const;                                      // toggled by Action::ToggleView
     void playSong(const juce::String& songId, double fromSeconds);   // Edit mode: play one song from a place
     void setEditFocus(const juce::String& songId);               // the song open in an Edit page: kept loaded first
+
+    // This computer's MIDI ports (App makes them), so views can reach them; nullptr detaches. Each song the engine takes from
+    // here on is noted with them (MidiPorts::noteSong), and attaching notes the playing and cued songs the session holds.
+    void attachMidi(MidiPorts*);
+    MidiPorts* midi() const;                                     // nullptr when none is attached: tests, screenshots
 
     Mode mode() const;
     void enterShow();                                            // views run the pre-show check first (Task 18). Stops a
@@ -208,6 +215,7 @@ private:
     bool handleEngineEvents();                                   // true when anything changed
     // The engine never plays a song the session doesn't know: whatever it plays, the session holds, or has seen end.
     bool knowsWhatPlays(const engine::EngineStatus&) const;
+    void noteMidi(std::uint64_t serial, const std::shared_ptr<const Prepared>&);   // the ports, if any, are told its devices
     // A song the engine started that the session didn't: a follow-on of a cue it remembers, or one nothing here knows, which
     // is still reported as playing (title unknown) so every stop gesture stops it.
     void adoptPlaying(std::uint64_t serial, std::int64_t streamTime, const Cue* known);
@@ -282,6 +290,7 @@ private:
     SaveState last_save_state_ = SaveState::Saved;
 
     std::unique_ptr<OutsideChanges> outside_;                    // made once the band is loaded
+    MidiPorts* midi_ = nullptr;                                  // attachMidi's; not owned
 
     std::vector<std::vector<float>> scratch_;                    // advanceWithoutDevice's output channels
     std::vector<float*> scratch_channels_;

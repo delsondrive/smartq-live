@@ -36,6 +36,7 @@ void MidiDispatcher::run() {
             judged_ = true;
             judged_starts_ = anchor.deviceStarts;
         }
+        dropped_.store(scheduler_.droppedCount(), std::memory_order_relaxed);
         sendDue(anchor);
         waitForNext(anchor);
     }

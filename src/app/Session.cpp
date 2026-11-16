@@ -6,6 +6,7 @@
 #include <set>
 #include <utility>
 
+#include "app/MidiPorts.h"
 #include "model/CoreCommands.h"
 #include "model/MidiCommands.h"
 #include "model/Routing.h"
@@ -182,6 +183,22 @@ void Session::setEditFocus(const juce::String& songId) {
     refresh();
 }
 
+// ---- MIDI ports --------------------------------------------------------------------------------------------------------
+
+void Session::attachMidi(MidiPorts* ports) {
+    midi_ = ports;
+    // What the engine already holds: the playing song, the cue, and the cues that could still follow on.
+    for (const auto& [serial, cue] : recent_cues_) noteMidi(serial, cue.prepared);
+    noteMidi(cue_.serial, cue_.prepared);
+    noteMidi(playing_.serial, playing_.prepared);
+}
+
+MidiPorts* Session::midi() const { return midi_; }
+
+void Session::noteMidi(std::uint64_t serial, const std::shared_ptr<const Prepared>& prepared) {
+    if (midi_ != nullptr && serial != 0 && prepared != nullptr) midi_->noteSong(serial, prepared->song->midiDeviceIds);
+}
+
 void Session::chooseNext(int index) {
     const auto* list = setlist();
     const int count = list != nullptr ? (int) list->entries.size() : 0;
@@ -260,6 +277,7 @@ void Session::playSong(const juce::String& songId, double fromSeconds) {
     if (prepared == nullptr || prepared->song->sampleRate != engine_.sampleRate()) return;   // the engine would ignore it
     const auto serial = engine_.cue(prepared->song);
     if (serial == 0) return;                                     // the queue is full: nothing was cued
+    noteMidi(serial, prepared);
     const auto& song = *prepared->song;
     // A place within a millisecond of the song's start is its start: the editor's cursor at the top, rounded from
     // seconds, can land a sample after it. From its start, the engine sends each device bar 1's state before the count-in.
@@ -845,6 +863,7 @@ void Session::refreshTransport(bool force) {
     if (cue_sent_this_tick_ && !force) return;                   // the next tick sends the latest
     const auto serial = engine_.cue(wanted.prepared->song);
     if (serial == 0) return;                                     // not taken: the next tick tries again
+    noteMidi(serial, wanted.prepared);
     cue_sent_this_tick_ = true;
     wanted.serial = serial;
     cue_ = wanted;

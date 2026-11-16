@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 
@@ -13,11 +14,13 @@ namespace sqlive::app {
 
 // The MIDI-out thread, "Smart Q Live MIDI", at high priority: the Engine's one MIDI consumer. It takes what the engine
 // sends into a MidiScheduler and calls send for each message at the moment its sample is heard, by the anchor (the audio
-// host's, in the app), never early. Without a valid anchor a message is sent at once rather than held.
+// host's, in the app), never early. Without a valid anchor: while a device is starting (deviceStarts > 0) what waits
+// is held until its first block gives its clock; before any device has started, a message is sent at once.
 //
 // Stale messages: once it first has a valid anchor, and again whenever the anchor says another device has started, what
-// that anchor puts more than MidiScheduler::kStaleSeconds in the past is dropped rather than sent late (note-offs and 0xFC
-// are still sent), so messages queued before anything took them never go off long after their moment.
+// that anchor puts more than MidiScheduler::kStaleSeconds in the past is dropped rather than sent late (what ends a note
+// or the transport, 0xFA, and control and program changes are still sent: see MidiScheduler::dropStale), so messages
+// queued before anything took them never go off long after their moment.
 //
 // It runs from construction to destruction. anchor and send are called on its thread only; send must not block for long.
 // Nothing here allocates per message.
@@ -25,6 +28,10 @@ class MidiDispatcher : private juce::Thread {
 public:
     MidiDispatcher(engine::Engine&, std::function<StreamAnchor()> anchor, std::function<void(const engine::OutMidi&)> send);
     ~MidiDispatcher() override;
+
+    // Any thread: how many messages it dropped (its scheduler full, or stale), alongside Engine::droppedMidiCount(). For
+    // diagnostics only.
+    std::uint64_t droppedCount() const noexcept { return dropped_.load(std::memory_order_relaxed); }
 
 private:
     void run() override;
@@ -39,6 +46,7 @@ private:
     std::array<engine::OutMidi, 64> due_{};
     bool judged_ = false;                             // stale messages were dropped for the device that started last
     std::uint32_t judged_starts_ = 0;                 // that device's StreamAnchor::deviceStarts
+    std::atomic<std::uint64_t> dropped_{0};           // the scheduler's droppedCount, as of its last change
 };
 
 }  // namespace sqlive::app
