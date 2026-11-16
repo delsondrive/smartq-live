@@ -129,6 +129,7 @@ SongEditorState makeSongEditorState(const app::Session& session, const juce::Str
     switch (session.saveState()) {
         case app::SaveState::Saved: state.saved = juce::String::fromUTF8("Saved \xe2\x9c\x93"); break;
         case app::SaveState::Saving: state.saved = "Saving" + kEllipsis; break;
+        case app::SaveState::Waiting: state.saved = "Waiting for your answer"; break;
         case app::SaveState::Failed:
             state.saved = session.saveError().isNotEmpty() ? session.saveError() : juce::String("The band couldn't be saved.");
             state.saveFailed = true;

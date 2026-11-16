@@ -12,6 +12,8 @@ void Autosaver::forget(const std::vector<DocKey>& keys) {
 
 bool Autosaver::hasPending() const { return !pending_.empty(); }
 
+bool Autosaver::isPending(const DocKey& key) const { return pending_.count(key) > 0; }
+
 juce::Result Autosaver::flush() {
     auto outcome = juce::Result::ok();
     const std::vector<DocKey> keys(pending_.begin(), pending_.end());

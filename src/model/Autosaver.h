@@ -15,6 +15,7 @@ public:
     void noteChanged(const std::vector<DocKey>&);
     void forget(const std::vector<DocKey>&);               // drops these from pending: they are not written back
     bool hasPending() const;
+    bool isPending(const DocKey&) const;
     juce::Result flush();                                  // saves every pending document; what fails stays pending
     // Once per flush: the first failure, or success. Also called, with success, for a flush that had nothing pending.
     std::function<void(const juce::Result&)> onSaved;

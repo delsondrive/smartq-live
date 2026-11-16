@@ -62,9 +62,9 @@ FolderWatch::Stamp FolderWatch::stampOf(const juce::File& file) {
 bool FolderWatch::audioHasArrived(const juce::var& songJson, const juce::File& songFolder) {
     model::SongDoc song;
     model::ParseNotes notes;
-    if (!model::fromVar(songJson, song, notes)) return false;
-    for (const auto& part : song.parts)
-        if (!model::isPathInsideFolder(part.file) || !songFolder.getChildFile(part.file).existsAsFile()) return false;
+    if (!model::fromVar(songJson, song, notes)) return true;   // not a song: offered, so taking it reports it unreadable
+    for (const auto& part : song.parts)                           // a path outside its folder never arrives: not waited for
+        if (model::isPathInsideFolder(part.file) && !songFolder.getChildFile(part.file).existsAsFile()) return false;
     return true;
 }
 
@@ -88,8 +88,14 @@ void FolderWatch::remember(const model::DocKey& key) {
 }
 
 std::optional<OutsideChange> FolderWatch::changedOnDisk(const model::DocKey& key) {
-    const auto it = known_.find(key);
-    if (it == known_.end()) return std::nullopt;                  // new here: nothing of anyone else's is there
+    auto it = known_.find(key);
+    if (it == known_.end()) {
+        // Not seen since this app last wrote it (new here, or used here again): someone else's if its file is there.
+        const auto file = session_.folder().fileFor(key);
+        if (!file.existsAsFile()) return std::nullopt;
+        it = known_.emplace(key, Known{file, {}}).first;         // so the comparison below reports it
+        others_.erase(file.getFullPathName());
+    }
     const auto now = stampOf(it->second.file);
     if (now == it->second.stamp) return std::nullopt;
     it->second.stamp = now;                                       // reported here, so not by the next poll

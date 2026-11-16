@@ -26,7 +26,7 @@ namespace sqlive::app {
 enum class Mode { Edit, Show };
 enum class Action { Start, Stop, NextSongLater, NextSongEarlier, ToggleView };
 enum class Readiness { None, Loading, Ready, Failed };
-enum class SaveState { Saved, Saving, Failed };
+enum class SaveState { Saved, Saving, Waiting, Failed };          // Waiting: an edit is held back for the user's answer
 
 struct NowPlaying {
     bool playing = false, stopping = false, inGap = false, interrupted = false;
@@ -52,7 +52,7 @@ struct NowPlaying {
 class Session : private juce::Timer {
 public:
     Session(Settings&, juce::File bandRoot, std::int64_t cacheBudgetBytes = SongCache::defaultBudgetBytes());
-    ~Session() override;                                         // flushes the autosaver and saves the settings
+    ~Session() override;                                         // flushForClose, and saves the settings
 
     const model::BandModel& model() const;
     model::CommandLayer& commands();        const model::CommandLayer& commands() const;    // const: canUndo, undoName
@@ -61,7 +61,9 @@ public:
     Settings& settings();                   const Settings& settings() const;               // const: computerName, showMemory
     engine::Engine& engine();
     const model::LoadReport& loadReport() const;
-    SaveState saveState() const;            // Saving while the autosaver has changes pending; Failed after a flush that failed
+    // Saving while the autosaver has changes pending; Waiting while one of them is held back for the user's answer to an
+    // outside change; Failed after a flush that failed.
+    SaveState saveState() const;
     juce::String saveError() const;         // the failed flush's message; "" otherwise
     juce::ChangeBroadcaster& changes();                          // fires when anything a view shows has changed
 
@@ -108,6 +110,10 @@ public:
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
                                                                  // never while a real device runs
     void flushNow();                                             // autosave and save the settings immediately
+    // The last flush, when the band closes or the app quits (the destructor does it too): an edit still held back for the
+    // user's answer is written as a conflict copy next to its original, "<name> (<computer name>).json", so "Check files"
+    // offers both versions next time.
+    void flushForClose();
 
     // The steps of an import that touch the band folder, on the message thread, so no view reaches into it. The slow
     // step between them, model::convertSongFiles, runs on the view's own thread and touches only files.
@@ -200,7 +206,10 @@ private:
     // Runs "folder.reload" with these texts ("" = removed) for these changes, then tells the autosaver and the watch that
     // the disk has them, and the cache to load those songs again.
     model::CommandResult loadFromDisk(const std::vector<OutsideChange>&, const std::map<model::DocKey, juce::String>& texts);
-    void reloadUndoneOrRedone(const std::vector<model::DocKey>&, bool undone);   // see takeOutsideChanges
+    void reloadUndoneOrRedone(const std::map<model::DocKey, OutsideChange>& step, bool undone);   // see takeOutsideChanges
+    void followReloadSteps();                                    // onChanged: keeps reloads_done_ and reloads_undone_ in step
+    void keepAsConflictCopy(const model::DocKey&);               // at close: a held-back edit, next to its original
+    void noteMissingAudio(const juce::String& songId);          // the cache says an audio file is missing
     void sweepUnreadableNotes();                                 // drops the notes of files that loaded or went
     void reloadArrivedAudio();                                   // songs cached while audio was missing, once it is all there
 
@@ -266,7 +275,10 @@ private:
     std::vector<model::ConflictCopy> conflict_copies_;
     double last_poll_ms_ = 0.0;
     std::set<model::DocKey> keep_mine_;                          // "Keep mine": written over whatever is on disk
-    std::map<model::DocKey, OutsideChange> from_disk_;           // the last load from disk of each document: how it came, from where
+    // One record per "folder.reload" step, as undo and redo take them (last in, first out): how each document came.
+    std::map<model::DocKey, OutsideChange> loading_;             // the step being run
+    std::vector<std::map<model::DocKey, OutsideChange>> reloads_done_, reloads_undone_;
+    bool closing_ = false;                                       // the last flush: what is held back is kept as a conflict copy
     std::map<model::DocKey, juce::String> unreadable_notes_;     // the load-report notes takeOutsideChanges added
     std::set<juce::String> missing_audio_;                       // songs the cache had problems with while audio files were missing
 

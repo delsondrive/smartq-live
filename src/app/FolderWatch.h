@@ -34,11 +34,13 @@ public:
     // Documents whose file changed, appeared or vanished since the last poll, other than by this app, in key order. Each
     // change is reported once. A file that appeared is read for its id; every other one costs a look at its date and size.
     // A document reported as Added whose file goes before it is loaded is reported again as Removed.
-    // A song that came in is reported only once all its parts' audio files are there too.
+    // A song that came in is reported only once all its parts' audio files are there too (a part naming a file outside
+    // its folder is not waited for).
     std::vector<OutsideChange> poll();
     // Just before this app writes the document: one look at its file's date and size. When another computer changed it
-    // since the watch last saw it, that change (reported here instead of by the next poll); nullopt otherwise, and for a
-    // document the watch doesn't know (new here).
+    // since the watch last saw it, that change (reported here instead of by the next poll); nullopt otherwise. For a
+    // document the watch doesn't know (new here, or used here again after an undo), a file already in its place is
+    // someone else's, and reported as Changed.
     std::optional<OutsideChange> changedOnDisk(const model::DocKey&);
     // This app no longer uses the document, but its file stays as it is (the undo of loading one that came in): it is not
     // an outside change until it changes again.

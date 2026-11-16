@@ -5,9 +5,12 @@
 #include "app/FolderWatch.h"
 #include "app/Session.h"
 #include "model/DocumentsJson.h"
+#include "model/FileNames.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/FileHold.h"
 #include "tests/support/Params.h"
 #include "ui/FilesDialog.h"
+#include "ui/SongEditorPage.h"
 #include "ui/TopBar.h"
 
 using namespace sqlive;
@@ -337,4 +340,140 @@ TEST_CASE("outside changes are named in the banner's sentence", "[folderwatch]")
     CHECK(ui::outsideChangesSentence(changes) == "First Light and Tour changed on another computer.");
     changes.push_back({{model::DocKind::Rig, "c"}, "Club rig", OutsideChange::Kind::Removed});
     CHECK(ui::outsideChangesSentence(changes) == "First Light, Tour and Club rig changed on another computer.");
+}
+
+// ---- Fix round 2 ----
+
+TEST_CASE("undoing the loads of a song that came in and then changed leaves its folder where it is", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    auto from = d.setlist().entries[0].songId;
+    auto song = *s.model().song(from);
+    song.id = model::newId();  song.title = "New one";
+    auto songDir = root.getChildFile("songs").getChildFile("New one");
+    writeElsewhere(songDir.getChildFile("song.json"), model::toJson(song));
+    copyAudio(s, from, songDir);
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    s.takeOutsideChanges();
+    REQUIRE(s.model().song(song.id) != nullptr);
+    auto changed = song;  changed.title = "New one, edited";
+    writeElsewhere(songDir.getChildFile("song.json"), model::toJson(changed));
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Changed);
+    s.takeOutsideChanges();
+    CHECK(s.model().song(song.id)->title == "New one, edited");
+    s.commands().undo();  s.flushNow();                                            // the change: its first version again
+    CHECK(s.model().song(song.id)->title == "New one");
+    s.commands().undo();  s.flushNow();                                            // the song: no longer used here
+    CHECK(s.model().song(song.id) == nullptr);
+    CHECK(songDir.getChildFile("song.json").existsAsFile());
+    CHECK(songDir.getChildFile(song.parts[0].file).existsAsFile());                // its audio is not in the trash
+}
+
+TEST_CASE("undoing the loads of a song that went and came back keeps it in its own folder", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    auto id = d.setlist().entries[0].songId;
+    auto dir = s.folder().songFolder(id);
+    const int folders = root.getChildFile("songs").getNumberOfChildFiles(juce::File::findDirectories);
+    auto aside = d.dir.dir().getChildFile("aside");
+    REQUIRE(dir.moveFileTo(aside));                                                // another computer removed it
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Removed);
+    s.takeOutsideChanges();
+    REQUIRE(s.model().song(id) == nullptr);
+    REQUIRE(aside.moveFileTo(dir));                                                // and it came back
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Added);
+    s.takeOutsideChanges();
+    REQUIRE(s.model().song(id) != nullptr);
+    s.commands().undo();  s.flushNow();                                            // back: not used here, its folder stays
+    CHECK(s.model().song(id) == nullptr);  CHECK(dir.isDirectory());
+    s.commands().undo();  s.flushNow();                                            // back again: here, in its own folder
+    REQUIRE(s.model().song(id) != nullptr);
+    CHECK(s.folder().songFolder(id) == dir);
+    CHECK(root.getChildFile("songs").getNumberOfChildFiles(juce::File::findDirectories) == folders);
+    CHECK_FALSE(root.getChildFile("trash").exists());
+}
+
+namespace {
+// A song edited here while another computer's change to it waits: the edit is held back. Returns the song's file.
+juce::File holdAnEdit(Session& s, const juce::String& song, juce::String& theirs) {
+    auto file = s.folder().fileFor({model::DocKind::Song, song});
+    theirs = file.loadFileAsString().replace("First Light", "Their title");
+    writeElsewhere(file, theirs);
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    s.commands().run("song.setInfo", params({{"songId", song}, {"key", "E"}}));
+    s.flushNow();
+    REQUIRE(file.loadFileAsString() == theirs);
+    return file;
+}
+}  // namespace
+
+TEST_CASE("an edit still held back at close is kept as a conflict copy", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    juce::String theirs;
+    auto file = holdAnEdit(s, d.setlist().entries[0].songId, theirs);
+    d.session.reset();
+    CHECK(file.loadFileAsString() == theirs);
+    const auto copies = model::findConflictCopies(root);
+    REQUIRE(copies.size() == 1);
+    CHECK(copies[0].original == file);
+    CHECK(copies[0].copy.getFileName().startsWith("song ("));
+    CHECK(copies[0].copy.loadFileAsString().contains("First Light"));
+}
+
+TEST_CASE("while an edit is held back, the save state waits for an answer", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session;
+    auto song = d.setlist().entries[0].songId;
+    juce::String theirs;
+    holdAnEdit(s, song, theirs);
+    CHECK(s.saveState() == SaveState::Waiting);
+    CHECK(ui::makeSongEditorState(s, song, 0.0).saved == "Waiting for your answer");
+    s.keepMine();  CHECK(s.saveState() == SaveState::Saved);
+}
+
+TEST_CASE("audio that arrives before the next look at the folder is loaded too", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session;
+    auto id = d.setlist().entries[0].songId;
+    const auto* song = s.model().song(id);
+    auto audio = s.folder().audioFile(*song, song->parts[0]);
+    auto aside = d.dir.dir().getChildFile("aside.wav");
+    REQUIRE(audio.moveFileTo(aside));
+    s.cache().forget(id);  d.settle();
+    REQUIRE_FALSE(s.cache().problems(id).isEmpty());
+    REQUIRE(aside.moveFileTo(audio));                                              // back before any poll saw it missing
+    s.advanceWithoutDevice(0);  d.settle();
+    CHECK(s.cache().problems(id).isEmpty());
+}
+
+TEST_CASE("after a 'keep mine' that couldn't be written, a later change of theirs is not written over", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session;
+    auto band = s.folder().root().getChildFile("band.json");
+    writeElsewhere(band, band.loadFileAsString().replace("\"Demo band\"", "\"Theirs\""));
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    {
+        sqlive::test::ExclusiveFileHold hold(band);                                // the write is refused while this is held
+        if (!hold.held()) SKIP("this system lets a file that is open be replaced");
+        s.keepMine();
+    }
+    writeElsewhere(band, band.loadFileAsString().replace("\"Theirs\"", "\"Theirs again\""));
+    s.flushNow();
+    CHECK(band.loadFileAsString().contains("\"Theirs again\""));
+    CHECK(s.outsideChanges().size() == 1);
+}
+
+TEST_CASE("a song that came in naming audio outside its folder is still offered", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    auto song = *s.model().song(d.setlist().entries[0].songId);
+    song.id = model::newId();  song.title = "Odd one";
+    song.parts.resize(1);  song.parts[0].file = "../outside.wav";
+    writeElsewhere(root.getChildFile("songs").getChildFile("Odd one").getChildFile("song.json"), model::toJson(song));
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    CHECK(s.outsideChanges()[0].name == "Odd one");
 }

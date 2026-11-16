@@ -80,7 +80,7 @@ void App::showMainWindow() {
 void App::closeBand() {
     window_.reset();                                              // its ShowController and pages hold the session
     host_.reset();                                                // closes the device
-    if (session_ != nullptr) session_->flushNow();
+    if (session_ != nullptr) session_->flushForClose();
     session_.reset();
 }
 
@@ -91,7 +91,7 @@ bool App::mayQuitNow() {
 }
 
 void App::quit() {
-    if (session_ != nullptr) session_->flushNow();
+    if (session_ != nullptr) session_->flushForClose();
     if (onQuit) onQuit();
 }
 
