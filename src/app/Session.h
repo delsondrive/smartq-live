@@ -11,6 +11,7 @@
 #include <juce_events/juce_events.h>
 
 #include "app/FolderWatch.h"
+#include "app/OutsideChanges.h"
 #include "app/Settings.h"
 #include "app/SongCache.h"
 #include "app/Tonight.h"
@@ -216,25 +217,6 @@ private:
     void noteSaveState();
     void changed();
     void pollFolder();                                           // Edit mode: outside changes and conflict copies
-    void noteOutsideChange(OutsideChange);                       // into the waiting list, in place of one for the same document
-    bool mayWrite(const model::DocKey&);                         // Autosaver::mayWrite: false holds it back (see outsideChanges)
-    // Runs "folder.reload" with these texts ("" = removed) for these changes, then tells the autosaver and the watch that
-    // the disk has them, and the cache to load those songs again.
-    model::CommandResult loadFromDisk(const std::vector<OutsideChange>&, const std::map<model::DocKey, juce::String>& texts);
-    void reloadUndoneOrRedone(const std::map<model::DocKey, OutsideChange>& step, bool undone);   // see takeOutsideChanges
-    void keepInTrash(const juce::File&);                         // a copy of another computer's file, before this app writes over it
-    bool adoptPlace(const model::DocKey&, const juce::File&);   // the folder (a song) or file it came in is the document's; true when it is
-    void forgetPlace(const model::DocKey&);
-    // A changed file whose text names another id (removed and imported again under the same title on another computer):
-    // never applied under the old id. The old document goes and the new one comes in, in the same place, as a Removed and an
-    // Added in texts and loads. False when the new one can't come in (one with its id is loaded, or the place can't be taken).
-    bool replaceDocument(const OutsideChange&, const juce::File&, const juce::String& text,
-                         std::map<model::DocKey, juce::String>& texts, std::vector<OutsideChange>& loads);
-    void followReloadSteps();                                    // onChanged: keeps reloads_done_ and reloads_undone_ in step
-    void keepAsConflictCopy(const model::DocKey&);               // at close: a held-back edit, next to its original
-    void noteMissingAudio(const juce::String& songId);          // the cache says an audio file is missing
-    void sweepUnreadableNotes();                                 // drops the notes of files that loaded or went
-    void reloadArrivedAudio();                                   // songs cached while audio was missing, once it is all there
 
     model::BandDoc bandAsHeard() const;
     void restoreShow();                                          // from the show memory, when opening
@@ -298,17 +280,7 @@ private:
     juce::String settings_error_;                                // why the settings file couldn't be written; "" once it is
     SaveState last_save_state_ = SaveState::Saved;
 
-    std::unique_ptr<FolderWatch> folder_watch_;                  // made once the band is loaded
-    std::vector<OutsideChange> outside_changes_;
-    std::vector<model::ConflictCopy> conflict_copies_;
-    double last_poll_ms_ = 0.0;
-    std::set<model::DocKey> keep_mine_;                          // "Keep mine": written over whatever is on disk
-    // One record per "folder.reload" step, as undo and redo take them (last in, first out): how each document came.
-    std::map<model::DocKey, OutsideChange> loading_;             // the step being run
-    std::vector<std::map<model::DocKey, OutsideChange>> reloads_done_, reloads_undone_;
-    bool closing_ = false;                                       // the last flush: what is held back is kept as a conflict copy
-    std::map<model::DocKey, juce::String> unreadable_notes_;     // the load-report notes takeOutsideChanges added
-    std::set<juce::String> missing_audio_;                       // songs the cache had problems with while audio files were missing
+    std::unique_ptr<OutsideChanges> outside_;                    // made once the band is loaded
 
     std::vector<std::vector<float>> scratch_;                    // advanceWithoutDevice's output channels
     std::vector<float*> scratch_channels_;

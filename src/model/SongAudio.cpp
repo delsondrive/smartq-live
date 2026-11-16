@@ -28,12 +28,6 @@ int clickSoundNamed(const juce::String& name) {
     return 0;   // "wood"
 }
 
-engine::TempoMap tempoMapOf(const SongDoc& song) {
-    std::vector<engine::TempoPoint> points;
-    for (const auto& p : song.tempo) points.push_back({p.bar, p.beat, p.bpm, p.numerator, p.denominator});
-    return engine::TempoMap(std::move(points));
-}
-
 }  // namespace
 
 std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, double targetRate,
@@ -85,6 +79,19 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     return engine::prepareSong(song.id.toStdString(), tempoMapOf(song), song.countInBars,
                                (engine::SamplePos) std::llround(song.audioStartSeconds * sampleRate), std::move(parts), click,
                                sampleRate);
+}
+
+engine::TempoMap tempoMapOf(const SongDoc& song) {
+    std::vector<engine::TempoPoint> points;
+    for (const auto& p : song.tempo) points.push_back({p.bar, p.beat, p.bpm, p.numerator, p.denominator});
+    return engine::TempoMap(std::move(points));
+}
+
+std::pair<double, double> songExtentSeconds(const SongDoc& song, const engine::TempoMap& tempo) {
+    const double countIn = -tempo.secondsAt({1 - std::max(0, song.countInBars), 1.0});
+    const double start = -std::max(countIn, song.audioStartSeconds);
+    const double end = std::max(song.lengthSeconds - song.audioStartSeconds, tempo.secondsAt({2, 1.0}));
+    return {start, std::max(end, start + 1.0)};
 }
 
 std::int64_t bytesInMemory(const SongDoc& song, double sampleRate) {
