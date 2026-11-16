@@ -26,9 +26,11 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     fade_length_ = std::llround(kStopFadeSeconds * sampleRate);
 
     // Song times made at another rate mean nothing now, so whatever played stops. The audio thread isn't running, so it
-    // is freed here. The cue and the mix are kept: a start snaps the mix into the renderer again. Stream time carries on:
-    // it never goes backwards, so times from before and after a device restart stay comparable.
+    // is freed here. The mix is kept: a start snaps it into the renderer again. So is the cue, unless it was made for
+    // another rate; that one goes back through the garbage queue like anything else the engine lets go of. Stream time
+    // carries on: it never goes backwards, so times from before and after a device restart stay comparable.
     playing_ = {};
+    if (cued_.song != nullptr && !fitsRate(*cued_.song)) retire(cued_);
     state_ = PlayState::Stopped;
     in_gap_ = false;
     gap_left_ = 0;
@@ -148,10 +150,10 @@ void Engine::handle(Command& command) noexcept {
         retire(cued_);
         break;
     case Type::Start:
-        if (cued_.song != nullptr) startPlaying(cued_.song->start);
+        if (cueFits()) startPlaying(cued_.song->start);
         break;
     case Type::StartAt:
-        if (cued_.song != nullptr)
+        if (cueFits())
             startPlaying(std::clamp(command.index, cued_.song->start, std::max(cued_.song->start, cued_.song->end)));
         break;
     case Type::Stop:
@@ -197,9 +199,16 @@ void Engine::handle(Command& command) noexcept {
 }
 
 void Engine::startPlaying(SamplePos songTime) noexcept {
-    if (state_ != PlayState::Stopped || cued_.song == nullptr) return;
+    if (state_ != PlayState::Stopped || !cueFits()) return;
     playCued(songTime, stream_time_, true);
 }
+
+// A song's sample positions mean what they say only at the rate it was made for.
+bool Engine::fitsRate(const PreparedSong& song) const noexcept {
+    return song.sampleRate == sample_rate_.load(std::memory_order_relaxed);
+}
+
+bool Engine::cueFits() const noexcept { return cued_.song != nullptr && fitsRate(*cued_.song); }
 
 // The cue becomes the playing song, from songTime; streamTime is that of its first sample. The cue must be set and nothing
 // may be playing.
@@ -272,7 +281,7 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     state_ = PlayState::Stopped;
     song_time_ = 0;
     fade_pos_ = 0;
-    if (type != EngineEvent::Type::Ended || cued_.song == nullptr) return;
+    if (type != EngineEvent::Type::Ended || !cueFits()) return;
 
     switch (follow_.kind) {
     case FollowKind::Stop:
@@ -299,7 +308,7 @@ void Engine::endGap(std::int64_t streamTime) noexcept {
     in_gap_ = false;
     gap_left_ = 0;
     gap_after_ = 0;
-    if (cued_.song != nullptr)
+    if (cueFits())
         playCued(cued_.song->start, streamTime, true);
     else
         state_ = PlayState::Stopped;

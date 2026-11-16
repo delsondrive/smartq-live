@@ -113,7 +113,7 @@ TEST_CASE("stream time keeps counting up across a second prepare", "[engine]") {
     REQUIRE(e.popEvent(ev)); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 3000);
     REQUIRE(e.popEvent(ev)); CHECK(ev.type == EngineEvent::Type::Ended); CHECK(ev.streamTime == 4000);
 }
-TEST_CASE("process allocates nothing, and finished songs are freed by collectGarbage", "[engine]") {
+TEST_CASE("process allocates and frees nothing, and finished songs are freed by collectGarbage", "[engine]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     auto song = share(testSong("a", 2000, 0.3f));
     std::weak_ptr<const PreparedSong> watch = song;
@@ -121,6 +121,7 @@ TEST_CASE("process allocates nothing, and finished songs are freed by collectGar
     std::vector<float> l(512), r(512); float* out[2] = {l.data(), r.data()};
     { sqlive::test::AllocGuard guard; for (int i = 0; i < 10; ++i) e.process(out, 2, 512); }
     CHECK(sqlive::test::allocationCount() == 0);
+    CHECK(sqlive::test::deallocationCount() == 0);
     CHECK_FALSE(watch.expired());                   // the audio thread never frees
     e.collectGarbage();
     CHECK(watch.expired());
@@ -140,4 +141,30 @@ TEST_CASE("process renders into every channel it is given, up to 256", "[engine]
     auto many = renderOffline(wide, 300, 100, 64);
     CHECK(many[254][50] == 0.25f);  CHECK(many[255][50] == 0.25f);   // the last two the engine renders
     CHECK(many[258][50] == 0.0f);                                     // beyond 256: left cleared
+}
+TEST_CASE("a cue made at another rate is dropped by prepare and never started", "[engine]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = share(testSong("a", 1000, 0.25f));
+    std::weak_ptr<const PreparedSong> watch = song;
+    const auto serial = e.cue(std::move(song));
+    renderOffline(e, 2, 10, 512);
+    e.prepare(48000.0, 256);                         // the same rate: the cue stays
+    CHECK(e.status().cuedSerial == serial);
+    e.prepare(44100.0, 256);                         // another rate: it goes, through the garbage queue
+    CHECK(e.status().cuedSerial == 0);
+    CHECK_FALSE(watch.expired());
+    e.collectGarbage();
+    CHECK(watch.expired());
+    e.start();
+    CHECK(renderOffline(e, 2, 10, 256)[0][5] == 0.0f);
+    CHECK(drainEvents(e).empty());
+
+    // Cued after the change, but made for the old rate: start ignores it.
+    e.cue(share(testSong("b", 1000, 0.5f))); e.start();
+    CHECK(renderOffline(e, 2, 10, 256)[0][5] == 0.0f);
+    CHECK(e.status().state == PlayState::Stopped);
+    CHECK(drainEvents(e).empty());
+    e.cue(share(prepareSong("c", TempoMap{}, 0, 0, {{constantAudio(1000, 0.75f, NAN), 0}}, ClickSetup{.enabled = false}, 44100.0)));
+    e.start();
+    CHECK(renderOffline(e, 2, 10, 256)[0][5] == 0.75f);
 }

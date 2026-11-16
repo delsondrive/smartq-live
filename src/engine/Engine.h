@@ -45,7 +45,8 @@ public:
     Engine();
 
     // Must only be called while process cannot run: for a device, from audioDeviceAboutToStart, before its first callback.
-    // It stops whatever was playing, at once and without an event, keeps the cue and the mix, and keeps stream time running.
+    // It stops whatever was playing, at once and without an event, keeps the mix, keeps the cue unless it was made at
+    // another sample rate (that one is dropped, through the garbage queue), and keeps stream time running.
     void prepare(double sampleRate, int maxBlockFrames);
     // Audio thread: clears out, then renders into the first min(numChannels, kMaxDeviceChannels) of it.
     void process(float* const* out, int numChannels, int frames) noexcept;
@@ -53,7 +54,7 @@ public:
     // Control thread (the message thread).
     std::uint64_t cue(std::shared_ptr<const PreparedSong>);   // the song that start() or a follow-on will play; returns its serial
     void clearCue();
-    void start();                         // Stopped and something cued: play it from its start
+    void start();                         // Stopped and something cued at the engine's rate: play it from its start
     void startAt(SamplePos songTime);     // the same, from a position clamped to the song
     void stop();
     void setFollowOn(FollowOn);
@@ -101,6 +102,8 @@ private:
     void push(Command&&);
     void handle(Command&) noexcept;
     void startPlaying(SamplePos songTime) noexcept;
+    bool fitsRate(const PreparedSong&) const noexcept;
+    bool cueFits() const noexcept;        // something is cued, made at the engine's rate; a cue that doesn't never plays
     void playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix) noexcept;
     void renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept;
     void finishSong(EngineEvent::Type, std::int64_t streamTime) noexcept;
