@@ -5,6 +5,7 @@
 
 #include "app/ShowController.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -30,10 +31,6 @@ constexpr float kCtaHeight = 162.0f, kCtaRadius = 18.0f, kCtaPad = 30.0f, kCtaGa
 constexpr float kActionLine = 56.0f, kDetailLine = 24.0f, kLoadGap = 8.0f, kLoadWidth = 520.0f;
 constexpr float kAfterHeight = 46.0f, kAfterGap = 8.0f, kAfterPadX = 14.0f, kAfterNumberGap = 6.0f;
 constexpr float kSentenceLine = 42.0f, kHintLine = 20.0f, kHintGap = 18.0f;
-
-juce::String utf8(const char* text) { return juce::String::fromUTF8(text); }
-
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 
 // The mockup's weight 300, for the big figures.
 juce::Font lightFont(float size) {
@@ -145,12 +142,6 @@ void StageView::visibilityChanged() {
     if (isVisible() && !fresh_) refresh();
 }
 
-bool StageView::shownWithParents() const {
-    for (const auto* c = static_cast<const juce::Component*>(this); c->getParentComponent() != nullptr; c = c->getParentComponent())
-        if (!c->isVisible()) return false;
-    return true;
-}
-
 std::vector<StageView::Figure> StageView::figuresOf(const ShowState& st) const {
     if (st.playing) return {{st.bar, st.beat, "BAR"}, {st.bpm, {}, st.bpmLabel}, {st.left, {}, "LEFT"}};
     if (st.interrupted) return {{st.bar, {}, "BAR"}};               // the mockup's screen 5: where the song was cut off
@@ -185,7 +176,7 @@ StageView::Shape StageView::shapeOf(const ShowState& st) const {
 }
 
 void StageView::refresh() {
-    if (!shownWithParents()) {                                    // hidden: it catches up when shown
+    if (!shownWithParents(*this)) {                               // hidden: it catches up when shown
         fresh_ = false;
         stopTimer();
         return;

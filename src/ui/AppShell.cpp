@@ -7,6 +7,7 @@
 #include "app/ShowController.h"
 #include "ui/PreShowDialog.h"
 #include "ui/Theme.h"
+#include "ui/Veil.h"
 #include "ui/Widgets.h"
 
 namespace sqlive::ui {
@@ -15,47 +16,12 @@ using app::Mode;
 
 namespace {
 
-constexpr int kVeilMargin = 80;
-
 // The mockup's .dlg, .dh and .df, as the pre-show dialog draws them.
 constexpr float kDialogRadius = 14.0f;
 constexpr int kPadX = 18, kHeaderHeight = 52, kBodyPadY = 14, kFooterPadY = 12, kButtonHeight = 30, kFooterGap = 10;
 constexpr int kQuestionWidth = 460;
 
 }  // namespace
-
-// The mockup's .veil: the app dimmed behind a dialog that sits in the middle, its own width or the shell's less 80, and
-// as tall as it says it needs (or the shell's height less 80). The shell keeps it over all of itself. It takes every click
-// outside the dialog, and keeps the keys pressed in it from reaching the app.
-class AppShell::Veil : public juce::Component {
-public:
-    Veil(std::unique_ptr<juce::Component> content, int width, std::function<int()> idealHeight)
-        : content_(std::move(content)), width_(width), idealHeight_(std::move(idealHeight)) {
-        setWantsKeyboardFocus(true);
-        addAndMakeVisible(*content_);
-    }
-
-    juce::Component& content() { return *content_; }
-
-    void paint(juce::Graphics& g) override {
-        g.fillAll(juce::Colour(5, 4, 7).withAlpha(0.7f));
-        juce::DropShadow(juce::Colours::black.withAlpha(0.7f), 80, {0, 30}).drawForRectangle(g, content_->getBounds());
-    }
-
-    void resized() override {
-        const int w = std::max(0, std::min(width_, getWidth() - kVeilMargin));
-        content_->setSize(w, std::max(1, content_->getHeight()));   // so the height it asks for is for this width
-        const int h = std::max(0, std::min(idealHeight_(), getHeight() - kVeilMargin));
-        content_->setBounds(getLocalBounds().withSizeKeepingCentre(w, h));
-    }
-
-    bool keyPressed(const juce::KeyPress&) override { return true; }
-
-private:
-    std::unique_ptr<juce::Component> content_;
-    int width_;
-    std::function<int()> idealHeight_;
-};
 
 // "Keep tonight's level changes?": the sentence "<n> levels were changed during the show." and the buttons "Drop them" and
 // "Keep them" (primary), drawn as the mockup's dialogs are.

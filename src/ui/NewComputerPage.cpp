@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "ui/Helpers.h"
 #include "ui/Logo.h"
 #include "ui/Theme.h"
 
@@ -11,7 +12,6 @@ namespace {
 
 constexpr int kPadX = 22, kPadY = 18, kBoxTop = kPadY + 96, kMaxWidth = 760, kRowHeight = 28, kButtonHeight = 30, kBoxPad = 12;
 
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");     // …
 
 juce::var rigDeviceParams(const juce::String& rigId, const juce::String& computer, const juce::String& type, const juce::String& name) {
     auto* object = new juce::DynamicObject();

@@ -6,13 +6,17 @@
 
 #include "app/AudioHost.h"
 #include "engine/MixSetup.h"
+#include "model/JsonObject.h"
 #include "model/Routing.h"
 #include "model/Units.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/OutputLabelPill.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
+
+using model::jsonObject;
 
 namespace {
 
@@ -31,7 +35,6 @@ constexpr int kDragThreshold = 3, kPixelsPerStep = 2;
 constexpr float kDbPerStep = 0.5f;
 constexpr int kMessageMs = 4000;
 
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");                                  // …
 const juce::String kCornerTitle = juce::String::fromUTF8("ROLE \xe2\x86\x93   OUTPUT MIX \xe2\x86\x92");   // ROLE ↓   OUTPUT MIX →
 const juce::String kNotSent = juce::String::fromUTF8("\xc2\xb7");                                        // ·
 const juce::String kAddRole = "+ Add a role", kAddOutput = "+ Add an output", kOnePerRole = "One output per role";
@@ -43,25 +46,7 @@ juce::Font outputFont() { return theme::font(theme::sizeSmall, true); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
 juce::Font linkFont() { return theme::font(theme::sizeSmall, true); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
-
-juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items) {
-    auto* o = new juce::DynamicObject();
-    for (const auto& [key, value] : items) o->setProperty(juce::Identifier(key), value);
-    return juce::var(o);
-}
-
-void keepOffKeyboard(juce::Component& component) {
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (auto* child : component.getChildren()) keepOffKeyboard(*child);
-}
-
-float toTenth(float db) {
-    const float r = std::round(db * 10.0f) / 10.0f;
-    return r == 0.0f ? 0.0f : r;
-}
 
 const char* labelKey(model::OutputLabel label) {
     switch (label) {
@@ -434,15 +419,9 @@ void RoutingGrid::visibilityChanged() {
     if (isVisible() && !fresh_) refresh();
 }
 
-bool RoutingGrid::shownWithParents() const {
-    for (const auto* c = static_cast<const juce::Component*>(this); c->getParentComponent() != nullptr; c = c->getParentComponent())
-        if (!c->isVisible()) return false;
-    return true;
-}
-
 void RoutingGrid::refresh(bool force) {
     // Hidden, it waits until it is shown: the session's changes come 30 times a second while a song plays.
-    if (!force && !shownWithParents()) {
+    if (!force && !shownWithParents(*this)) {
         fresh_ = false;
         return;
     }
@@ -595,7 +574,7 @@ std::optional<float> RoutingGrid::sentLevel(const juce::String& outputId, const 
 }
 
 void RoutingGrid::setLevel(const juce::String& outputId, const juce::String& roleId, std::optional<float> db, const juce::String& key) {
-    run("mix.setLevel", object({{"rigId", session_.rigId()}, {"outputId", outputId}, {"roleId", roleId}, {"db", db ? juce::var(*db) : juce::var()}}),
+    run("mix.setLevel", jsonObject({{"rigId", session_.rigId()}, {"outputId", outputId}, {"roleId", roleId}, {"db", db ? juce::var(*db) : juce::var()}}),
         key);
 }
 
@@ -648,17 +627,18 @@ void RoutingGrid::dragTrim(int column, float deltaDb, const juce::String& gestur
         gestureRefused_ = false;
     }
     if (gestureRoleId_.isNotEmpty()) return;                     // a cell's gesture
-    run("output.set", object({{"rigId", session_.rigId()}, {"outputId", gestureOutputId_},
+    run("output.set", jsonObject({{"rigId", session_.rigId()}, {"outputId", gestureOutputId_},
                               {"trimDb", toTenth(model::clampDb(gestureStartDb_ + deltaDb))}}),
         gestureId);
 }
 
 void RoutingGrid::setOutputChannels(const juce::String& outputId, int firstChannel, bool stereo) {
-    run("output.set", object({{"rigId", session_.rigId()}, {"outputId", outputId}, {"firstChannel", firstChannel}, {"stereo", stereo}}));
+    run("output.set",
+        jsonObject({{"rigId", session_.rigId()}, {"outputId", outputId}, {"firstChannel", firstChannel}, {"stereo", stereo}}));
 }
 
 void RoutingGrid::setOutputLabel(const juce::String& outputId, model::OutputLabel label) {
-    run("output.set", object({{"rigId", session_.rigId()}, {"outputId", outputId}, {"label", labelKey(label)}}));
+    run("output.set", jsonObject({{"rigId", session_.rigId()}, {"outputId", outputId}, {"label", labelKey(label)}}));
 }
 
 // Each part in stereo from output 1/2 on, then the click in mono after them, each an in-ear output with only its own role
@@ -690,14 +670,14 @@ void RoutingGrid::oneOutputPerRole() {
     };
     const auto refused = [&] {
         for (const auto& id : old)
-            if (const auto r = step("output.remove", object({{"rigId", rigId}, {"outputId", id}})); !r.ok) return r.message;
+            if (const auto r = step("output.remove", jsonObject({{"rigId", rigId}, {"outputId", id}})); !r.ok) return r.message;
         int channel = 1;
         for (const auto& role : roles) {
             const bool stereo = role.kind == model::RoleKind::Part;
-            const auto added = step("output.add", object({{"rigId", rigId}, {"name", role.name}, {"firstChannel", channel},
+            const auto added = step("output.add", jsonObject({{"rigId", rigId}, {"name", role.name}, {"firstChannel", channel},
                                                           {"stereo", stereo}, {"label", "monitor"}}));
             if (!added.ok) return added.message;
-            if (const auto r = step("mix.setLevel", object({{"rigId", rigId}, {"outputId", added.value}, {"roleId", role.id}, {"db", 0.0f}}));
+            if (const auto r = step("mix.setLevel", jsonObject({{"rigId", rigId}, {"outputId", added.value}, {"roleId", role.id}, {"db", 0.0f}}));
                 !r.ok)
                 return r.message;
             channel += stereo ? 2 : 1;
@@ -728,7 +708,7 @@ void RoutingGrid::outputMenu(const juce::String& outputId, juce::Component& targ
                            if (safe == nullptr) return;
                            if (result == 1) safe->askRenameOutput(outputId);
                            if (result == 2) safe->askOutputChannels(outputId);
-                           if (result == 3) safe->run("output.remove", object({{"rigId", safe->session_.rigId()}, {"outputId", outputId}}));
+                           if (result == 3) safe->run("output.remove", jsonObject({{"rigId", safe->session_.rigId()}, {"outputId", outputId}}));
                            if (result >= 10 && result < 14) safe->setOutputLabel(outputId, kLabels[result - 10]);
                        });
 }
@@ -756,9 +736,9 @@ void RoutingGrid::roleMenu(const juce::String& roleId, juce::Component& target) 
                        [safe = juce::Component::SafePointer<RoutingGrid>(this), roleId](int result) {
                            if (safe == nullptr) return;
                            if (result == 1) safe->askRenameRole(roleId);
-                           if (result == 2) safe->run("role.remove", object({{"roleId", roleId}}));
+                           if (result == 2) safe->run("role.remove", jsonObject({{"roleId", roleId}}));
                            if (result >= 10 && result < 10 + kColourCount)
-                               safe->run("role.set", object({{"roleId", roleId}, {"colour", kRoleColours[result - 10].colour.toDisplayString(false)}}));
+                               safe->run("role.set", jsonObject({{"roleId", roleId}, {"colour", kRoleColours[result - 10].colour.toDisplayString(false)}}));
                        });
 }
 
@@ -834,7 +814,7 @@ void RoutingGrid::typeTrim(int column, const juce::String& typed) {
         say(kNotALevel);
         return;
     }
-    run("output.set", object({{"rigId", session_.rigId()}, {"outputId", state_.columns[static_cast<std::size_t>(column)].outputId},
+    run("output.set", jsonObject({{"rigId", session_.rigId()}, {"outputId", state_.columns[static_cast<std::size_t>(column)].outputId},
                               {"trimDb", toTenth(model::clampDb(*db))}}));
 }
 
@@ -851,7 +831,7 @@ void RoutingGrid::addOutput(const juce::String& name, const juce::String& typedF
         say(kNotAChannel);
         return;
     }
-    run("output.add", object({{"rigId", session_.rigId()}, {"name", name.trim()}, {"firstChannel", *first}, {"stereo", stereo},
+    run("output.add", jsonObject({{"rigId", session_.rigId()}, {"name", name.trim()}, {"firstChannel", *first}, {"stereo", stereo},
                               {"label", labelKey(label)}}));
 }
 
@@ -859,7 +839,7 @@ void RoutingGrid::askRenameOutput(const juce::String& outputId) {
     const auto* out = output(outputId);
     if (out == nullptr) return;
     askText("Rename the output", out->name, "Rename", [this, outputId](const juce::String& name) {
-        run("output.set", object({{"rigId", session_.rigId()}, {"outputId", outputId}, {"name", name}}));
+        run("output.set", jsonObject({{"rigId", session_.rigId()}, {"outputId", outputId}, {"name", name}}));
     });
 }
 
@@ -882,7 +862,7 @@ void RoutingGrid::askOutputChannels(const juce::String& outputId) {
 }
 
 void RoutingGrid::askAddRole() {
-    askText("Add a role", {}, "Add", [this](const juce::String& name) { run("role.add", object({{"name", name}})); });
+    askText("Add a role", {}, "Add", [this](const juce::String& name) { run("role.add", jsonObject({{"name", name}})); });
 }
 
 void RoutingGrid::askAddOutput() {
@@ -915,7 +895,7 @@ void RoutingGrid::askRenameRole(const juce::String& roleId) {
     const auto* role = session_.model().role(roleId);
     if (role == nullptr) return;
     askText("Rename the role", role->name, "Rename", [this, roleId](const juce::String& name) {
-        run("role.set", object({{"roleId", roleId}, {"name", name}}));
+        run("role.set", jsonObject({{"roleId", roleId}, {"name", name}}));
     });
 }
 

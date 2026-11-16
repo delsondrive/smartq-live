@@ -5,6 +5,7 @@
 
 #include "model/Units.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/OutputLabelPill.h"
 #include "ui/Theme.h"
 
@@ -28,19 +29,7 @@ juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 juce::Font valueFont() { return theme::font(theme::sizeBody, true); }
 juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
-
-void keepOffKeyboard(juce::Component& component) {
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (auto* child : component.getChildren()) keepOffKeyboard(*child);
-}
-
-float toTenth(float db) {
-    const float r = std::round(db * 10.0f) / 10.0f;
-    return r == 0.0f ? 0.0f : r;
-}
 
 // The sentence's height in the side panel at that width.
 juce::TextLayout sentenceLayout(const juce::String& text, float width) {

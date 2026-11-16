@@ -7,6 +7,7 @@
 #include "app/PartFiles.h"
 #include "app/Power.h"
 #include "model/CloudFiles.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -29,9 +30,6 @@ juce::Font boldFont() { return theme::font(theme::sizeBody, true); }
 juce::Font markFont() { return theme::font(theme::sizeBody, true); }
 juce::Font linkFont() { return theme::font(theme::sizeSmall, true); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
-
-const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");
 const juce::String kTick = juce::String::fromUTF8("\xe2\x9c\x93");
 const juce::String kCross = juce::String::fromUTF8("\xe2\x9c\x95");
 

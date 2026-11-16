@@ -6,6 +6,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "ui/Theme.h"
+
 namespace sqlive::ui {
 
 // The app's shared controls, each drawn from the theme as the mockup's CSS draws it. Each one that takes a value
@@ -180,7 +182,7 @@ private:
     void report(float db, bool start, bool end);
 
     std::optional<float> value_;
-    juce::Colour colour_{0xffc9c2cf};
+    juce::Colour colour_ = theme::mid;
     bool changedTonight_ = false;
     float meter_ = 0.0f;
     bool dragging_ = false;

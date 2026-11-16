@@ -16,6 +16,9 @@ inline const juce::Colour onAccent{0xff0e0c11};                  // text on a mi
 // A field under the mouse (Smart Q's), and the faint line between table rows (the mockup's td border).
 inline const juce::Colour fieldHover{0x20ffffff}, rowLine{0x0dffffff};
 
+// The mockup's .veil behind a dialog: the app dimmed, and the dialog's deep shadow.
+inline const juce::Colour veil = juce::Colour(5, 4, 7).withAlpha(0.7f), veilShadow = juce::Colours::black.withAlpha(0.7f);
+
 // The mockup's font sizes, in CSS pixels: the page's 14, tables, buttons and chips 13, hints and pills 12,
 // captions 11, tags 10.
 inline constexpr float sizeBase = 14.0f, sizeBody = 13.0f, sizeSmall = 12.0f, sizeCaption = 11.0f, sizeTag = 10.0f;

@@ -83,7 +83,6 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void refresh();
-    bool shownWithParents() const;
     Shape shapeOf(const ShowState&) const;
     std::vector<Figure> figuresOf(const ShowState&) const;
     bool labelIsNow() const;                                      // the label is the song playing, or cut off: mint

@@ -115,7 +115,6 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void refresh(bool force = false);
-    bool shownWithParents() const;
     void layoutGrid();
     bool editable() const;
 

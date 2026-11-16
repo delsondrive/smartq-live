@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -19,21 +20,10 @@ constexpr int kCapsHeight = 15, kCapsGap = 6, kTitleHeight = 25, kHintHeight = 1
 constexpr int kCaptionLeft = 12, kCaptionTop = 7, kCaptionHeight = 16, kChoiceRight = 10, kChoiceTop = 5, kChoiceHeight = 20;
 constexpr int kChoiceMaxWidth = 220, kCaptionChoiceGap = 8;
 
-const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");
-
 juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
 juce::Font captionFont() { return theme::tracked(theme::font(theme::sizeTag, true), 0.8f); }
 juce::Font titleFont() { return theme::font(18.0f, true); }
 juce::Font hintFont() { return theme::font(theme::sizeSmall); }
-
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
-
-// Nothing in the main view takes the keyboard, not even with a click: Space and the arrows must reach the window.
-void keepOffKeyboard(juce::Component& component) {
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (auto* child : component.getChildren()) keepOffKeyboard(*child);
-}
 
 }  // namespace
 
@@ -92,14 +82,8 @@ void MainView::visibilityChanged() {
     if (isVisible() && !fresh_) refresh();
 }
 
-bool MainView::shownWithParents() const {
-    for (const auto* c = static_cast<const juce::Component*>(this); c->getParentComponent() != nullptr; c = c->getParentComponent())
-        if (!c->isVisible()) return false;
-    return true;
-}
-
 void MainView::refresh() {
-    if (!shownWithParents()) {                                    // hidden: it catches up when shown
+    if (!shownWithParents(*this)) {                               // hidden: it catches up when shown
         fresh_ = false;
         stopTimer();
         return;

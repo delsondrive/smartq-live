@@ -81,7 +81,6 @@ private:
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void refresh(bool force = false);
-    bool shownWithParents() const;
     void layoutRow();
     void faderMoved(int stripIndex, float db, bool gestureStart, bool gestureEnd);
 

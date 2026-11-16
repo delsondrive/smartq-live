@@ -7,6 +7,7 @@
 #include "app/BuildInfo.h"
 #include "app/ShowController.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/LiveLookAndFeel.h"
 #include "ui/Logo.h"
 #include "ui/Theme.h"
@@ -22,8 +23,6 @@ namespace {
 constexpr int kPadX = 16, kGap = 14;
 constexpr float kLogoHeight = 26.0f;
 constexpr double kHoldMs = app::ShowController::holdSeconds * 1000.0;
-
-const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");      // " · "
 
 const juce::Colour kOnEmber{0xff160f10};                             // the mockup's text on an ember fill
 
@@ -41,7 +40,6 @@ juce::Font clockFont() {                                              // the moc
 #endif
 }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
 
 const juce::StringArray& tabNames() {

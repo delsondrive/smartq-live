@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "app/AudioHost.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
 
@@ -27,10 +28,6 @@ juce::Font signFont() {
 #else
     return theme::font(18.0f, true);
 #endif
-}
-
-int widthOf(const juce::Font& font, const juce::String& text) {
-    return static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, text)));
 }
 
 }  // namespace
@@ -72,12 +69,12 @@ void InterruptedBanner::paint(juce::Graphics& g) {
     if (heading.startsWith(warningSign())) {
         const auto sign = signFont();
         g.setFont(sign);
-        g.drawText(warningSign(), area.removeFromLeft(widthOf(sign, warningSign())), juce::Justification::centredLeft, false);
+        g.drawText(warningSign(), area.removeFromLeft(widthInPixels(sign, warningSign())), juce::Justification::centredLeft, false);
         heading = heading.substring(warningSign().length());
     }
     const auto bold = theme::font(18.0f, true);
     g.setFont(bold);
-    g.drawText(heading, area.removeFromLeft(widthOf(bold, heading)), juce::Justification::centredLeft, false);
+    g.drawText(heading, area.removeFromLeft(widthInPixels(bold, heading)), juce::Justification::centredLeft, false);
     area.removeFromLeft(kGap);
     g.setFont(theme::font(theme::sizeBase, true));
     g.drawFittedText(sentence_, area, juce::Justification::centredLeft, 2, 1.0f);

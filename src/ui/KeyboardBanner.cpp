@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -38,10 +39,6 @@ juce::Font signFont() {
 #endif
 }
 
-int widthOf(const juce::Font& font, const juce::String& text) {
-    return static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, text)));
-}
-
 }  // namespace
 
 KeyboardBanner::KeyboardBanner() {
@@ -56,10 +53,10 @@ void KeyboardBanner::paint(juce::Graphics& g) {
     g.setColour(kInk);
     const auto sign = signFont();
     g.setFont(sign);
-    g.drawText(keyboardSign(), area.removeFromLeft(widthOf(sign, keyboardSign())), juce::Justification::centredLeft, false);
+    g.drawText(keyboardSign(), area.removeFromLeft(widthInPixels(sign, keyboardSign())), juce::Justification::centredLeft, false);
     const auto bold = theme::font(18.0f, true);
     g.setFont(bold);
-    g.drawText(heading(), area.removeFromLeft(widthOf(bold, heading())), juce::Justification::centredLeft, false);
+    g.drawText(heading(), area.removeFromLeft(widthInPixels(bold, heading())), juce::Justification::centredLeft, false);
     area.removeFromLeft(kGap);
     g.setFont(theme::font(theme::sizeBase, true));
     g.drawFittedText(sentence(), area, juce::Justification::centredLeft, 2, 1.0f);

@@ -5,10 +5,14 @@
 #include <iterator>
 
 #include "app/AudioHost.h"
+#include "model/JsonObject.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
+
+using model::jsonObject;
 
 namespace {
 
@@ -20,27 +24,13 @@ constexpr int kSubTabsWidth = 190, kSubTabHeight = 47, kSubTabPadX = 12, kSubTab
 constexpr int kBoxPadX = 12, kBoxPadY = 10, kGroupGap = 18, kCaptionHeight = 15, kCaptionGap = 6, kControlHeight = 28;
 constexpr int kPairGap = 6, kButtonGap = 8, kPillHeight = 22, kProblemHeight = 18, kMaxProblemLines = 4;
 
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");     // …
 const double kRates[] = {44100.0, 48000.0, 88200.0, 96000.0};
 const int kBuffers[] = {64, 128, 256, 512, 1024, 2048};
 
 juce::Font captionFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
 juce::Font problemFont() { return theme::font(theme::sizeBody); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
-
-juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items) {
-    auto* o = new juce::DynamicObject();
-    for (const auto& [key, value] : items) o->setProperty(juce::Identifier(key), value);
-    return juce::var(o);
-}
-
-void keepOffKeyboard(juce::Component& component) {
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (auto* child : component.getChildren()) keepOffKeyboard(*child);
-}
 
 // This computer's interface in the rig, or nullptr when it names none.
 const model::ComputerBinding* bindingOf(const app::Session& session) {
@@ -75,7 +65,7 @@ SetupPage::SetupPage(app::Session& session, app::AudioHost* host)
         const auto* rig = session_.model().rig(session_.rigId());
         if (rig == nullptr) return;
         askText("Duplicate the rig", rig->name + " copy", "Duplicate", [this, rigId = rig->id](const juce::String& name) {
-            const auto result = session_.commands().run("rig.duplicate", object({{"rigId", rigId}, {"name", name}}));
+            const auto result = session_.commands().run("rig.duplicate", jsonObject({{"rigId", rigId}, {"name", name}}));
             if (!result.ok) {
                 say(result.message);
                 return;
@@ -113,15 +103,9 @@ void SetupPage::visibilityChanged() {
     grid_.refreshNow();                                           // it isn't told when the page is shown
 }
 
-bool SetupPage::shownWithParents() const {
-    for (const auto* c = static_cast<const juce::Component*>(this); c->getParentComponent() != nullptr; c = c->getParentComponent())
-        if (!c->isVisible()) return false;
-    return true;
-}
-
 void SetupPage::refresh(bool force) {
     // Hidden, it waits until it is shown: the session's changes come 30 times a second while a song plays.
-    if (!force && !shownWithParents()) {
+    if (!force && !shownWithParents(*this)) {
         fresh_ = false;
         return;
     }
@@ -225,7 +209,7 @@ void SetupPage::chooseType(int index) {
 void SetupPage::chooseDevice(int index) {
     if (!juce::isPositiveAndBelow(index, devices_.items().size()) || types_.selected() < 0) return;
     const auto type = types_.items()[types_.selected()];
-    if (!run("rig.setDevice", object({{"rigId", session_.rigId()}, {"computerId", session_.settings().computerName()},
+    if (!run("rig.setDevice", jsonObject({{"rigId", session_.rigId()}, {"computerId", session_.settings().computerName()},
                                       {"deviceType", type}, {"deviceName", devices_.items()[index]}})))
         return;
     type_.clear();
@@ -234,12 +218,14 @@ void SetupPage::chooseDevice(int index) {
 
 void SetupPage::chooseRate(int index) {
     if (!juce::isPositiveAndBelow(index, static_cast<int>(std::size(kRates)))) return;
-    if (run("rig.set", object({{"rigId", session_.rigId()}, {"sampleRate", kRates[index]}})) && bindingOf(session_) != nullptr) reopen();
+    if (run("rig.set", jsonObject({{"rigId", session_.rigId()}, {"sampleRate", kRates[index]}})) && bindingOf(session_) != nullptr)
+        reopen();
 }
 
 void SetupPage::chooseBuffer(int index) {
     if (!juce::isPositiveAndBelow(index, static_cast<int>(std::size(kBuffers)))) return;
-    if (run("rig.set", object({{"rigId", session_.rigId()}, {"bufferSize", kBuffers[index]}})) && bindingOf(session_) != nullptr) reopen();
+    if (run("rig.set", jsonObject({{"rigId", session_.rigId()}, {"bufferSize", kBuffers[index]}})) && bindingOf(session_) != nullptr)
+        reopen();
 }
 
 void SetupPage::rigMenu() {
@@ -255,7 +241,7 @@ void SetupPage::rigMenu() {
                            if (safe == nullptr) return;
                            if (result == 1)
                                safe->askText("New rig", {}, "Make it", [safe](const juce::String& newName) {
-                                   const auto made = safe->session_.commands().run("rig.create", object({{"name", newName}}));
+                                   const auto made = safe->session_.commands().run("rig.create", jsonObject({{"name", newName}}));
                                    if (!made.ok) {
                                        safe->say(made.message);
                                        return;
@@ -265,9 +251,9 @@ void SetupPage::rigMenu() {
                                });
                            if (result == 2)
                                safe->askText("Rename the rig", name, "Rename", [safe, rigId](const juce::String& newName) {
-                                   safe->run("rig.set", object({{"rigId", rigId}, {"name", newName}}));
+                                   safe->run("rig.set", jsonObject({{"rigId", rigId}, {"name", newName}}));
                                });
-                           if (result == 3 && safe->run("rig.remove", object({{"rigId", rigId}}))) safe->reopen();
+                           if (result == 3 && safe->run("rig.remove", jsonObject({{"rigId", rigId}}))) safe->reopen();
                        });
 }
 

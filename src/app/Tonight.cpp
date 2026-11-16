@@ -3,9 +3,12 @@
 #include <cmath>
 #include <initializer_list>
 
+#include "model/JsonObject.h"
 #include "model/Units.h"
 
 namespace sqlive::app {
+
+using model::jsonObject;
 
 namespace {
 
@@ -33,12 +36,6 @@ std::optional<Kind> kindNamed(const juce::String& name) {
 }
 
 LevelTarget partTarget(const juce::String& songId, const juce::String& partId) { return {Kind::Part, songId, partId, {}, {}}; }
-
-juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items) {
-    auto* o = new juce::DynamicObject();
-    for (const auto& [key, value] : items) o->setProperty(juce::Identifier(key), value);
-    return juce::var(o);
-}
 
 std::optional<float> numberIn(const juce::var& v) {
     if (!(v.isInt() || v.isInt64() || v.isDouble())) return std::nullopt;
@@ -133,12 +130,12 @@ model::BandDoc Tonight::apply(model::BandDoc band) const {
 juce::String Tonight::toJson() const {
     juce::Array<juce::var> levels, mutes;
     for (const auto& [target, db] : levels_)
-        levels.add(object({{"kind", nameOf(target.kind)}, {"songId", target.songId}, {"partId", target.partId},
+        levels.add(jsonObject({{"kind", nameOf(target.kind)}, {"songId", target.songId}, {"partId", target.partId},
                            {"outputId", target.outputId}, {"roleId", target.roleId},
                            {"db", db.has_value() ? juce::var(*db) : juce::var()}}));
     for (const auto& [target, mute] : mutes_)
-        mutes.add(object({{"songId", target.songId}, {"partId", target.partId}, {"mute", mute}}));
-    return juce::JSON::toString(object({{"levels", levels}, {"mutes", mutes}}), true);
+        mutes.add(jsonObject({{"songId", target.songId}, {"partId", target.partId}, {"mute", mute}}));
+    return juce::JSON::toString(jsonObject({{"levels", levels}, {"mutes", mutes}}), true);
 }
 
 Tonight Tonight::fromJson(const juce::String& text) {
@@ -172,25 +169,25 @@ std::vector<std::pair<juce::String, juce::var>> Tonight::asCommands(const juce::
         const juce::var value = db.has_value() ? juce::var(*db) : juce::var();
         switch (target.kind) {
         case Kind::Part:
-            commands.emplace_back("part.set", object({{"songId", target.songId}, {"partId", target.partId}, {"gainDb", value}}));
+            commands.emplace_back("part.set", jsonObject({{"songId", target.songId}, {"partId", target.partId}, {"gainDb", value}}));
             break;
         case Kind::SongClick:
-            commands.emplace_back("song.setClick", object({{"songId", target.songId}, {"offsetDb", value}}));
+            commands.emplace_back("song.setClick", jsonObject({{"songId", target.songId}, {"offsetDb", value}}));
             break;
         case Kind::Mix:
-            commands.emplace_back("mix.setLevel", object({{"rigId", rigId}, {"outputId", target.outputId},
+            commands.emplace_back("mix.setLevel", jsonObject({{"rigId", rigId}, {"outputId", target.outputId},
                                                           {"roleId", target.roleId}, {"db", value}}));
             break;
         case Kind::OutputTrim:
-            commands.emplace_back("output.set", object({{"rigId", rigId}, {"outputId", target.outputId}, {"trimDb", value}}));
+            commands.emplace_back("output.set", jsonObject({{"rigId", rigId}, {"outputId", target.outputId}, {"trimDb", value}}));
             break;
-        case Kind::BandClick: commands.emplace_back("band.setLevel", object({{"which", "click"}, {"db", value}})); break;
-        case Kind::BandCues: commands.emplace_back("band.setLevel", object({{"which", "cues"}, {"db", value}})); break;
-        case Kind::BandPad: commands.emplace_back("band.setLevel", object({{"which", "pad"}, {"db", value}})); break;
+        case Kind::BandClick: commands.emplace_back("band.setLevel", jsonObject({{"which", "click"}, {"db", value}})); break;
+        case Kind::BandCues: commands.emplace_back("band.setLevel", jsonObject({{"which", "cues"}, {"db", value}})); break;
+        case Kind::BandPad: commands.emplace_back("band.setLevel", jsonObject({{"which", "pad"}, {"db", value}})); break;
         }
     }
     for (const auto& [target, mute] : mutes_)
-        commands.emplace_back("part.set", object({{"songId", target.songId}, {"partId", target.partId}, {"mute", mute}}));
+        commands.emplace_back("part.set", jsonObject({{"songId", target.songId}, {"partId", target.partId}, {"mute", mute}}));
     return commands;
 }
 

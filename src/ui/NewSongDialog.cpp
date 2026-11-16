@@ -7,19 +7,22 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "model/JsonObject.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
+
+using model::jsonObject;
 
 namespace {
 
 const juce::String kTick = juce::String::fromUTF8("\xe2\x9c\x93");         // ✓
 const juce::String kEnDash = juce::String::fromUTF8("\xe2\x80\x93");       // –
 const juce::String kEmDash = juce::String::fromUTF8("\xe2\x80\x94");       // —
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");     // …
 const juce::String kOpenQuote = juce::String::fromUTF8("\xe2\x80\x9c");    // “
 const juce::String kCloseQuote = juce::String::fromUTF8("\xe2\x80\x9d");   // ”
 const juce::String kDownArrow = juce::String::fromUTF8("\xe2\x87\xa9");    // ⇩
@@ -45,15 +48,7 @@ juce::Font hintFont() { return theme::font(theme::sizeSmall); }
 juce::Font stepFont() { return theme::font(theme::sizeSmall, true); }
 juce::Font headFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.6f); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
-
 juce::String counted(int n, const juce::String& one, const juce::String& many) { return juce::String(n) + " " + (n == 1 ? one : many); }
-
-juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items) {
-    auto* o = new juce::DynamicObject();
-    for (const auto& [key, value] : items) o->setProperty(juce::Identifier(key), value);
-    return juce::var(o);
-}
 
 const model::Role* partRole(const model::BandDoc& band, const juce::String& roleId) {
     if (roleId.isEmpty()) return nullptr;
@@ -512,7 +507,7 @@ void NewSongDialog::finish() {
         return;
     }
     if (addToSetlist_ && session_.model().setlist(session_.setlistId()) != nullptr) {
-        const auto added = session_.commands().run("setlist.addSong", object({{"setlistId", session_.setlistId()}, {"songId", result.songId}}));
+        const auto added = session_.commands().run("setlist.addSong", jsonObject({{"setlistId", session_.setlistId()}, {"songId", result.songId}}));
         if (!added.ok) problem_ = added.message;
     }
     refresh();

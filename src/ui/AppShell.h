@@ -21,6 +21,7 @@ class ShowController;
 namespace sqlive::ui {
 
 class PreShowDialog;
+class Veil;
 
 // The page host: the top bar, then the content (an Edit page chosen by tab, or in Show mode the main or stage view, which
 // Tab switches), then banners over the content's top edge (the red InterruptedBanner, and under it the amber
@@ -71,7 +72,6 @@ public:
     bool keyPressed(const juce::KeyPress&) override;
 
 private:
-    class Veil;
     class TonightQuestion;
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;

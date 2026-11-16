@@ -7,15 +7,17 @@
 #include <utility>
 
 #include "app/PartFiles.h"
+#include "model/JsonObject.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
 
+using model::jsonObject;
+
 namespace {
 
-const juce::String kDot = juce::String::fromUTF8("\xc2\xb7");              // ·
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");     // …
 const juce::String kEntryDrag = "entry:", kSongDrag = "song:";             // what the page's own drags carry
 
 // The mockup's CSS: .content's padding and gap, the 200 px setlists and the 240 px library.
@@ -36,15 +38,7 @@ juce::Font boldFont() { return theme::font(theme::sizeBody, true); }
 juce::Font smallFont() { return theme::font(theme::sizeCaption); }
 juce::Font headFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.6f); }
 
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
-
 juce::String counted(int n, const juce::String& one, const juce::String& many) { return juce::String(n) + " " + (n == 1 ? one : many); }
-
-juce::var object(std::initializer_list<std::pair<const char*, juce::var>> items) {
-    auto* o = new juce::DynamicObject();
-    for (const auto& [key, value] : items) o->setProperty(juce::Identifier(key), value);
-    return juce::var(o);
-}
 
 juce::String transitionText(const model::Transition& t) {
     switch (t.kind) {
@@ -60,7 +54,7 @@ juce::String summaryOf(const model::BandModel& model, const model::SetlistDoc& l
     double total = 0.0;
     for (const auto& entry : list.entries)
         if (const auto* song = model.song(entry.songId)) total += song->lengthSeconds;
-    return counted(static_cast<int>(list.entries.size()), "song", "songs") + " " + kDot + " " + formatTime(total);
+    return counted(static_cast<int>(list.entries.size()), "song", "songs") + " " + kMiddleDot + " " + formatTime(total);
 }
 
 juce::String subOf(const model::SongDoc& song) {
@@ -68,7 +62,7 @@ juce::String subOf(const model::SongDoc& song) {
     bits.add(formatBpm(song.tempo.empty() ? 120.0 : song.tempo.front().bpm) + " BPM");
     if (song.key.isNotEmpty()) bits.add(song.key);
     bits.add(song.countInBars > 0 ? "count-in " + counted(song.countInBars, "bar", "bars") : juce::String("no count-in"));
-    return bits.joinIntoString(" " + kDot + " ");
+    return bits.joinIntoString(" " + kMiddleDot + " ");
 }
 
 juce::String warningOf(const app::Session& session, const juce::String& songId) {
@@ -498,7 +492,7 @@ private:
             if (row.warning.isEmpty()) {
                 title = shorten(title, boldFont(), songWidth);
             } else {
-                warning = " " + kDot + " " + row.warning;
+                warning = " " + kMiddleDot + " " + row.warning;
                 const float room = std::max(songWidth - widthOf(hintFont(), warning), songWidth * 0.5f);
                 title = shorten(title, boldFont(), room);
                 warning = shorten(warning, hintFont(), songWidth - widthOf(boldFont(), title));
@@ -685,7 +679,7 @@ void SetlistsPage::refresh(bool force) {
     if (next == state_ && editable() == shownEditable_ && !force) return;
     shownEditable_ = editable();
     state_ = std::move(next);
-    libraryLabel_.setText("ALL SONGS " + kDot + " " + juce::String(state_.songCount));
+    libraryLabel_.setText("ALL SONGS " + kMiddleDot + " " + juce::String(state_.songCount));
     playMode_.setSelected(state_.continuous ? 0 : 1);
     playMode_.setEnabled(editable() && state_.title.isNotEmpty());
     table_->update();
@@ -822,7 +816,7 @@ void SetlistsPage::newSetlist() {
     if (!editable()) return;
     askText("New setlist", "What is the setlist called?", {}, "Make it", [this](const juce::String& name) {
         if (!editable()) return;
-        const auto result = session_.commands().run("setlist.create", object({{"name", name}}));
+        const auto result = session_.commands().run("setlist.create", jsonObject({{"name", name}}));
         if (!result.ok) {
             tell(result.message);
             return;
@@ -835,14 +829,14 @@ void SetlistsPage::renameSetlist(const juce::String& setlistId) {
     const auto* list = session_.model().setlist(setlistId);
     if (list == nullptr || !editable()) return;
     askText("Rename the setlist", {}, list->name, "Rename", [this, setlistId](const juce::String& name) {
-        run("setlist.set", object({{"setlistId", setlistId}, {"name", name}}));
+        run("setlist.set", jsonObject({{"setlistId", setlistId}, {"name", name}}));
     });
 }
 
-void SetlistsPage::removeSetlist(const juce::String& setlistId) { run("setlist.remove", object({{"setlistId", setlistId}})); }
+void SetlistsPage::removeSetlist(const juce::String& setlistId) { run("setlist.remove", jsonObject({{"setlistId", setlistId}})); }
 
 void SetlistsPage::setContinuous(bool continuous) {
-    run("setlist.set", object({{"setlistId", session_.setlistId()}, {"playMode", continuous ? "continuous" : "songBySong"}}));
+    run("setlist.set", jsonObject({{"setlistId", session_.setlistId()}, {"playMode", continuous ? "continuous" : "songBySong"}}));
 }
 
 void SetlistsPage::chooseThen(const juce::String& entryId, const juce::String& item) {
@@ -850,7 +844,7 @@ void SetlistsPage::chooseThen(const juce::String& entryId, const juce::String& i
         askGap(entryId);
         return;
     }
-    run("setlist.setTransition", object({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"kind", item == "Seamless" ? "seamless" : "stop"}}));
+    run("setlist.setTransition", jsonObject({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"kind", item == "Seamless" ? "seamless" : "stop"}}));
 }
 
 void SetlistsPage::askGap(const juce::String& entryId) {
@@ -869,22 +863,22 @@ void SetlistsPage::askGap(const juce::String& entryId) {
                     refresh(true);
                     return;
                 }
-                run("setlist.setTransition", object({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"kind", "gap"}, {"seconds", value}}));
+                run("setlist.setTransition", jsonObject({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"kind", "gap"}, {"seconds", value}}));
             });
 }
 
 void SetlistsPage::addSong(const juce::String& songId, int index) {
-    auto params = object({{"setlistId", session_.setlistId()}, {"songId", songId}});
+    auto params = jsonObject({{"setlistId", session_.setlistId()}, {"songId", songId}});
     if (index >= 0) params.getDynamicObject()->setProperty("index", index);
     run("setlist.addSong", params);
 }
 
 void SetlistsPage::moveEntry(const juce::String& entryId, int toIndex) {
-    run("setlist.moveEntry", object({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"toIndex", toIndex}}));
+    run("setlist.moveEntry", jsonObject({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"toIndex", toIndex}}));
 }
 
 void SetlistsPage::removeEntry(const juce::String& entryId) {
-    run("setlist.removeEntry", object({{"setlistId", session_.setlistId()}, {"entryId", entryId}}));
+    run("setlist.removeEntry", jsonObject({{"setlistId", session_.setlistId()}, {"entryId", entryId}}));
 }
 
 void SetlistsPage::askRemoveSong(const juce::String& songId) {
@@ -900,7 +894,7 @@ void SetlistsPage::askRemoveSong(const juce::String& songId) {
             .withButton("Remove")
             .withButton("Cancel"),
         [safe = juce::Component::SafePointer<SetlistsPage>(this), songId](int result) {
-            if (safe != nullptr && result == 1) safe->run("song.remove", object({{"songId", songId}}));
+            if (safe != nullptr && result == 1) safe->run("song.remove", jsonObject({{"songId", songId}}));
         });
 }
 

@@ -4,14 +4,11 @@
 #include <cmath>
 
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 
 namespace sqlive::ui {
 
 namespace {
-
-juce::String utf8(const char* text) { return juce::String::fromUTF8(text); }
-
-const juce::String kDot = utf8(" \xc2\xb7 ");                     // " · "
 
 double firstBpm(const model::SongDoc& song) { return song.tempo.empty() ? 120.0 : song.tempo.front().bpm; }
 

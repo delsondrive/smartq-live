@@ -6,6 +6,7 @@
 #include "model/Routing.h"
 #include "model/Units.h"
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/OutputLabelPill.h"
 #include "ui/Theme.h"
 
@@ -28,15 +29,6 @@ const juce::Colour kOnRed{0xff160f10};                                       // 
 juce::Font nameFont() { return theme::font(theme::sizeCaption, true); }
 juce::Font hintFont() { return theme::font(theme::sizeSmall); }
 juce::Font muteFont() { return theme::font(theme::sizeTag, true); }
-
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
-
-// Nothing in the mixer takes the keyboard, not even with a click: in Show mode Space and the arrows must reach the window.
-void keepOffKeyboard(juce::Component& component) {
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (auto* child : component.getChildren()) keepOffKeyboard(*child);
-}
 
 juce::String soundName(const juce::String& sound) {
     if (sound == "beep") return "Beep";
@@ -386,15 +378,9 @@ void MixerPanel::visibilityChanged() {
     if (isVisible() && !fresh_) refresh();
 }
 
-bool MixerPanel::shownWithParents() const {
-    for (const auto* c = static_cast<const juce::Component*>(this); c->getParentComponent() != nullptr; c = c->getParentComponent())
-        if (!c->isVisible()) return false;
-    return true;
-}
-
 void MixerPanel::refresh(bool force) {
     // Hidden, it waits until it is shown: the session's changes come 30 times a second while a song plays.
-    if (!force && !shownWithParents()) {
+    if (!force && !shownWithParents(*this)) {
         fresh_ = false;
         return;
     }

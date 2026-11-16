@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "ui/Helpers.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -20,16 +21,6 @@ juce::TextLayout tooltipLayout(const juce::String& text) {
     juce::TextLayout layout;
     layout.createLayout(string, kTooltipMaxWidth);
     return layout;
-}
-
-// The mockup's .dd::after: a small chevron in dim.
-void drawChevron(juce::Graphics& g, juce::Point<float> centre, juce::Colour colour) {
-    juce::Path chevron;
-    chevron.startNewSubPath(centre.x - 3.5f, centre.y - 1.5f);
-    chevron.lineTo(centre.x, centre.y + 2.0f);
-    chevron.lineTo(centre.x + 3.5f, centre.y - 1.5f);
-    g.setColour(colour);
-    g.strokePath(chevron, juce::PathStrokeType(1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 }  // namespace

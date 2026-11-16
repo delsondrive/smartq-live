@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "model/BandFolder.h"
+#include "ui/Helpers.h"
 #include "ui/Logo.h"
 #include "ui/Theme.h"
 
@@ -13,8 +14,6 @@ namespace {
 constexpr int kPadX = 48, kPadY = 44, kLogoHeight = 40, kGap = 16, kRowHeight = 60, kRowGap = 12, kButtonHeight = 30;
 
 const juce::String kArrow = juce::String::fromUTF8("\xe2\x80\xba");        // ›
-const juce::String kDot = juce::String::fromUTF8("\xc2\xb7");              // ·
-const juce::String kEllipsis = juce::String::fromUTF8("\xe2\x80\xa6");     // …
 
 juce::String counted(int n, const juce::String& one, const juce::String& many) { return juce::String(n) + " " + (n == 1 ? one : many); }
 
@@ -34,7 +33,7 @@ WelcomeState makeWelcomeState(const app::Settings& settings) {
         recent.name = bandName(folder);
         const int songs = folder.getChildFile("songs").findChildFiles(juce::File::findDirectories, false).size();
         const int setlists = folder.getChildFile("setlists").findChildFiles(juce::File::findFiles, false, "*.json").size();
-        recent.detail = folder.getParentDirectory().getFileName() + " " + kArrow + " " + folder.getFileName() + " " + kDot + " "
+        recent.detail = folder.getParentDirectory().getFileName() + " " + kArrow + " " + folder.getFileName() + " " + kMiddleDot + " "
                         + counted(songs, "song", "songs") + ", " + counted(setlists, "setlist", "setlists");
         state.recent.push_back(std::move(recent));
     }

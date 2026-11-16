@@ -54,7 +54,6 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void refresh();
-    bool shownWithParents() const;
     void mixerStateChanged();
     void layoutCaption();
     void layoutSide();

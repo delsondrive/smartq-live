@@ -45,7 +45,6 @@ public:
 private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void refresh(bool force = false);
-    bool shownWithParents() const;
     void refreshInterfaces();                                     // the driver types and the chosen type's devices
     bool editable() const;
     bool run(const juce::String& command, const juce::var& params);

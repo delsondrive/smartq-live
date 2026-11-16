@@ -6,6 +6,7 @@
 #include <tuple>
 
 #include "ui/Format.h"
+#include "ui/Helpers.h"
 #include "ui/LiveLookAndFeel.h"
 #include "ui/Theme.h"
 
@@ -14,8 +15,6 @@ namespace sqlive::ui {
 namespace {
 
 constexpr float kDisabledAlpha = 0.4f;
-
-float widthOf(const juce::Font& font, const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text); }
 
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
 
@@ -31,7 +30,7 @@ struct Run {
 
 float widthOf(const std::vector<Run>& runs) {
     float width = 0.0f;
-    for (const auto& run : runs) width += widthOf(run.font, run.text);
+    for (const auto& run : runs) width += ui::widthOf(run.font, run.text);
     return width;
 }
 
@@ -41,7 +40,7 @@ void drawRuns(juce::Graphics& g, const std::vector<Run>& runs, float x, float ba
         glyphs.addLineOfText(run.font, run.text, x, baseline);
         g.setColour(run.colour);
         glyphs.draw(g);
-        x += widthOf(run.font, run.text);
+        x += ui::widthOf(run.font, run.text);
     }
 }
 
@@ -200,15 +199,6 @@ void CapsLabel::paint(juce::Graphics& g) {
 namespace {
 
 constexpr float kChoicePadLeft = 8.0f, kChoiceChevronSpace = 22.0f;
-
-void drawChevron(juce::Graphics& g, juce::Point<float> centre, juce::Colour colour) {
-    juce::Path chevron;
-    chevron.startNewSubPath(centre.x - 3.5f, centre.y - 1.5f);
-    chevron.lineTo(centre.x, centre.y + 2.0f);
-    chevron.lineTo(centre.x + 3.5f, centre.y - 1.5f);
-    g.setColour(colour);
-    g.strokePath(chevron, juce::PathStrokeType(1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-}
 
 }  // namespace
 
@@ -421,11 +411,6 @@ constexpr float kWheelStepDb = 0.5f, kFineDrag = 0.25f, kSmoothWheelNotch = 0.1f
 
 // The travel's three stretches: (fraction at the start, dB at the start), up to the next.
 constexpr float kKneeLowFraction = 0.15f, kKneeLowDb = -30.0f, kKneeHighFraction = 0.75f, kKneeHighDb = 0.0f;
-
-float toTenth(float db) {
-    const float r = std::round(db * 10.0f) / 10.0f;
-    return r == 0.0f ? 0.0f : r;
-}
 
 }  // namespace
 
