@@ -16,6 +16,7 @@
 #include "model/BandFolder.h"
 #include "model/BandModel.h"
 #include "model/CommandLayer.h"
+#include "model/SongImport.h"
 
 namespace sqlive::app {
 
@@ -101,6 +102,13 @@ public:
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
                                                                  // never while a real device runs
     void flushNow();                                             // autosave and save the settings immediately
+
+    // The steps of an import that touch the band folder, on the message thread, so no view reaches into it. The slow
+    // step between them, model::convertSongFiles, runs on the view's own thread and touches only files.
+    juce::File reserveImportFolder(const model::ImportPlan&);    // BandFolder::reserveSongFolder(importTitle(plan)); {} if it can't be made
+    void releaseImportFolder(const juce::File&);                 // an import that never started: deletes the reserved folder if it
+                                                                 // is still empty
+    model::ImportResult commitImport(model::ConvertedSong);      // model::commitImportedSong(c, folder(), commands())
 
 private:
     // A song as the engine plays it, with what it was built from, so a change to either builds it again.

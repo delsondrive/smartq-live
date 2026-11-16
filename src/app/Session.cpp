@@ -445,6 +445,20 @@ void Session::flushNow() {
     noteSaveState();
 }
 
+// ---- Importing a song --------------------------------------------------------------------------------------------------
+
+juce::File Session::reserveImportFolder(const model::ImportPlan& plan) { return folder_.reserveSongFolder(model::importTitle(plan)); }
+
+void Session::releaseImportFolder(const juce::File& reserved) {
+    // Only an empty folder inside the band's songs: one the import never wrote into.
+    if (!reserved.isDirectory() || !reserved.isAChildOf(folder_.root())) return;
+    if (reserved.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 0) reserved.deleteFile();
+}
+
+model::ImportResult Session::commitImport(model::ConvertedSong converted) {
+    return model::commitImportedSong(std::move(converted), folder_, commands_);
+}
+
 void Session::timerCallback() {
     if (handleEngineEvents()) refresh();
     else refreshTransport();                                     // retries a cue the engine's full queue refused
