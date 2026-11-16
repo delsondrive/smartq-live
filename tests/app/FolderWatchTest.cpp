@@ -523,3 +523,29 @@ TEST_CASE("a song removed and imported again under the same title on another com
         kept = kept || f.loadFileAsString().contains(again.id);
     CHECK(kept);
 }
+
+TEST_CASE("a newer-format file that reads the same as the edit here is held back, not written over", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session;
+    auto song = d.setlist().entries[0].songId;
+    auto file = s.folder().fileFor({model::DocKind::Song, song});
+    s.commands().run("song.setInfo", params({{"songId", song}, {"key", "E"}}));
+    auto theirs = juce::JSON::parse(model::toJson(*s.model().song(song)));
+    theirs.getDynamicObject()->setProperty("version", 99);                        // the same content, from a newer app
+    writeElsewhere(file, juce::JSON::toString(theirs));                            // no poll has seen it yet
+    s.flushNow();
+    CHECK(juce::JSON::parse(file.loadFileAsString()).getProperty("version", {}) == juce::var(99));   // theirs is still there
+    REQUIRE(s.outsideChanges().size() == 1);
+}
+TEST_CASE("undoing and redoing a song imported again on another computer leaves no banner", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session;
+    const auto oldId = d.setlist().entries[0].songId;
+    auto again = *s.model().song(oldId);  again.id = model::newId();
+    writeElsewhere(s.folder().songFolder(oldId).getChildFile("song.json"), model::toJson(again));
+    s.advanceWithoutDevice(0);  REQUIRE(s.takeOutsideChanges().wasOk());
+    s.flushNow();  s.advanceWithoutDevice(0);
+    s.commands().undo();  s.flushNow();  s.advanceWithoutDevice(0);
+    s.commands().redo();  s.flushNow();  s.advanceWithoutDevice(0);
+    REQUIRE(s.model().song(again.id) != nullptr);
+    CHECK(s.outsideChanges().empty());                                             // no stale banner
+    CHECK(s.saveState() == SaveState::Saved);
+}

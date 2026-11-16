@@ -157,3 +157,14 @@ TEST_CASE("a song cut off by the device restarting itself is marked interrupted"
     CHECK_FALSE(now.playing);
     CHECK(now.interrupted);  CHECK(now.bar == bar);  CHECK(now.nextIndex == 0);
 }
+TEST_CASE("a rig that no longer names a device here stops the search for the old one", "[audiohost]") {
+    DemoSession d; app::AudioHost host(*d.session);
+    auto bind = [&](const char* type, const char* name) {
+        d.session->commands().run("rig.setDevice", params({{"rigId", d.session->rigId()}, {"computerId", d.session->settings().computerName()},
+                                                             {"deviceType", type}, {"deviceName", name}})); };
+    bind("No such type here", "Unplugged");
+    CHECK(host.openFromRig().failed());  REQUIRE(host.isRetrying());
+    bind("", "");                                                                  // the binding taken away
+    CHECK(host.openFromRig().getErrorMessage() == "This rig hasn't been set up on this computer yet.");
+    CHECK_FALSE(host.isRetrying());
+}

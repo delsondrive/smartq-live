@@ -46,11 +46,14 @@ bool readableAs(model::DocKind kind, const juce::String& text) {
     return false;
 }
 
-// The text, read as a document, is the one the model has: the same document, however it is laid out (another version of
-// the app, or another tool, writes the same JSON differently).
+// The text, read as a document, is the one the model has: the same document, however it is laid out (another tool writes
+// the same JSON differently). Only when it reads with no notes at all: a newer version's file that reads the same here is
+// not this app's own (it may hold what this version can't read), and is never written over unseen.
 bool sameAsLoaded(const model::BandModel& m, const model::DocKey& key, const juce::String& text) {
     model::ParseNotes notes;
-    const auto same = [&](const auto* have, auto doc) { return have != nullptr && model::fromJson(text, doc, notes) && doc == *have; };
+    const auto same = [&](const auto* have, auto doc) {
+        return have != nullptr && model::fromJson(text, doc, notes) && notes.notes.isEmpty() && doc == *have;
+    };
     switch (key.kind) {
     case model::DocKind::Band: return same(&m.band(), model::BandDoc{});
     case model::DocKind::Song: return same(m.song(key.id), model::SongDoc{});
@@ -297,18 +300,29 @@ void OutsideChanges::reloadUndoneOrRedone(const std::map<model::DocKey, OutsideC
             autosaver_.forget({key});
             folder_watch_->leaveAlone(key, file);
         } else if (came.kind == OutsideChange::Kind::Removed && !undone) {
+            const auto file = folder_.fileFor(key);
             forgetPlace(key);                                    // gone again: nothing of its folder goes to the trash from here
             autosaver_.forget({key});
+            folder_watch_->leaveAlone(key, file);                // and no longer watched as this app's, nor offered as new
         }
     }
+    // A document that took the place of another in the same file (removed and imported again on another computer): what is
+    // in that file now is the other one, as this app wrote or loaded it, so it is written over without a banner.
+    const auto replacedAnother = [&](const model::DocKey& key, const juce::File& file) {
+        return std::any_of(step.begin(), step.end(), [&](const auto& other) { return other.first != key && other.second.file == file; });
+    };
+    const auto takePlace = [&](const model::DocKey& key, const juce::File& file) {
+        adoptPlace(key, file);
+        if (replacedAnother(key, file)) folder_watch_->noteOwnWrite(key);
+    };
     for (const auto& [key, came] : step) {
         if (came.kind == OutsideChange::Kind::Removed && undone) {
             // Back here: in the folder or file it had, if that is there, not a new one beside it. Another document that
             // another computer has put in that file since is about to be written over: it is kept in the trash first.
             if (came.file.existsAsFile() && idInside(came.file.loadFileAsString()) != key.id) keepInTrash(came.file);
-            adoptPlace(key, came.file);
+            takePlace(key, came.file);
         } else if (came.kind == OutsideChange::Kind::Added && !undone) {
-            adoptPlace(key, came.file);
+            takePlace(key, came.file);
         } else if (came.kind == OutsideChange::Kind::Changed && undone) {
             // This app's old version is about to be written over the other computer's: theirs is kept in the trash first.
             if (const auto file = folder_.fileFor(key); file.existsAsFile()) keepInTrash(file);

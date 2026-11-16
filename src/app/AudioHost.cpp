@@ -101,6 +101,8 @@ juce::Result AudioHost::open(const DeviceChoice& choice) {
 juce::Result AudioHost::openFromRig() {
     const auto* binding = bindingForThisComputer(session_);
     if (binding == nullptr) {
+        stopTimer();                                             // nothing keeps looking for a device the rig no longer names
+        last_choice_.reset();
         if (!running_) session_.setDeviceRunning(false);
         return juce::Result::fail("This rig hasn't been set up on this computer yet.");
     }
