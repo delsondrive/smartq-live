@@ -33,6 +33,8 @@ public:
 
     void refresh();                                               // reads the recent folders again
     const WelcomeState& state() const { return state_; }
+    void openFolder(const juce::File&);                          // onOpen for a band folder; otherwise says it is not one
+    const juce::String& problem() const { return problem_; }     // the line shown under the buttons
 
     void paint(juce::Graphics&) override;
     void resized() override;

@@ -59,7 +59,7 @@ void WelcomePage::refresh() {
     for (std::size_t i = 0; i < state_.recent.size(); ++i) {
         auto button = std::make_unique<PillButton>("Open", i == 0 ? PillButton::Style::Primary : PillButton::Style::Plain);
         const auto folder = state_.recent[i].folder;
-        button->onClick = [this, folder] { if (onOpen) onOpen(folder); };
+        button->onClick = [this, folder] { openFolder(folder); };
         addAndMakeVisible(*button);
         openButtons_.push_back(std::move(button));
     }
@@ -147,6 +147,15 @@ void WelcomePage::paint(juce::Graphics& g) {
                      kPadX, getHeight() - kPadY - 34, getWidth() - 2 * kPadX, 34, juce::Justification::bottomLeft, 2);
 }
 
+void WelcomePage::openFolder(const juce::File& folder) {
+    if (!model::BandFolder::looksLikeBandFolder(folder)) {
+        say("That folder isn't a band folder. Choose the folder that has band.json in it.");
+        return;
+    }
+    say({});
+    if (onOpen) onOpen(folder);
+}
+
 void WelcomePage::say(const juce::String& problem) {
     problem_ = problem;
     repaint();
@@ -162,11 +171,7 @@ void WelcomePage::openAnother() {
                               if (safe == nullptr) return;
                               const auto folder = chooser.getResult();
                               if (folder == juce::File()) return;
-                              if (model::BandFolder::looksLikeBandFolder(folder)) {
-                                  if (safe->onOpen) safe->onOpen(folder);
-                              } else {
-                                  safe->say("That folder isn't a band folder. Choose the folder that has band.json in it.");
-                              }
+                              safe->openFolder(folder);
                           });
 }
 

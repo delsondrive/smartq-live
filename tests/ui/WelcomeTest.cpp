@@ -30,4 +30,19 @@ TEST_CASE("a new computer needs a rig and a device before it can finish", "[welc
     ScopedLook look;
     ui::NewComputerPage page(*d.session, host);
     CHECK(fractionNotBackground(snapshot(page, 960, 680)) > 0.005);
+    CHECK(childrenInside(page));
+    for (auto* child : page.getChildren()) CHECK_FALSE(child->getBounds().isEmpty());
+    CHECK_FALSE(page.getChildComponent(4)->isEnabled());          // Done, until a device is chosen
+}
+TEST_CASE("a recent folder that is no longer a band folder is not opened", "[welcome]") {
+    DemoSession d; d.settings->noteOpened(d.session->folder().root());
+    ScopedLook look;
+    ui::WelcomePage page(*d.settings);
+    int opened = 0;
+    page.onOpen = [&](juce::File) { ++opened; };
+    d.session->folder().root().getChildFile("band.json").deleteFile();
+    REQUIRE(page.state().recent.size() == 1);
+    page.openFolder(page.state().recent[0].folder);
+    CHECK(opened == 0);
+    CHECK(page.problem() == "That folder isn't a band folder. Choose the folder that has band.json in it.");
 }
