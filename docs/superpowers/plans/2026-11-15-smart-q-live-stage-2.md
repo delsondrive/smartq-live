@@ -958,7 +958,7 @@ git add -A && git commit -m "feat: read tempo, sections and pedal changes from a
 struct MidiImportChoice { bool tempo = true, sections = true; std::map<int, juce::String> trackToDevice; };   // track index → device id; a track not listed is left out
 juce::var toVar(const MidiFileContent&);  juce::var toVar(const MidiImportChoice&);
 // command "song.importMidi" {songId, content, choice}: one undoable step
-// importSong gains an optional last parameter: const MidiImportChoice* (used when the plan has a MIDI file)
+// commitImportedSong (and the importSong wrapper) gain an optional last parameter: const MidiImportChoice* (used when the plan has a MIDI file); the MIDI file is read on the message thread at commit time
 // NewSongState gains:
     struct MidiSummary { bool present = false; juce::String fileName, tempo, length, sections; std::vector<juce::String> sectionNames;
                          struct Track { juce::String name, device; bool needsDevice; }; std::vector<Track> tracks; juce::StringArray notes; } midi;
@@ -1018,7 +1018,7 @@ Run: `powershell -File scripts/build.ps1 -Test "[midiimport]"`. Expected: `song.
 - [ ] **Step 3: Implement**
 
 - `song.importMidi`: when `choice.tempo`, the song's tempo becomes the file's; when `choice.sections`, its sections become the file's (new ids); for each chosen track, that device's lane is replaced by the track's markers (new ids). When two tracks go to one device their markers are merged in position order.
-- `inspectFiles` already keeps the MIDI file aside; the dialog now reads it with `readMidiFile` and builds a default `MidiImportChoice` with `suggestDeviceId`. `importSong` runs `song.add` and `song.importMidi` under one coalesce key, so the song with its MIDI is one step back.
+- `inspectFiles` already keeps the MIDI file aside; the dialog now reads it with `readMidiFile` and builds a default `MidiImportChoice` with `suggestDeviceId`. `commitImportedSong` runs `song.add` and `song.importMidi` under one coalesce key, so the song with its MIDI is one step back.
 - **The dialog's right-hand panel** (mockup screen 8): heading `FROM “<file>”`, rows Tempo, Bar 1 starts at ("0:00.000"), Length, Sections with the section names as coloured pills (one colour for now, `theme::mid`; types come in stage 3), "Pedal changes" with "<n> tracks", then a row per track: `“<track>” (ch <n>) →` and a `Choice` of the band's devices plus "Leave out". A track with no device chosen is shown in `caution` with "Choose a device, or it is left out". The file's notes are listed in `dim`. With no MIDI file the panel shows the mockup's sentence beginning "No MIDI file?".
 - The Song editor's title menu gets "Import a MIDI file…", which opens a small dialog with the same panel and three tick boxes (Tempo, Sections, Pedal changes) for an existing song.
 
