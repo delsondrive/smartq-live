@@ -34,6 +34,13 @@ public:
     void clearHistory();
 
     std::function<void(const std::vector<DocKey>& changed)> onChanged;  // after a run, undo or redo that changed something
+    // The run, undo or redo that changed something last: its command's name and how. Set before onChanged is called, so a
+    // listener can tell an undo of a command from the command itself.
+    struct Step {
+        enum class How { Run, Undo, Redo };
+        juce::String name; How how = How::Run;
+    };
+    const Step& lastStep() const noexcept { return last_step_; }
 
     const BandModel& model() const noexcept { return band_model_; }
 
@@ -47,6 +54,7 @@ private:
     BandModel& band_model_;
     std::map<juce::String, Handler> handlers_;
     std::deque<Entry> undo_stack_, redo_stack_;
+    Step last_step_;
 };
 
 }  // namespace sqlive::model

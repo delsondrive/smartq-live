@@ -51,7 +51,7 @@ public:
 
     void refresh();                                               // the state again from the session; laid out again if it changed
     const FilesState& state() const { return state_; }
-    void keep(std::size_t conflict, bool keepTheCopy);            // a "Keep this one"
+    void keep(const model::ConflictCopy&, bool keepTheCopy);     // a "Keep this one"
 
     std::function<void()> onClose;                                // "Close", Escape, or nothing left to show
 
@@ -86,13 +86,16 @@ public:
     void refresh();
     bool wanted() const { return sentence_.isNotEmpty(); }        // Edit mode, with outside changes waiting
     const juce::String& sentence() const { return sentence_; }
+    // "Load the changes" (as its button does): a failure is said in the banner, in place of the sentence, until the next answer.
+    void loadChanges();
+    const juce::String& failure() const { return failure_; }
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
     app::Session& session_;
-    juce::String sentence_;
+    juce::String sentence_, failure_;
     PillButton load_{"Load the changes", PillButton::Style::Primary}, keep_{"Keep mine"};
 };
 

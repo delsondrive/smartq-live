@@ -4,6 +4,8 @@
 #include <set>
 
 #include "app/Session.h"
+#include "model/DocumentsJson.h"
+#include "model/FileNames.h"
 
 namespace sqlive::app {
 
@@ -57,6 +59,15 @@ FolderWatch::Stamp FolderWatch::stampOf(const juce::File& file) {
     return {file.getLastModificationTime().toMilliseconds(), file.getSize()};
 }
 
+bool FolderWatch::audioHasArrived(const juce::var& songJson, const juce::File& songFolder) {
+    model::SongDoc song;
+    model::ParseNotes notes;
+    if (!model::fromVar(songJson, song, notes)) return false;
+    for (const auto& part : song.parts)
+        if (!model::isPathInsideFolder(part.file) || !songFolder.getChildFile(part.file).existsAsFile()) return false;
+    return true;
+}
+
 std::vector<std::pair<juce::File, model::DocKind>> FolderWatch::documentFiles() const {
     const auto root = session_.folder().root();
     std::vector<std::pair<juce::File, model::DocKind>> files;
@@ -74,6 +85,22 @@ void FolderWatch::remember(const model::DocKey& key) {
     const auto file = session_.folder().fileFor(key);
     known_[key] = {file, stampOf(file)};
     others_.erase(file.getFullPathName());
+}
+
+std::optional<OutsideChange> FolderWatch::changedOnDisk(const model::DocKey& key) {
+    const auto it = known_.find(key);
+    if (it == known_.end()) return std::nullopt;                  // new here: nothing of anyone else's is there
+    const auto now = stampOf(it->second.file);
+    if (now == it->second.stamp) return std::nullopt;
+    it->second.stamp = now;                                       // reported here, so not by the next poll
+    const auto kind = now.size < 0 ? OutsideChange::Kind::Removed : OutsideChange::Kind::Changed;
+    return OutsideChange{key, documentName(session_.model(), key), kind, it->second.file};
+}
+
+void FolderWatch::leaveAlone(const model::DocKey& key, const juce::File& file) {
+    known_.erase(key);
+    added_.erase(key);
+    if (file.existsAsFile()) others_[file.getFullPathName()] = stampOf(file);
 }
 
 void FolderWatch::noteOwnWrite(const model::DocKey& key) {
@@ -119,6 +146,10 @@ std::vector<OutsideChange> FolderWatch::poll() {
         const model::DocKey key{kind, id};
         if (documentLoaded(m, key)) continue;                     // a conflict copy, or a second folder for the same song
         if (const auto it = added_.find(key); it != added_.end() && it->second != file) continue;   // a copy of one that came in
+        if (kind == model::DocKind::Song && !audioHasArrived(doc, file.getParentDirectory())) {
+            others_.erase(path);                                  // looked at again on the next poll
+            continue;
+        }
         added_[key] = file;
         const auto name = doc.getProperty(kind == model::DocKind::Song ? "title" : "name", {}).toString();
         changes.push_back({key, name.isNotEmpty() ? name : file.getFileNameWithoutExtension(), OutsideChange::Kind::Added, file});

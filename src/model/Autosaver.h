@@ -18,6 +18,9 @@ public:
     juce::Result flush();                                  // saves every pending document; what fails stays pending
     // Once per flush: the first failure, or success. Also called, with success, for a flush that had nothing pending.
     std::function<void(const juce::Result&)> onSaved;
+    // Asked by flush before it writes each pending document: false holds that one back, pending and unwritten, and is not a
+    // failure. Unset: every pending document is written.
+    std::function<bool(const DocKey&)> mayWrite;
     // Called by flush for each document it wrote (or moved to trash/), just after it did.
     std::function<void(const DocKey&)> onWrote;
 

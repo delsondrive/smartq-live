@@ -16,6 +16,7 @@ juce::Result Autosaver::flush() {
     auto outcome = juce::Result::ok();
     const std::vector<DocKey> keys(pending_.begin(), pending_.end());
     for (const auto& key : keys) {
+        if (mayWrite && !mayWrite(key)) continue;           // held back: stays pending
         auto r = folder_.save(key, model_);
         if (r.wasOk()) {
             pending_.erase(key);

@@ -29,6 +29,7 @@ public:
     // A setlist or rig file that came in from another computer: remembers it as that document's, so it is saved there.
     // False for another kind, a file outside setlists/ or rigs/, a document that already has one, or a file another has.
     bool adoptFile(const DocKey&, const juce::File& file);
+    void forgetFile(const DocKey&);                              // undoes adoptFile (setlists and rigs only)
     juce::File audioFile(const SongDoc&, const PartDoc&) const;  // the song's folder + part.file; {} unless inside that folder
 
 private:

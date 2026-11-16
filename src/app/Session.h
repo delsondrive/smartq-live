@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 
 #include <juce_events/juce_events.h>
@@ -117,11 +118,17 @@ public:
 
     // Files another computer changed. In Edit mode the band folder is looked at every 2 s (and on each advanceWithoutDevice),
     // never in Show mode, so a show goes on with the documents it started with; leaving Show mode looks at once. What
-    // changed waits for the user's answer; nothing is taken silently. All three do nothing in Show mode.
+    // changed waits for the user's answer; nothing is taken silently, and nothing of theirs is written over silently: just
+    // before each autosave, a document whose file changed on disk since the app last saw it, or that is waiting here, is
+    // held back (kept pending, unwritten) and offered, until "Load the changes" (the edit made here is dropped) or "Keep
+    // mine" (it is written). All three do nothing in Show mode.
     std::vector<OutsideChange> outsideChanges() const;           // waiting for the user's answer, in key order
-    // Loads them from disk as one undoable step, the command "folder.reload" (its undo is an ordinary change, and saved).
-    // What was loaded is not written back. A file that can't be read stays waiting, and is noted in loadReport().
-    void takeOutsideChanges();
+    // Loads them from disk as one undoable step, the command "folder.reload". What was loaded is not written back, and the
+    // songs among them are loaded again into the cache. A file that can't be read stays waiting, and is noted in
+    // loadReport() until it loads or goes. Undoing it stops using here a document that came in (its file stays), and keeps
+    // the other computer's version of a changed one in trash/ before this app's is written back. When the command fails,
+    // everything stays waiting and the result says why.
+    juce::Result takeOutsideChanges();
     void keepMine();                                             // writes this app's version over them at once. One that came
                                                                  // in (Added) is left on disk, and offered again if it changes
     // Conflict copies, as of the last look at the band folder (or resolveConflict); never a fresh scan.
@@ -188,8 +195,14 @@ private:
     void noteSaveState();
     void changed();
     void pollFolder();                                           // Edit mode: outside changes and conflict copies
-    // Runs "folder.reload" with these texts ("" = removed), then tells the autosaver and the watch that the disk has them.
-    void loadFromDisk(const std::map<model::DocKey, juce::String>& texts);
+    void noteOutsideChange(OutsideChange);                       // into the waiting list, in place of one for the same document
+    bool mayWrite(const model::DocKey&);                         // Autosaver::mayWrite: false holds it back (see outsideChanges)
+    // Runs "folder.reload" with these texts ("" = removed) for these changes, then tells the autosaver and the watch that
+    // the disk has them, and the cache to load those songs again.
+    model::CommandResult loadFromDisk(const std::vector<OutsideChange>&, const std::map<model::DocKey, juce::String>& texts);
+    void reloadUndoneOrRedone(const std::vector<model::DocKey>&, bool undone);   // see takeOutsideChanges
+    void sweepUnreadableNotes();                                 // drops the notes of files that loaded or went
+    void reloadArrivedAudio();                                   // songs cached while audio was missing, once it is all there
 
     model::BandDoc bandAsHeard() const;
     void restoreShow();                                          // from the show memory, when opening
@@ -252,6 +265,10 @@ private:
     std::vector<OutsideChange> outside_changes_;
     std::vector<model::ConflictCopy> conflict_copies_;
     double last_poll_ms_ = 0.0;
+    std::set<model::DocKey> keep_mine_;                          // "Keep mine": written over whatever is on disk
+    std::map<model::DocKey, OutsideChange> from_disk_;           // the last load from disk of each document: how it came, from where
+    std::map<model::DocKey, juce::String> unreadable_notes_;     // the load-report notes takeOutsideChanges added
+    std::set<juce::String> missing_audio_;                       // songs the cache had problems with while audio files were missing
 
     std::vector<std::vector<float>> scratch_;                    // advanceWithoutDevice's output channels
     std::vector<float*> scratch_channels_;

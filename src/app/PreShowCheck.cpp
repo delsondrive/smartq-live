@@ -88,7 +88,7 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
         items.push_back(item(Level::Ok, "setlist", "Setlist", plural((int) setlist->entries.size(), "song", "songs")));
     if (const int n = (int) session.conflictCopies().size(); n > 0)
         items.push_back(item(Level::Warning, "conflicts", plural(n, "file has a conflict copy", "files have conflict copies"),
-                             "Two computers changed the same file. Open Setup to choose which to keep."));
+                             "Two computers changed the same file. Click Check files to choose which to keep."));
     if (in.power.known && in.power.onBattery)
         items.push_back(item(Level::Warning, "power", "Running on battery", juce::String(in.power.percent) + "% left. Plug the laptop in."));
     return items;

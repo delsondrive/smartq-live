@@ -95,3 +95,14 @@ TEST_CASE("a command reports only the documents it changed, whichever it touched
     CHECK(m.song("b")->title == "Song b");
     CHECK_FALSE(c.canUndo());
 }
+TEST_CASE("a listener can tell a command from its undo and its redo", "[commands]") {
+    BandModel m; m.editBand().name = "Old"; CommandLayer c(m); addRename(c);
+    std::vector<CommandLayer::Step> steps;
+    c.onChanged = [&](const std::vector<DocKey>&) { steps.push_back(c.lastStep()); };
+    c.run("test.rename", params({{"name", "New"}}));  c.undo();  c.redo();
+    REQUIRE(steps.size() == 3);
+    for (const auto& step : steps) CHECK(step.name == "test.rename");
+    CHECK(steps[0].how == CommandLayer::Step::How::Run);
+    CHECK(steps[1].how == CommandLayer::Step::How::Undo);
+    CHECK(steps[2].how == CommandLayer::Step::How::Redo);
+}

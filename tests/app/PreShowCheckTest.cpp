@@ -55,3 +55,14 @@ TEST_CASE("a different sample rate is a warning and an overlapping in-ear output
     CHECK_FALSE(mayEnterShow(items));
     CHECK(std::any_of(items.begin(), items.end(), [](auto& i) { return i.id == "routing" && i.level == CheckItem::Level::Blocker; }));
 }
+TEST_CASE("a conflict copy is named, with where to choose which to keep", "[preshow]") {
+    DemoSession d; auto& s = *d.session;
+    auto song = s.folder().fileFor({sqlive::model::DocKind::Song, d.setlist().entries[0].songId});
+    song.getSiblingFile("song-LAPTOP.json").replaceWithText(song.loadFileAsString());
+    s.advanceWithoutDevice(0);                                    // the session's look at the band folder
+    const auto items = runPreShowCheck(s, good());
+    const auto* item = find(items, "conflicts");
+    REQUIRE(item != nullptr);
+    CHECK(item->title == "1 file has a conflict copy");
+    CHECK(item->detail == "Two computers changed the same file. Click Check files to choose which to keep.");
+}

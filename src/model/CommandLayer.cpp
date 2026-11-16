@@ -57,6 +57,7 @@ CommandResult CommandLayer::run(const juce::String& name, const juce::var& param
         while (undo_stack_.size() > kMaxSteps) undo_stack_.pop_front();
     }
     redo_stack_.clear();
+    last_step_ = {name, Step::How::Run};
     notify(changes);
     return result;
 }
@@ -71,6 +72,7 @@ CommandResult CommandLayer::undo() {
     Entry e = std::move(undo_stack_.back());
     undo_stack_.pop_back();
     apply(e.changes, false);
+    last_step_ = {e.name, Step::How::Undo};
     notify(e.changes);
     redo_stack_.push_back(std::move(e));
     return CommandResult::success();
@@ -81,6 +83,7 @@ CommandResult CommandLayer::redo() {
     Entry e = std::move(redo_stack_.back());
     redo_stack_.pop_back();
     apply(e.changes, true);
+    last_step_ = {e.name, Step::How::Redo};
     notify(e.changes);
     undo_stack_.push_back(std::move(e));
     return CommandResult::success();

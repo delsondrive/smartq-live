@@ -167,6 +167,10 @@ bool BandFolder::adoptFile(const DocKey& key, const juce::File& file) {
     return true;
 }
 
+void BandFolder::forgetFile(const DocKey& key) {
+    if (key.kind == DocKind::Setlist || key.kind == DocKind::Rig) places_.erase(key);
+}
+
 juce::File BandFolder::audioFile(const SongDoc& song, const PartDoc& part) const {
     // The file comes from a synced folder that anyone in the band can edit, so it may name only something inside the song's
     // folder; anything else is treated as a missing file.

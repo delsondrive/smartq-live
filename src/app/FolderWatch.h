@@ -34,7 +34,15 @@ public:
     // Documents whose file changed, appeared or vanished since the last poll, other than by this app, in key order. Each
     // change is reported once. A file that appeared is read for its id; every other one costs a look at its date and size.
     // A document reported as Added whose file goes before it is loaded is reported again as Removed.
+    // A song that came in is reported only once all its parts' audio files are there too.
     std::vector<OutsideChange> poll();
+    // Just before this app writes the document: one look at its file's date and size. When another computer changed it
+    // since the watch last saw it, that change (reported here instead of by the next poll); nullopt otherwise, and for a
+    // document the watch doesn't know (new here).
+    std::optional<OutsideChange> changedOnDisk(const model::DocKey&);
+    // This app no longer uses the document, but its file stays as it is (the undo of loading one that came in): it is not
+    // an outside change until it changes again.
+    void leaveAlone(const model::DocKey&, const juce::File&);
 
 private:
     struct Stamp {
@@ -44,6 +52,8 @@ private:
     struct Known { juce::File file; Stamp stamp; };
 
     static Stamp stampOf(const juce::File&);
+    // Every part's audio file is in the song's folder: a song that came in is offered only then, so it isn't taken silent.
+    static bool audioHasArrived(const juce::var& songJson, const juce::File& songFolder);
     std::vector<std::pair<juce::File, model::DocKind>> documentFiles() const;
     void remember(const model::DocKey&);
 

@@ -101,7 +101,7 @@ juce::String outsideChangesSentence(const std::vector<app::OutsideChange>& chang
 // The notes, then the conflicts, each with its two versions and a "Keep this one" under each.
 class FilesDialog::Body : public juce::Component {
 public:
-    std::function<void(std::size_t conflict, bool keepTheCopy)> onKeep;
+    std::function<void(const model::ConflictCopy&, bool keepTheCopy)> onKeep;
 
     void setState(const FilesState& state) {
         state_ = state;
@@ -109,10 +109,12 @@ public:
         for (std::size_t i = 0; i < state_.conflicts.size(); ++i) {
             for (const bool keepTheCopy : {false, true}) {
                 auto button = std::make_unique<PillButton>("Keep this one");
-                // Later, not from inside the click: keeping one changes the list, and with it these buttons.
-                button->onClick = [safe = juce::Component::SafePointer<Body>(this), i, keepTheCopy] {
-                    juce::MessageManager::callAsync([safe, i, keepTheCopy] {
-                        if (safe != nullptr && safe->onKeep) safe->onKeep(i, keepTheCopy);
+                // Later, not from inside the click: keeping one changes the list, and with it these buttons. The
+                // conflict itself is kept, not its place in the list, which a look at the folder meanwhile may change.
+                const auto conflict = state_.conflicts[i].conflict;
+                button->onClick = [safe = juce::Component::SafePointer<Body>(this), conflict, keepTheCopy] {
+                    juce::MessageManager::callAsync([safe, conflict, keepTheCopy] {
+                        if (safe != nullptr && safe->onKeep) safe->onKeep(conflict, keepTheCopy);
                     });
                 };
                 addAndMakeVisible(*button);
@@ -187,7 +189,7 @@ private:
 
 FilesDialog::FilesDialog(app::Session& session) : session_(session), body_(std::make_unique<Body>()) {
     setWantsKeyboardFocus(true);
-    body_->onKeep = [this](std::size_t conflict, bool keepTheCopy) { keep(conflict, keepTheCopy); };
+    body_->onKeep = [this](const model::ConflictCopy& conflict, bool keepTheCopy) { keep(conflict, keepTheCopy); };
     view_.setViewedComponent(body_.get(), false);
     view_.setScrollBarsShown(true, false);
     addAndMakeVisible(view_);
@@ -212,9 +214,8 @@ void FilesDialog::refresh() {
     resized();
 }
 
-void FilesDialog::keep(std::size_t conflict, bool keepTheCopy) {
-    if (conflict >= state_.conflicts.size()) return;
-    const auto result = session_.resolveConflict(state_.conflicts[conflict].conflict, keepTheCopy);
+void FilesDialog::keep(const model::ConflictCopy& conflict, bool keepTheCopy) {
+    const auto result = session_.resolveConflict(conflict, keepTheCopy);   // fails plainly when a file has gone meanwhile
     error_ = result.failed() ? result.getErrorMessage() : juce::String();
     repaint();
     refresh();
@@ -271,8 +272,12 @@ bool FilesDialog::keyPressed(const juce::KeyPress& key) {
 
 OutsideChangesBanner::OutsideChangesBanner(app::Session& session) : session_(session) {
     setWantsKeyboardFocus(false);
-    load_.onClick = [this] { session_.takeOutsideChanges(); };
-    keep_.onClick = [this] { session_.keepMine(); };
+    load_.onClick = [this] { loadChanges(); };
+    keep_.onClick = [this] {
+        failure_ = {};
+        session_.keepMine();
+        repaint();
+    };
     addAndMakeVisible(load_);
     addAndMakeVisible(keep_);
     refresh();
@@ -280,8 +285,16 @@ OutsideChangesBanner::OutsideChangesBanner(app::Session& session) : session_(ses
 
 void OutsideChangesBanner::refresh() {
     const auto sentence = session_.mode() == app::Mode::Edit ? outsideChangesSentence(session_.outsideChanges()) : juce::String();
+    if (sentence.isEmpty()) failure_ = {};                       // nothing waits: nothing failed either
     if (sentence == sentence_) return;
     sentence_ = sentence;
+    repaint();
+}
+
+void OutsideChangesBanner::loadChanges() {
+    const auto result = session_.takeOutsideChanges();
+    failure_ = result.failed() ? result.getErrorMessage() : juce::String();
+    refresh();
     repaint();
 }
 
@@ -298,7 +311,7 @@ void OutsideChangesBanner::paint(juce::Graphics& g) {
     area.setRight(load_.getX() - kPadX);
     g.setColour(kInk);
     g.setFont(theme::font(theme::sizeBase, true));
-    g.drawFittedText(sentence_, area, juce::Justification::centredLeft, 2, 1.0f);
+    g.drawFittedText(failure_.isNotEmpty() ? failure_ : sentence_, area, juce::Justification::centredLeft, 2, 1.0f);
 }
 
 }  // namespace sqlive::ui
