@@ -303,3 +303,20 @@ TEST_CASE("a change to a device's channel reaches the song the session has prepa
     std::vector<engine::OutMidi> out; engine::OutMidi m; while (s.engine().popMidi(m)) out.push_back(m);
     REQUIRE(out.size() == 1);  CHECK(out[0].data[0] == 0xC4);  CHECK(out[0].data[1] == 12);
 }
+TEST_CASE("playing a song in Edit mode from its start sends its first patch before the count-in", "[session]") {
+    using sqlive::test::messages;
+    using sqlive::test::pc;
+    namespace engine = sqlive::engine;
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 1}, {"beat", 1}, {"messages", messages({pc(12)})}}));
+    d.settle();
+    const auto& doc = *s.model().song(song);
+    REQUIRE(doc.countInBars > 0);
+    const double top = sqlive::model::songExtentSeconds(doc, sqlive::model::tempoMapOf(doc)).first;
+    auto base = s.engine().status().streamTime;
+    s.playSong(song, top + 1.0 / 48000.0);                            // the editor's cursor at the top, give or take rounding
+    s.advanceWithoutDevice(4800);
+    std::vector<engine::OutMidi> out; engine::OutMidi m; while (s.engine().popMidi(m)) out.push_back(m);
+    REQUIRE(out.size() == 1);  CHECK(out[0].data[1] == 12);  CHECK(out[0].streamTime == base);
+}

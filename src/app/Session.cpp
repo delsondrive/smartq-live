@@ -261,8 +261,11 @@ void Session::playSong(const juce::String& songId, double fromSeconds) {
     const auto serial = engine_.cue(prepared->song);
     if (serial == 0) return;                                     // the queue is full: nothing was cued
     const auto& song = *prepared->song;
-    const auto at = std::clamp((engine::SamplePos) std::llround(fromSeconds * song.sampleRate), song.start,
-                               std::max(song.start, song.end));
+    // A place within a millisecond of the song's start is its start: the editor's cursor at the top, rounded from
+    // seconds, can land a sample after it. From its start, the engine sends each device bar 1's state before the count-in.
+    auto at = std::clamp((engine::SamplePos) std::llround(fromSeconds * song.sampleRate), song.start,
+                         std::max(song.start, song.end));
+    if (at - song.start < (engine::SamplePos) std::llround(0.001 * song.sampleRate)) at = song.start;
     playing_ = {{}, songId, true, prepared, serial, at};
     stop_requested_ = false;
     if (engine_.setFollowOn({})) follow_on_ = {};                // one song alone: nothing follows it (or the next tick says so)

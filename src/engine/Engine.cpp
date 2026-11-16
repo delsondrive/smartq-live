@@ -90,7 +90,9 @@ bool Engine::popEvent(EngineEvent& event) { return events_.pop(event); }
 
 bool Engine::popMidi(OutMidi& out) { return midi_.pop(out); }
 
-void Engine::resendMidiState(int device) { push({.type = Command::Type::ResendMidi, .index = device}); }
+void Engine::resendMidiState(std::uint64_t serial, int device) {
+    push({.type = Command::Type::ResendMidi, .serial = serial, .index = device});
+}
 
 void Engine::collectGarbage() {
     std::shared_ptr<const void> object;
@@ -162,8 +164,10 @@ void Engine::handle(Command& command) noexcept {
         if (cueFits()) startPlaying(cued_.song->start, true);
         break;
     case Type::StartAt:
-        if (cueFits())
-            startPlaying(std::clamp(command.index, cued_.song->start, std::max(cued_.song->start, cued_.song->end)), false);
+        if (cueFits()) {   // a position at or before the song's start is its start: bar 1 is chased before the count-in
+            const SamplePos at = std::clamp(command.index, cued_.song->start, std::max(cued_.song->start, cued_.song->end));
+            startPlaying(at, at == cued_.song->start);
+        }
         break;
     case Type::Stop:
         if (state_ != PlayState::Playing) break;
@@ -204,8 +208,8 @@ void Engine::handle(Command& command) noexcept {
     case Type::SetSolo:
         if (command.serial != 0 && command.serial == playing_.serial) renderer_.setSolo(static_cast<int>(command.index));
         break;
-    case Type::ResendMidi:   // the MIDI out knows whether a song plays: a gap or a stop has ended it
-        if (command.index >= 0 && command.index < kMaxMidiDevices)
+    case Type::ResendMidi:   // for the playing song only, whose device numbers these are; nothing in a gap or once stopped
+        if (command.serial != 0 && command.serial == playing_.serial && command.index >= 0 && command.index < kMaxMidiDevices)
             midi_.resend(static_cast<int>(command.index), song_time_, stream_time_);
         break;
     }

@@ -2,7 +2,13 @@
 
 namespace sqlive::engine {
 
-MidiChase::MidiChase() : channels_(static_cast<std::size_t>(kMaxMidiDevices) * kChannels) {
+namespace {
+
+constexpr std::size_t kTableSize = static_cast<std::size_t>(kMaxMidiDevices) * 16;
+
+} // namespace
+
+MidiChase::MidiChase() : channels_(kTableSize) {
     for (auto& c : channels_) c.controller.fill(-1);
 }
 
@@ -19,9 +25,17 @@ void MidiChase::scan(std::span<const MidiEvent> midi, SamplePos upTo) noexcept {
         Channel& c = channels_[index(e.device, e.data[0] & 0x0F)];
         if (kind == 0xC0) {
             c.program = static_cast<std::int8_t>(e.data[1] & 0x7F);
+            for (int i = 0; i < 2; ++i) {
+                c.bankAtProgram[i] = c.controller[kBank[i]];
+                c.bankAfterProgram[i] = false;
+            }
             c.used = true;
         } else if (kind == 0xB0 && e.size >= 3) {
-            c.controller[e.data[1] & 0x7F] = static_cast<std::int8_t>(e.data[2] & 0x7F);
+            const int number = e.data[1] & 0x7F;
+            if (number >= kChased) continue;   // a channel-mode message
+            c.controller[number] = static_cast<std::int8_t>(e.data[2] & 0x7F);
+            for (int i = 0; i < 2; ++i)
+                if (number == kBank[i] && c.program >= 0) c.bankAfterProgram[i] = true;
             c.used = true;
         }
     }

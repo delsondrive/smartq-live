@@ -20,7 +20,12 @@ namespace sqlive::engine {
 // The chase: when a song begins, each device is first sent the state it should be in at the chase point (program with
 // its bank, controllers), with the stream time of the song's first sample. A program or control change at or before the
 // chase point is then skipped, as the chase has covered it. Notes are never chased and never skipped: every note from the
-// first sample played onwards is sent at its own time.
+// first sample played onwards is sent at its own time. Channel-mode messages (CC 120 to 127) are not chased, and one at
+// or before the chase point is skipped too: a reset played after the chase would undo it.
+//
+// A chase is not bounded against the queue: in the worst case it is 32 devices × 16 channels × up to 123 messages, far
+// more than kQueueCapacity. Like any other message, what doesn't fit is dropped (the tail of the chase, then the song's
+// events, until the dispatcher makes room); a song's lanes in practice chase a few messages per device.
 class MidiOut {
 public:
     static constexpr std::size_t kQueueCapacity = 4096;

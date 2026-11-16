@@ -61,15 +61,18 @@ TEST_CASE("starting inside a song sends where each device should be", "[chase]")
 }
 TEST_CASE("resend gives one device its current state", "[chase]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
-    e.cue(share(midiSong({ev(0, 0, 0xC0, 4, 0, 2), ev(0, 1, 0xC1, 7, 0, 2), ev(10000, 0, 0xC0, 12, 0, 2)})));  e.start();
+    auto serial = e.cue(share(midiSong({ev(0, 0, 0xC0, 4, 0, 2), ev(0, 1, 0xC1, 7, 0, 2), ev(10000, 0, 0xC0, 12, 0, 2)})));  e.start();
     renderOffline(e, 2, 20000, 512);  drainMidi(e);
-    e.resendMidiState(0);
+    e.resendMidiState(serial + 1, 0);                               // another song's device 0: not this one's
+    renderOffline(e, 2, 512, 512);
+    CHECK(drainMidi(e).empty());
+    e.resendMidiState(serial, 0);
     renderOffline(e, 2, 512, 512);
     auto out = drainMidi(e);
     REQUIRE(out.size() == 1);
     CHECK(out[0].device == 0);  CHECK(out[0].data[1] == 12);
     e.stop();  renderOffline(e, 2, 5000, 512);  drainMidi(e);
-    e.resendMidiState(0);  renderOffline(e, 2, 512, 512);
+    e.resendMidiState(serial, 0);  renderOffline(e, 2, 512, 512);
     CHECK(drainMidi(e).empty());                                    // nothing is playing: nothing to say
     std::vector<float> l(512), r(512); float* buffers[2] = {l.data(), r.data()};
     e.cue(share(midiSong({ev(0, 0, 0xC0, 4, 0, 2)})));
@@ -137,4 +140,37 @@ TEST_CASE("a note-off a stop could not queue is sent at the next chance, for the
     auto out = drainMidi(e);
     REQUIRE(out.size() == 1);
     CHECK(out[0].data[0] == 0x80);  CHECK(out[0].data[1] == 60);  CHECK(out[0].serial == serial);
+}
+
+TEST_CASE("starting from the song's start, or before it, by position chases bar 1 before the count-in", "[chase]") {
+    for (SamplePos from : {SamplePos(-96000), SamplePos(-96000 - 5000)}) {   // the song's start, and below it (clamped)
+        CAPTURE(from);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.cue(share(midiSong({ev(0, 0, 0xC0, 4, 0, 2)}, 1, 96000)));             // one bar of count-in; the patch on bar 1
+        e.startAt(from);
+        auto base = e.status().streamTime;
+        renderOffline(e, 2, 96000 + 1000, 512);
+        auto out = drainMidi(e);
+        REQUIRE(out.size() == 1);
+        CHECK(out[0].streamTime == base);  CHECK(out[0].data[1] == 4);
+    }
+}
+TEST_CASE("channel-mode messages are not chased", "[chase]") {
+    std::vector<MidiEvent> midi = {ev(0, 0, 0xB0, 7, 90), ev(0, 0, 0xB0, 120, 0), ev(0, 0, 0xB0, 121, 0), ev(0, 0, 0xB0, 123, 0),
+                                   ev(0, 0, 0xB0, 127, 0)};
+    MidiChase chase;  chase.scan(midi, 10);
+    std::vector<std::array<int, 4>> out;
+    chase.emit(-1, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
+    CHECK(out == std::vector<std::array<int, 4>>{{0, 0xB0, 7, 90}});
+}
+TEST_CASE("a bank select after the latest program is sent after it, not as part of it", "[chase]") {
+    std::vector<MidiEvent> midi = {ev(0, 0, 0xB0, 0, 1), ev(0, 0, 0xB0, 32, 2), ev(0, 0, 0xC0, 4, 0, 2), ev(0, 0, 0xB0, 7, 90),
+                                   ev(100, 0, 0xB0, 0, 5), ev(100, 1, 0xC1, 9, 0, 2), ev(200, 1, 0xB1, 32, 3)};
+    MidiChase chase;  chase.scan(midi, 1000);
+    std::vector<std::array<int, 4>> out;
+    chase.emit(-1, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
+    CHECK(out == std::vector<std::array<int, 4>>{{0, 0xB0, 0, 1}, {0, 0xB0, 32, 2}, {0, 0xC0, 4, -1},   // the bank program 4 was chosen in
+                                                 {0, 0xB0, 0, 5},                                        // then the pending bank select
+                                                 {0, 0xB0, 7, 90},
+                                                 {1, 0xC1, 9, -1}, {1, 0xB1, 32, 3}});
 }

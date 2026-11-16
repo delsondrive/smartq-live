@@ -62,7 +62,7 @@ public:
     std::uint64_t cue(std::shared_ptr<const PreparedSong>);
     bool clearCue();                      // false: the command queue was full and nothing was sent
     void start();                         // Stopped and something cued at the engine's rate: play it from its start
-    void startAt(SamplePos songTime);     // the same, from a position clamped to the song
+    void startAt(SamplePos songTime);     // the same, from a position clamped to the song (at its start: as start())
     void stop();
     bool setFollowOn(FollowOn);           // false: the command queue was full and nothing was sent
     void setMix(std::shared_ptr<const MixSetup>);
@@ -74,13 +74,13 @@ public:
     // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
     // it is due at. Notes still sounding when a song stops (at the end of its fade), ends, or prepare stops it are ended
     // then. When the queue is full, what doesn't fit is dropped. A song that starts first sends each device the state it
-    // should be in (program with its bank, controllers), as of bar 1 beat 1 when it starts from its start or follows on,
-    // as of startAt's position otherwise, at the stream time of its first sample; the changes that covered are not sent
-    // again.
+    // should be in (program with its bank, controllers), as of bar 1 beat 1 when it starts from its start (start(), a
+    // startAt at or before the song's start) or follows on, as of startAt's position otherwise, at the stream time of its
+    // first sample; the changes that covered are not sent again.
     bool popMidi(OutMidi&);
-    // Control thread: sends one device (an engine device number of the playing song) the state it should be in now, at the
-    // start of the next block. Nothing when no song is playing (a gap included).
-    void resendMidiState(int device);
+    // Control thread: sends one device (an engine device number of the song with this serial) the state it should be in
+    // now, at the start of the next block. Nothing unless that song is the one playing (so nothing in a gap or stopped).
+    void resendMidiState(std::uint64_t serial, int device);
     // Frees what the audio thread has finished with. Call it regularly (the app's timer does): when the garbage queue is
     // full, the audio thread keeps what it lets go of in a small store of its own, and once that is nearly full it holds
     // back every command, cues, starts and stops included, until garbage is collected.
