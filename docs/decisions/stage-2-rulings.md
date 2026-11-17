@@ -92,8 +92,7 @@ None of these stops you playing a show.
 
 **MIDI engine and clock**
 - Changes inside the 50 ms stop fade are still sent.
-- Test gaps: a resend during the count-in, bank plus program through the engine, and the prepared-song copy of device ids and clock settings.
-- A pre-MIDI file isn't tested to read with no notes and round-trip. Old files gain empty MIDI keys on the next save.
+- Old files gain empty MIDI keys on the next save.
 - The chase doesn't order RPN/NRPN messages exactly. A CC 121 before the chase point doesn't reset the chased controllers.
 - A seamless follow-on with a count-in still skips an early bar-1 note.
 - If the sound card errors but keeps running, the song's MIDI stays silent until the next prepare.
@@ -103,36 +102,31 @@ None of these stops you playing a show.
 **Footswitches and controls**
 - A device that sends the same value on press and release counts each press twice.
 - One input per control needs a document change. It is a design question for later.
-- Test gaps: a pedal in Edit mode, program-change path, a vanished input, the fake opener.
+- Test gaps: the program-change path, a vanished input, the fake opener.
 - A click on a device row doesn't cancel waiting for a key.
-- A tapped Stop pedal's count isn't cleared when Start is pressed from the top bar.
 
 **MIDI files and import**
 - Note lengths are clamped silently, and pitch bend and aftertouch are ignored.
 - A broken file header can read as unreadable. A file over 200 MB says only "couldn't be read".
-- Tracks are named by their number in the file, not always by their own name.
 - Small wording, and the import dialog doesn't follow later changes in the session.
 
 **Editor lanes**
 - The selected tempo plate lacks the mockup's glow.
 - A two-points-in-one-place edit snaps back silently.
 - Offered edits that are always refused ("No program change", ✕).
-- Note and Program badges reuse section colours. Typed numbers accept "1.2.3".
+- Typed numbers accept "1.2.3".
 - Several drag, edit and coverage tests are missing.
 - The Click header still lacks "in-ear only".
 - A chip at bar 1 with no count-in covers the lane name. The top bar at 1100 px wraps to two rows in Edit mode.
 
 **Setup pages**
 - The patch dialog's Save isn't refreshed on a mode change. Re-choosing an unplugged port reruns the command.
-- The New computer page's "Test each device" button and home hint aren't built. Its MIDI save should be split out and tested.
-- A patch-list typo should be shown in caution, not danger.
+- The New computer page's "Test each device" button and home hint aren't built.
 - The 1920 picture check was lowered to 0.01.
 
 **Snapshots and shared files**
 - Named "Before going back" snapshots are never cleaned up. Trash order uses the local clock.
 - After undo and redo of a loaded removal, the restored folder stays in the songs folder.
-- A restored document that a bandmate changed isn't tested here.
-- A remembered folder with no readable song file can still receive the song's file when its own folder is in the trash.
 - Setlists and rigs can be saved into a place still remembered for a removed document.
 - The demo's MIDI isn't in the opening snapshot, so going back removes it. The app ignores the demo's save result.
 - The snapshots picture sits over Setlists, not the Song editor.
@@ -140,7 +134,6 @@ None of these stops you playing a show.
 **Code tidiness**
 - Many lines over 140 columns, and a few over-long files.
 - Some unused includes, duplicated helpers and a test-only friend.
-- Per-tick work in the show hints could be cached per song.
 - Some tests lack coverage at small and large window sizes.
 
 ## Things only you can check
