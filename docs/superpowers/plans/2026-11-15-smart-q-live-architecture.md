@@ -29,7 +29,7 @@ Stage 5 (pad player, timecode, backup laptop) is not planned yet. The spec says 
 
 ## Test data
 
-`model::createDemoBand` makes a small band with three generated songs and never changes: tests rely on its exact contents. Stage 2 adds `model::addDemoMidi` and stage 3 adds `model::addDemoSections`, which enrich a demo band through commands. `sqlive::test::DemoSession d;` is the plain band; `DemoSession d(true);` also has the MIDI and the sections.
+`model::createDemoBand` makes a small band with three generated songs and never changes: tests rely on its exact contents. From stage 3, `model::BandFolder::create` (and so the demo band) also writes the default section types into `band.json`. Stage 2 adds `model::addDemoMidi` and stage 3 adds `model::addDemoSections`, which enrich a demo band through commands. `sqlive::test::DemoSession d;` is the plain band; `DemoSession d(true);` also has the MIDI and the sections.
 
 ## Global constraints (every task in every plan)
 
