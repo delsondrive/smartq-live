@@ -20,7 +20,8 @@ public:
     // Where it is, or would be, saved (a song with no folder yet: songs/<id>/song.json).
     juce::File fileFor(const DocKey&) const;
     juce::File songFolder(const juce::String& songId) const;     // {} if the song has no folder yet
-    juce::File assignSongFolder(const juce::String& songId, const juce::String& title);   // makes songs/<name>/ and remembers it
+    // The song's folder; when it has none, makes songs/<name>/, its name unused on disk and by any song, and remembers it.
+    juce::File assignSongFolder(const juce::String& songId, const juce::String& title);
     // Message thread. A new folder for a song still to be imported: songs/<name>/, its name unused on disk and by any song,
     // made empty now so that a second reservation gets another; not remembered for any song yet. {} if it can't be made.
     juce::File reserveSongFolder(const juce::String& title) const;
@@ -35,10 +36,12 @@ public:
 private:
     juce::File place(const DocKey&) const;                       // folder (song) or file (setlist, rig); {} when unknown
     juce::Result moveToTrash(const DocKey&);
+    juce::File freeSongFolder(const juce::String& title) const;   // songs/<name>/ unused on disk and by any song; not made
     // What moveToTrash took, back in its place. A song this folder never trashed (removed in an earlier session, or on
-    // another computer) whose folder isn't there: the newest folder in trash/ whose song.json has its id, moved back to the
-    // folder remembered for it, or under songs/ as assignSongFolder would name it for that title. None in trash/: nothing
-    // is done, and save makes a new folder.
+    // another computer) whose folder isn't there, or now holds another song's song.json: the newest folder in trash/ whose
+    // song.json has its id, moved back to the folder remembered for it if that is gone, or under songs/ as
+    // assignSongFolder would name it for that title. None in trash/: nothing is done, and save writes in the folder
+    // remembered for it (the session holds back writing over another computer's song.json unless told to) or a new one.
     juce::Result restoreFromTrash(const DocKey&, const juce::String& songTitle = {});
     juce::File trashedSongFolder(const juce::String& songId) const;   // {} when trash/ has none
 

@@ -7,6 +7,7 @@
 #include "model/BandFolder.h"
 #include "model/CoreCommands.h"
 #include "model/DocumentSet.h"
+#include "model/DocumentsJson.h"
 #include "model/Snapshots.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
@@ -164,4 +165,35 @@ TEST_CASE("a song removed on another computer comes back from the trash with its
     REQUIRE(s.model().song(id) != nullptr);
     CHECK(s.folder().audioFile(*s.model().song(id), part).existsAsFile());     // its own folder, audio and all
     CHECK(root.getChildFile("trash").getNumberOfChildFiles(juce::File::findDirectories) == 0);
+}
+TEST_CASE("a new song with a trashed song's title keeps its own folder when the trashed one comes back", "[snapshots]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    const auto opened = s.snapshots().list().front().id;
+    const auto id = d.setlist().entries[0].songId;
+    const auto title = s.model().song(id)->title;
+    const auto part = s.model().song(id)->parts[0];
+    const auto dir = s.folder().songFolder(id);
+    REQUIRE(root.getChildFile("trash").createDirectory());
+    REQUIRE(dir.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.takeOutsideChanges().wasOk());                        // the removal is loaded; its place is still remembered
+    REQUIRE(s.model().song(id) == nullptr);
+    model::SongDoc b; b.id = model::newId(); b.title = title;
+    REQUIRE(s.commands().run("song.add", params({{"song", model::toVar(b)}})).ok);
+    s.flushNow();
+    const auto dirB = s.folder().songFolder(b.id);
+    CHECK(dirB != dir);
+    REQUIRE(dirB.getChildFile("audio/B.wav").create());
+    REQUIRE(s.snapshots().restore(opened, s.commands()).wasOk());   // the snapshot holds the trashed song
+    s.flushNow();
+    REQUIRE(s.model().song(id) != nullptr);
+    CHECK(s.folder().songFolder(id) == dir);
+    CHECK(s.folder().audioFile(*s.model().song(id), part).existsAsFile());
+    CHECK(juce::JSON::parse(dir.getChildFile("song.json").loadFileAsString()).getProperty("id", {}).toString() == id);
+    REQUIRE(s.model().song(b.id) == nullptr);                      // the snapshot didn't have it
+    s.commands().undo();  s.flushNow();                             // undo going back: the new song returns, as itself
+    REQUIRE(s.model().song(b.id) != nullptr);
+    const auto backB = s.folder().songFolder(b.id);
+    CHECK(backB.getChildFile("audio/B.wav").existsAsFile());
+    CHECK(juce::JSON::parse(backB.getChildFile("song.json").loadFileAsString()).getProperty("id", {}).toString() == b.id);
 }

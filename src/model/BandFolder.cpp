@@ -41,6 +41,13 @@ std::vector<Found> dedupe(std::vector<Found> found, juce::StringArray& notes) {
     return kept;
 }
 
+// The id in the folder's song.json; empty when it has none or it can't be read.
+juce::String songIdIn(const juce::File& dir) {
+    const auto file = dir.getChildFile("song.json");
+    if (! file.existsAsFile()) return {};
+    return juce::JSON::parse(file.loadFileAsString()).getProperty("id", {}).toString();
+}
+
 juce::File trashTarget(const juce::File& root, const juce::File& item) {
     auto trash = root.getChildFile("trash");
     auto stamp = juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S");
@@ -126,13 +133,15 @@ juce::File BandFolder::songFolder(const juce::String& songId) const { return pla
 
 juce::File BandFolder::assignSongFolder(const juce::String& songId, const juce::String& title) {
     if (auto existing = songFolder(songId); existing != juce::File()) return existing;
-    auto dir = uniqueChild(root_folder_.getChildFile("songs"), safeFileName(title), "");
+    auto dir = freeSongFolder(title);
     dir.createDirectory();
     places_[{DocKind::Song, songId}] = dir;
     return dir;
 }
 
-juce::File BandFolder::reserveSongFolder(const juce::String& title) const {
+juce::File BandFolder::freeSongFolder(const juce::String& title) const {
+    // A folder gone from the disk may still be remembered for a song whose removal on another computer was loaded; it is
+    // kept for that song, so that bringing it back can't land on another song's folder.
     const auto songs = root_folder_.getChildFile("songs");
     const auto name = safeFileName(title);
     const auto taken = [&](const juce::File& dir) {
@@ -143,6 +152,11 @@ juce::File BandFolder::reserveSongFolder(const juce::String& title) const {
     };
     auto dir = songs.getChildFile(name);
     for (int n = 2; taken(dir); ++n) dir = songs.getChildFile(name + " " + juce::String(n));
+    return dir;
+}
+
+juce::File BandFolder::reserveSongFolder(const juce::String& title) const {
+    const auto dir = freeSongFolder(title);
     return dir.createDirectory() ? dir : juce::File();
 }
 
@@ -203,24 +217,27 @@ juce::File BandFolder::trashedSongFolder(const juce::String& songId) const {
     // The newest first: each one's name starts with the date and time it went to the trash.
     auto dirs = root_folder_.getChildFile("trash").findChildFiles(juce::File::findDirectories, false);
     std::sort(dirs.begin(), dirs.end(), [](const juce::File& a, const juce::File& b) { return a.getFileName() > b.getFileName(); });
-    for (const auto& dir : dirs) {
-        const auto file = dir.getChildFile("song.json");
-        if (file.existsAsFile() && juce::JSON::parse(file.loadFileAsString()).getProperty("id", {}).toString() == songId) return dir;
-    }
+    for (const auto& dir : dirs)
+        if (songIdIn(dir) == songId) return dir;
     return {};
 }
 
 juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String& songTitle) {
     auto it = trashed_.find(key);
     if (it == trashed_.end()) {
-        // A folder remembered for it that is gone (its removal on another computer was loaded) doesn't count as its folder.
+        // A folder remembered for it that is gone (its removal on another computer was loaded) doesn't count as its folder,
+        // nor, when its own is in the trash, does one that now holds another song's song.json (made there since).
+        if (key.kind != DocKind::Song) return juce::Result::ok();
         const auto remembered = place(key);
-        if (key.kind != DocKind::Song || remembered.isDirectory()) return juce::Result::ok();
+        if (remembered.isDirectory()) {
+            const auto held = songIdIn(remembered);
+            if (held.isEmpty() || held == key.id) return juce::Result::ok();
+        }
         const auto from = trashedSongFolder(key.id);
         if (from == juce::File()) return juce::Result::ok();
         const auto to = remembered != juce::File() && ! remembered.exists()
                             ? remembered                         // back where it was
-                            : uniqueChild(root_folder_.getChildFile("songs"), safeFileName(songTitle), "");
+                            : freeSongFolder(songTitle);
         to.getParentDirectory().createDirectory();
         if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
         places_[key] = to;
