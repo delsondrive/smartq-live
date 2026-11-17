@@ -70,6 +70,8 @@ int Arrangement::nextStep() const noexcept {
     return next < stepCount() ? next : -1;
 }
 
+bool Arrangement::finalStep() const noexcept { return step_ >= 0 && nextStep() < 0; }
+
 SamplePos Arrangement::boundary(SamplePos songTime) const noexcept {
     if (step_ < 0) return lead_end_;
     const SamplePos end = sectionOf(step_).end;

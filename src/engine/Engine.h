@@ -15,12 +15,14 @@
 #include "engine/PreparedSong.h"
 #include "engine/SongRenderer.h"
 #include "engine/SpscQueue.h"
+#include "engine/Transition.h"
 #include "engine/Types.h"
 
 namespace sqlive::engine {
 
 enum class PlayState : std::uint8_t { Stopped, Playing, Stopping };
-enum class FollowKind : std::uint8_t { Stop, Gap, Seamless };
+enum class FollowKind : std::uint8_t { Stop, Gap, Seamless, Crossfade };
+// gapSeconds: the gap's length for Gap, the crossfade's for Crossfade.
 struct FollowOn { FollowKind kind = FollowKind::Stop; double gapSeconds = 0.0; };
 
 struct EngineStatus {
@@ -77,6 +79,18 @@ inline constexpr int kMaxDeviceChannels = 256;
 // placed it there, so that boundary's announcement is skipped. The schedule is CueSchedule's. A new clip cuts the one
 // speaking with a 5 ms fade. The song's last step ending, a stop, and a start all silence the voice with that fade. Cues
 // sound at the band's cue level (setCueGain) × the song's cuesAutomation at each sample.
+//
+// A crossfade follow-on of N seconds (FollowKind::Crossfade): N seconds before the playing song's last step ends, while
+// that step plays with nothing chosen or looping and a song is cued, the cue starts from its body start (its count-in
+// skipped) and becomes the playing song, just as a seamless follow-on does: Started and its first step reported, its
+// starting patches sent, and from then on the click, MIDI, clock and cues are its own (the old song's MIDI ends there, its
+// voice is silenced with the 5 ms fade, and its cues are not said). The old song's parts carry on underneath on a second
+// renderer, at the levels they had, in a straight line down to silence at its last step's end (no tail after it), then
+// Ended for it; the new song fades in over the same samples. Less than N seconds left when the moment is worked out: it
+// starts at once and lasts what is left. A loop or a choice before the moment puts it off until the last step plays freely
+// again; a cue, a follow-on or a loop turned off works it out again; with nothing cued when it comes, the song just ends.
+// Worked out from song time, so it doesn't depend on the block size. While a song fades out no other one can: a moment
+// that comes meanwhile waits for that fade's end. A stop fades both out over the stop fade and reports Stopped for each.
 class Engine {
 public:
     Engine();
@@ -119,6 +133,17 @@ public:
     // Repeat the playing step at each of its ends, or stop repeating it. Turning it on cancels a chosen step.
     void setLoop(std::uint64_t serial, bool);
     bool setFollowOn(FollowOn);           // false: the command queue was full and nothing was sent
+    // Moves on to the cued song now, while a step of the playing song plays (not in its lead-in, a count-off, a gap, the
+    // stop fade or its tail) and a song is cued; ignored otherwise, and while an earlier goToNext is still under way or a
+    // song still fades out. With a crossfade follow-on (of some length) the crossfade starts at once (as soon as a jump's
+    // 240-sample crossfade is over), lasting N seconds, or what is left of a last step. With any other, the playing song
+    // ends at the next bar start (or where its step ends, if that comes first), and choices and loops for it are ignored
+    // from now on. There, with Seamless (or a crossfade of no length) and a song cued, the next song starts at once while
+    // the old one's 50 ms fade plays on the second renderer; otherwise the old song's audio fades out over 50 ms from the
+    // bar line, parts only, with no MIDI after it. Either way Ended (not Stopped) is reported for it at the end of that
+    // fade, and with Stop or Gap the follow-on then happens as usual (a stop during that fade makes it Stopped, as in any
+    // song's tail). A stop before the bar line cancels it. The "hold" and "two taps" safeguards are the control layer's.
+    void goToNext();
     void setMix(std::shared_ptr<const MixSetup>);
     void setPartGain(std::uint64_t serial, int part, float linear);
     void setPartMute(std::uint64_t serial, int part, bool mute);
@@ -164,7 +189,7 @@ private:
     struct Command {
         enum class Type : std::uint8_t {
             None, Cue, ClearCue, Start, StartAt, StartAtStep, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute,
-            SetPartOverride, SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop, SetCueGain, PreviewCue
+            SetPartOverride, SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop, SetCueGain, PreviewCue, GoToNext
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
@@ -173,24 +198,18 @@ private:
         std::shared_ptr<const void> object;   // a song, a mix or a cue clip
     };
 
-    // A song the audio thread holds: the playing one or the cued one. `hold` keeps it alive; `song` is the same object.
-    struct SongSlot {
-        std::shared_ptr<const void> hold;
-        const PreparedSong* song = nullptr;
-        std::uint64_t serial = 0;
-    };
-
     // Objects that could not go onto a full garbage queue wait here, in place, for the next block. A block retires at most
     // one object per command and kRetiresPerRender while rendering, so commands wait while this is nearly full.
-    // Rendering retires songs that end, and only the playing song and the cue can: commands, which alone fill the cue, are
-    // taken at the start of a block. So a block's render retires at most kSongSlots songs, even when the playing song ends
-    // and its follow-on (seamless, or after a gap) ends in the same block. Then it retires the clips the cue voice has
-    // finished with, as many as are left of kRetiresPerRender.
+    // Rendering retires songs that end, and only the songs in the slots at the block's start can: commands, which alone
+    // fill the cue, are taken at the start of a block, and a song enters the playing or the fading slot only from the
+    // one before it. So a block's render retires at most kSongSlots songs, even when the fading song's fade ends, the
+    // playing song ends and its follow-on ends in the same block. Then it retires the clips the cue voice has finished
+    // with, as many as are left of kRetiresPerRender.
     static constexpr int kHeldCapacity = 16;
-    static constexpr int kRetiresPerRender = 4;
-    static constexpr int kSongSlots = 2;   // playing_ and cued_
+    static constexpr int kSongSlots = 3;   // playing_, transition_'s fading song (a crossfade's, or goToNext's) and cued_
+    static constexpr int kRetiresPerRender = kSongSlots + CuePlayer::kVoices;
     static_assert(kRetiresPerRender >= kSongSlots + CuePlayer::kVoices,
-                  "a block's render can retire the playing song, the cue and a clip per cue voice");
+                  "a block's render can retire the playing song, the fading song, the cue and a clip per cue voice");
     static_assert(1 + kRetiresPerRender <= kHeldCapacity, "room for one command and a render");
 
     bool push(Command&&);                 // false: the queue was full, and the command was dropped
@@ -211,6 +230,17 @@ private:
     const float* renderCue(std::int64_t frames, std::int64_t* sounding = nullptr) noexcept;
     bool cuesLive() const noexcept;                              // a step plays, so cues are said
     double stopGain(std::int64_t k) const noexcept;   // the stop fade's gain k samples on from where it stands
+    double gainAt(std::int64_t k) const noexcept;     // the playing song's: the stop fade's gain times a crossfade's fade-in
+    // The song time the playing song's crossfade begins at (Transition::crossfadeAt), when one can: kNever otherwise.
+    SamplePos crossfadeDue() const noexcept;
+    std::int64_t untilTransition() const noexcept;    // samples to the crossfade's moment or goToNext's end, if ahead
+    void beginDueCrossfade(std::int64_t streamTime) noexcept;
+    // The playing song moves to the fading slot, fading over `length` samples (with fadeIn, a crossfade), and the cue plays.
+    void beginTransition(std::int64_t streamTime, std::int64_t length, bool fadeIn) noexcept;
+    void endAtBar(std::int64_t streamTime) noexcept;  // goToNext's end is reached
+    void renderFading(int numChannels, std::int64_t frames) noexcept;
+    void finishFade(EngineEvent::Type, std::int64_t streamTime) noexcept;   // the fading song is retired, reported so
+    SongRenderer& spareRenderer() noexcept;           // the renderer renderer_ is not
     void settle(std::int64_t streamTime) noexcept;
     bool handOver(std::int64_t streamTime) noexcept;
     void enterStep(int step, std::int64_t streamTime) noexcept;
@@ -248,9 +278,11 @@ private:
     std::uint64_t next_serial_ = 1;
 
     // Audio thread only (and prepare, while process is not running).
-    SongRenderer renderer_;
+    std::array<SongRenderer, 2> renderers_;    // the playing song's, and the one a song fading out plays on
+    SongRenderer* renderer_ = &renderers_[0];   // the playing song's (and a cue alone's)
     int max_block_ = 0;
-    std::vector<float> envelope_;            // max_block_: the fade of one chunk (a stop, a song's tail, or both)
+    std::vector<float> envelope_;            // max_block_: the fade of one chunk (a stop, a song's tail, a crossfade's
+                                             // fade-in, or more than one)
     std::vector<float*> channels_;           // the output channels from where a chunk's render begins
     SongSlot playing_, cued_;
     std::shared_ptr<const void> mix_hold_;
@@ -271,15 +303,18 @@ private:
     SamplePos count_off_from_ = 0, count_off_to_ = 0;
     std::int64_t jump_fade_ = 0;             // 240 samples at 48 kHz: a jump's crossfade, and the tail after a last step
     std::int64_t xfade_left_ = 0;            // samples of a jump's crossfade still to come
-    SamplePos tail_time_ = 0;                // during a crossfade: the song time of the audio running on past the line
-    bool ending_ = false;                    // the last step is over: the audio running on past it fades out (song_time_)
+    SamplePos tail_time_ = 0;                // during a jump's crossfade: the song time of the audio running on past the line
+    bool ending_ = false;                    // the last step is over (or goToNext ended the song): the audio running on
+                                             // past it fades out (song_time_)
     std::int64_t tail_left_ = 0;             // samples of that fade still to come
+    std::int64_t tail_length_ = 0;           // that fade's length: jump_fade_ after a last step, the stop fade's after goToNext
     std::array<std::shared_ptr<const void>, kHeldCapacity> held_;
     int held_count_ = 0;
     int retired_ = 0;                        // objects retired since this block's commands were taken
     CuePlayer cue_player_;
     std::vector<float> cue_buffer_;          // max_block_: the voice's mono audio for one render
     CueSchedule cue_schedule_;               // what the playing step says, and when
+    Transition transition_;                  // a crossfade's moment, goToNext's end, and the song fading out
 };
 
 } // namespace sqlive::engine

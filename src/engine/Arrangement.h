@@ -30,6 +30,9 @@ public:
     // The step that plays after the playing one: the playing step if looping; else the pending step if there is one; else
     // step + 1; -1 when none. In the lead-in: the step it leads into.
     int nextStep() const noexcept;
+    // A step plays and nothing follows it: it is the last, with nothing chosen and not looping. Only then can the song's
+    // crossfade into the next one be worked out.
+    bool finalStep() const noexcept;
     // Where the playing step hands over, songTime being the next sample it plays: its section's end; but with the song's
     // jump timing NextBar and a choice or a loop made in this step and not yet taken, the first barStarts entry after
     // songTime, if that comes first. In the lead-in: where it ends.
