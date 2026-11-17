@@ -174,3 +174,21 @@ TEST_CASE("a bank select after the latest program is sent after it, not as part 
                                                  {0, 0xB0, 7, 90},
                                                  {1, 0xC1, 9, -1}, {1, 0xB1, 32, 3}});
 }
+TEST_CASE("a device with a pending bank that isn't the song's gets the song's program again", "[chase]") {
+    // The device was sent program 4 in bank 1, then a bank select (CC 0 = 5) pending for its next program change; the song
+    // is on program 4 in bank 1 with nothing pending. Left alone, the song's next plain program change would land in bank 5.
+    std::vector<MidiEvent> sentMidi = {ev(0, 0, 0xB0, 0, 1), ev(0, 0, 0xC0, 4, 0, 2), ev(10, 0, 0xB0, 0, 5)};
+    std::vector<MidiEvent> songMidi = {ev(0, 0, 0xB0, 0, 1), ev(0, 0, 0xC0, 4, 0, 2)};
+    MidiChase sent, song;  sent.scan(sentMidi, 100);  song.scan(songMidi, 100);
+    std::vector<std::array<int, 4>> out;
+    song.emitChanges(sent, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
+    CHECK(out == std::vector<std::array<int, 4>>{{0, 0xB0, 0, 1}, {0, 0xC0, 4, -1}});
+    // The same state sent again changes nothing; so does a device whose pending bank is the song's own.
+    out.clear();  sent.scan(songMidi, 100);
+    song.emitChanges(sent, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
+    CHECK(out.empty());
+    std::vector<MidiEvent> pending = {ev(0, 0, 0xB0, 0, 1), ev(0, 0, 0xC0, 4, 0, 2), ev(10, 0, 0xB0, 0, 5)};
+    MidiChase same;  same.scan(pending, 100);  sent.scan(pending, 100);
+    same.emitChanges(sent, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
+    CHECK(out.empty());
+}

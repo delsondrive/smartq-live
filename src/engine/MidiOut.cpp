@@ -98,10 +98,7 @@ void MidiOut::jump(SamplePos landing, std::int64_t streamTime) noexcept {
     if (song_ == nullptr) return;
     endNotes(streamTime);
     chase_.scan(song_->midi, landing);
-    chase_.emitChanges(sent_, [&](int device, const std::uint8_t* b, int size) {
-        if (push(serial_, static_cast<std::uint16_t>(device), static_cast<std::uint8_t>(size), b[0], b[1], b[2], streamTime))
-            sent_.note(b, size, device);
-    });
+    chase_.emitChanges(sent_, [&](int device, const std::uint8_t* b, int size) { pushRecorded(device, b, size, streamTime); });
     chase_point_ = landing;
     seek(landing, landing);
 }
@@ -197,10 +194,13 @@ void MidiOut::stopDevices(std::uint32_t devices, std::int64_t streamTime) noexce
 // The state at upTo of one device (or every one, for -1), queued at streamTime for the playing song.
 void MidiOut::chase(int onlyDevice, SamplePos upTo, std::int64_t streamTime) noexcept {
     chase_.scan(song_->midi, upTo);
-    chase_.emit(onlyDevice, [&](int device, const std::uint8_t* b, int size) {
-        if (push(serial_, static_cast<std::uint16_t>(device), static_cast<std::uint8_t>(size), b[0], b[1], b[2], streamTime))
-            sent_.note(b, size, device);
-    });
+    chase_.emit(onlyDevice, [&](int device, const std::uint8_t* b, int size) { pushRecorded(device, b, size, streamTime); });
+}
+
+// Queues a program or controller message for the playing song, and records it as sent unless the full queue dropped it.
+void MidiOut::pushRecorded(int device, const std::uint8_t* b, int size, std::int64_t streamTime) noexcept {
+    if (push(serial_, static_cast<std::uint16_t>(device), static_cast<std::uint8_t>(size), b[0], b[1], b[2], streamTime))
+        sent_.note(b, size, device);
 }
 
 bool MidiOut::push(std::uint64_t serial, std::uint16_t device, std::uint8_t size, std::uint8_t a, std::uint8_t b,

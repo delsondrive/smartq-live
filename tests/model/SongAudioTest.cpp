@@ -135,7 +135,16 @@ TEST_CASE("a band with a clock device gets clock ticks in its prepared songs", "
     auto prepared = buildPreparedSong(song, band, RigDoc{}, {{"p1", audio}}, 48000.0);
     CHECK(prepared.clockDevices == std::vector<std::uint16_t>{0});
     REQUIRE_FALSE(prepared.clockTicks.empty());
-    CHECK(prepared.clockTicks == engine::buildClockTicks(prepared.tempo, 48000.0, prepared.start, prepared.end));
+    CHECK(prepared.clockTicks == engine::buildClockTicks(prepared.tempo, 48000.0, prepared.start, prepared.end));   // the count-in is a bar: the floor is the start
+    // With no count-in the clock still starts a bar before bar 1, for a count-off from a step at bar 1.
+    song.countInBars = 0;
+    auto bare = buildPreparedSong(song, band, RigDoc{}, {{"p1", audio}}, 48000.0);
+    REQUIRE(bare.start == 0);
+    REQUIRE_FALSE(bare.clockTicks.empty());
+    CHECK(bare.clockTicks.front() == -96000);                       // 120 BPM 4/4: a bar is 96000 samples
+    CHECK(bare.clockTicks == engine::buildClockTicks(bare.tempo, 48000.0, engine::countOffFloor(bare.tempo, 48000.0, 0), bare.end));
+    CHECK(bare.ticks.front().at == bare.clockTicks.front());        // the click's floor is the same
+    song.countInBars = 1;
     band.midiDevices[0].clock = false;
     CHECK(buildPreparedSong(song, band, RigDoc{}, {{"p1", audio}}, 48000.0).clockTicks.empty());
 }

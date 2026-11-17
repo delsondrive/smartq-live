@@ -90,6 +90,9 @@ private:
             if (c.bankAfterProgram[i] &&
                 (!was.bankAfterProgram[i] || was.controller[kBank[i]] != c.controller[kBank[i]]))
                 return true;
+            // A bank the device has pending after its program that isn't the song's would land the song's next plain
+            // program change on the wrong patch.
+            if (was.bankAfterProgram[i] && was.controller[kBank[i]] != c.controller[kBank[i]]) return true;
         }
         return false;
     }

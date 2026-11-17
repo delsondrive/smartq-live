@@ -57,7 +57,7 @@ struct PreparedSong {
     // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
     std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order
     std::vector<std::uint16_t> clockDevices, startStopDevices;
-    std::vector<SamplePos> clockTicks; // 24 per quarter over [start, end); only when clockDevices isn't empty
+    std::vector<SamplePos> clockTicks; // 24 per quarter over [countOffFloor, end); only when clockDevices isn't empty
     std::vector<std::string> midiDeviceIds;   // the band's device id for each engine device number, as when prepared
     // Sections and the arrangement: the song plays the sections its steps name, in step order, and ends when the last
     // step does. `end` stays the audio's end; the sections tile [0, end).
@@ -66,6 +66,11 @@ struct PreparedSong {
     JumpTiming jumpTiming = JumpTiming::EndOfSection;
     std::vector<SamplePos> barStarts;        // every bar start in [0, end)
 };
+
+// Where a count-off may begin: the start, or the bar before bar 1 when that is earlier. Click ticks and MIDI clock ticks are
+// built from here, so a step at bar 1 still has a bar of both for startAtStep's count-off; ordinary playback never
+// reaches before `start`.
+SamplePos countOffFloor(const TempoMap&, double sampleRate, SamplePos start);
 
 // explicitEnd below 0 means "where the longest part ends". Runs finishSections on what it makes.
 PreparedSong prepareSong(std::string id, TempoMap, int countInBars, SamplePos audioStartOffset,

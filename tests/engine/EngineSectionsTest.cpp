@@ -161,9 +161,14 @@ TEST_CASE("jumps, chases, loops and a song's tail allocate and free nothing on t
     CHECK(allocationCount() == 0);
     CHECK(deallocationCount() == 0);
     CHECK(e.status().state == PlayState::Stopped);
-    std::size_t chased = 0;
-    for (const auto& m : drainMidi(e)) chased += m.data[0] == 0xB0 && m.data[1] == 7 ? 1u : 0u;
-    CHECK(chased == 1);                                 // sent at the first jump into section 2, never again
+    std::size_t chased = 0, program2 = 0, bank = 0;
+    for (const auto& m : drainMidi(e)) {
+        if (m.data[0] == 0xB0 && m.data[1] == 7) { ++chased;  CHECK(m.streamTime == 0); }
+        if (m.data[0] == 0xB0 && m.data[1] == 0 && m.data[2] == 3) { ++bank;  CHECK(m.streamTime == (bank == 1 ? 0 : 96000)); }
+        if (m.data[0] == 0xC0 && m.data[1] == 2) { ++program2;  CHECK(m.streamTime == 96000); }
+    }
+    CHECK(chased == 1);                                 // CC 7 = 50 goes out with begin's chase, at stream time 0, and never again
+    CHECK(bank == 2);  CHECK(program2 == 1);            // CC 0 = 3 with begin's program 3, then again with program 2 at the jump: stream time 96000
 }
 TEST_CASE("a stop during a crossfade fades both sides out, and a stop during a song's tail ends it", "[sections]") {
     for (int block : {1, 64, 512}) {

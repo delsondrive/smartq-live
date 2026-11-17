@@ -7,6 +7,7 @@
 
 #include "engine/Engine.h"
 #include "engine/Midi.h"
+#include "engine/MidiClock.h"
 #include "engine/OfflineRender.h"
 #include "engine/PreparedSong.h"
 #include "tests/support/MidiEvents.h"
@@ -256,4 +257,18 @@ TEST_CASE("stop clears the choice and the loop at once", "[jump]") {
                                     {40, [&](Engine& en) { en.setLoop(s, true); }},     // and nothing is taken during the fade
                                     {50, [](Engine& en) { CHECK_FALSE(en.status().looping); }}});
     CHECK(e.status().state == PlayState::Stopped);
+}
+TEST_CASE("the MIDI clock runs through a start-from-section count-off", "[jump]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = rampSong("r", 2, {1, 1}, {1, 0});                  // step 1 (section 0) starts at bar 1: its count-off is before the song's start
+    song.clockDevices = {1};
+    song.clockTicks = buildClockTicks(song.tempo, 48000.0, countOffFloor(song.tempo, 48000.0, song.start), song.end);
+    e.cue(share(song));  e.startAtStep(1);
+    const auto base = e.status().streamTime;
+    renderOffline(e, 2, 96000 + 1000, 512);
+    std::vector<std::int64_t> times;
+    for (const auto& m : drainMidi(e))
+        if (m.data[0] == 0xF8) times.push_back(m.streamTime);
+    REQUIRE(times.size() >= 96 + 1);
+    for (std::size_t i = 0; i < 97; ++i) CHECK(times[i] == base + static_cast<std::int64_t>(i) * 1000);   // 24 to the quarter, from the count-off's first sample
 }

@@ -97,6 +97,7 @@ private:
     void tick(std::int64_t streamTime) noexcept;
     void stopDevices(std::uint32_t devices, std::int64_t streamTime) noexcept;
     void chase(int onlyDevice, SamplePos upTo, std::int64_t streamTime) noexcept;
+    void pushRecorded(int device, const std::uint8_t* b, int size, std::int64_t streamTime) noexcept;
     bool push(std::uint64_t serial, std::uint16_t device, std::uint8_t size, std::uint8_t a, std::uint8_t b, std::uint8_t c,
               std::int64_t streamTime) noexcept;   // false: the queue was full, and it was dropped
 
