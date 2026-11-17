@@ -14,7 +14,15 @@ FetchContent_Declare(Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG v3.16.1
     GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(JUCE Catch2)
+# The phone remote's web server: one header, used by src/app/RemoteServer.cpp alone. Only fetched: SOURCE_SUBDIR names a
+# folder it doesn't have, so its own CMakeLists never runs, and so never looks for OpenSSL, zlib, Brotli or zstd on this
+# machine. Nothing links httplib::httplib; the header's folder is an include directory of that one source file (below).
+FetchContent_Declare(httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.64.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR do-not-add)
+FetchContent_MakeAvailable(JUCE Catch2 httplib)
 
 # The build stamp: the short commit, the commit's time and whether the tree has uncommitted changes (tracked files only,
 # so a scratch file doesn't mark the build), read when this configures. scripts/build.ps1 configures before every build,
@@ -63,12 +71,15 @@ list(FILTER SQLIVE_CORE_SOURCES EXCLUDE REGEX "_(windows|posix)[.]cpp$")
 list(FILTER SQLIVE_PLATFORM_SOURCES INCLUDE REGEX "_${SQLIVE_PLATFORM_SUFFIX}[.]cpp$")
 list(APPEND SQLIVE_CORE_SOURCES ${SQLIVE_PLATFORM_SOURCES})
 list(APPEND SQLIVE_CORE_SOURCES "${SQLIVE_BUILD_INFO_CPP}")
+# httplib.h is visible to this one file only, in both targets.
+set_source_files_properties("${CMAKE_SOURCE_DIR}/src/app/RemoteServer.cpp"
+    PROPERTIES INCLUDE_DIRECTORIES "${httplib_SOURCE_DIR}")
 
-# The owner's logo, as plain vectors.
+# The owner's logo, as plain vectors, and the phone remote's page.
 juce_add_binary_data(SmartQLiveAssets
     HEADER_NAME SmartQLiveAssets.h
     NAMESPACE sqlive_assets
-    SOURCES "${CMAKE_SOURCE_DIR}/assets/smart-q-logo.svg")
+    SOURCES "${CMAKE_SOURCE_DIR}/assets/smart-q-logo.svg" "${CMAKE_SOURCE_DIR}/assets/remote.html")
 
 set(SQLIVE_DEFINITIONS
     JUCE_ASIO=1

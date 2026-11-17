@@ -53,6 +53,7 @@ const Card* cardOf(const ShowState& st, Card::Kind kind) {
 }  // namespace
 
 juce::String makeRemoteStateJson(const app::Session& session) {
+    JUCE_ASSERT_MESSAGE_THREAD
     const auto now = session.now();
     const auto st = makeShowState(session);
     const bool songPlays = now.playing && !now.inGap;   // a song of the setlist plays: its steps can be chosen

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstdint>
+#include <map>
+#include <optional>
+
 #include <juce_core/juce_core.h>
 
 #include "app/Session.h"
@@ -10,9 +14,9 @@ namespace sqlive::app {
 // What a phone on the remote may ask of the show. Message thread only, one request at a time, as the keyboard's actions:
 // each is Session::perform with the same Action value.
 
-// The actions a phone may ask for by name, as model::actionInfos() names them: start, stop, nextSongLater, nextSongEarlier,
-// nextSectionLater, nextSectionEarlier, section1 … section10, loopSection, cancelSection, goToNextSongNow. Not toggleView,
-// which is the laptop's own business.
+// The actions a phone may ask for by name, as model::actionInfos() names them, from an explicit list: start, stop,
+// nextSongLater, nextSongEarlier, nextSectionLater, nextSectionEarlier, section1 … section10, loopSection, cancelSection,
+// goToNextSongNow. An action the app gains later isn't a phone's until it is added there.
 juce::StringArray remoteActionNames();
 // What the phone's page sends: every name above, then the two holds, stopHold and nextNowHold. The page's controls and the
 // Setup page's PHONE column are both checked against this one list.
@@ -20,17 +24,35 @@ juce::StringArray remotePageActions();
 // The hold an action needs first: "stopHold" for "stop", "nextNowHold" for "goToNextSongNow"; "" for any other.
 juce::String remoteHoldFor(const juce::String& action);
 
-// A hold counts when the action comes this long after it, from the same phone, in the same song.
+// A hold counts when the action comes this long after it (both ends included), from the same phone, in the same song.
 inline constexpr double remoteHoldMinSeconds = 0.9;
 inline constexpr double remoteHoldMaxSeconds = 3.0;
+
+// The holds the phones have made, the last one per phone. One per running remote (RemoteServer owns it and passes it to
+// every action); message thread only.
+class RemoteHolds {
+public:
+    struct Hold {
+        juce::String name;                                // stopHold or nextNowHold
+        double at = 0.0;
+        std::uint64_t serial = 0;                         // NowPlaying::playingSerial when it was made
+    };
+
+    std::optional<Hold> take(const juce::String& phoneId);   // the phone's hold, taken out
+    void put(const juce::String& phoneId, Hold hold);
+
+private:
+    std::map<juce::String, Hold> byPhone_;
+};
 
 struct RemoteActionResult {
     int status = 400;                     // 200 done; 403 not allowed (message says why, for the phone to show); 400 unknown
     juce::String message;                 // "" when done
 };
 
-// Performs a phone's action. Refused (403), in this order: a phone that isn't let in, waits, or may only watch; then (400)
-// a name that isn't one of remotePageActions(); then (403) outside Show mode.
+// Performs a phone's action. Refused (403), in this order: a phone that isn't let in, waits, or may only watch (any access
+// but FullControl, a value outside the enum too); then (400) a name that isn't one of remotePageActions(); then (403)
+// outside Show mode.
 //
 // A phone never stops a song, nor goes to the next one, with one request. Stop and "go to the next song now" each need their
 // hold first (remoteHoldFor), from the same phone, 0.9 to 3.0 s before (nowSeconds: any steady clock), in the same song
@@ -40,7 +62,7 @@ struct RemoteActionResult {
 //
 // A phone never starts a song by accident: section1 … section10 are refused unless a song plays (stopped, the session would
 // start the next song from that step). start starts it, as the laptop's Start does.
-RemoteActionResult performRemoteAction(Session&, const juce::String& action, PhoneAccess, const juce::String& phoneId,
-                                       double nowSeconds);
+RemoteActionResult performRemoteAction(Session&, RemoteHolds&, const juce::String& action, PhoneAccess,
+                                       const juce::String& phoneId, double nowSeconds);
 
 }  // namespace sqlive::app

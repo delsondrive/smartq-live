@@ -9,12 +9,12 @@ using app::PhoneAccess;
 using app::performRemoteAction;
 using sqlive::test::DemoSession;
 
-// Every test case uses phone ids of its own: a hold is kept per phone, on the message thread, between requests.
+// Each test case has its own RemoteHolds, as each running remote has: a hold is kept per phone, between requests.
 
 TEST_CASE("a phone can only do what its access allows, and only during a show", "[remotestate][remoteactions]") {
-    DemoSession d; auto& s = *d.session;
+    DemoSession d; auto& s = *d.session;  app::RemoteHolds holds;
     const auto act = [&](const char* action, PhoneAccess access, double at = 0.0) {
-        return performRemoteAction(s, action, access, "access-phone", at);
+        return performRemoteAction(s, holds, action, access, "access-phone", at);
     };
     CHECK(act("start", PhoneAccess::FullControl).status == 403);                     // Edit mode
     CHECK(act("start", PhoneAccess::FullControl).message == "The laptop isn't in Show mode.");
@@ -22,6 +22,9 @@ TEST_CASE("a phone can only do what its access allows, and only during a show", 
     CHECK(act("start", PhoneAccess::ViewOnly).status == 403);
     CHECK(act("start", PhoneAccess::Waiting).status == 403);
     CHECK(act("start", PhoneAccess::Refused).status == 403);
+    CHECK(act("start", static_cast<PhoneAccess>(7)).status == 403);                  // a value outside the enum is never
+    CHECK(act("start", static_cast<PhoneAccess>(7)).message == "This phone isn't let in.");   // full control
+    CHECK_FALSE(s.now().playing);
     CHECK(act("stopHold", PhoneAccess::ViewOnly).status == 403);
     CHECK(act("format the disk", PhoneAccess::FullControl).status == 400);
     CHECK(act("toggleView", PhoneAccess::FullControl).status == 400);                // the laptop's own business
@@ -45,9 +48,9 @@ TEST_CASE("a phone can only do what its access allows, and only during a show", 
 }
 
 TEST_CASE("a phone stops a song only after holding for about a second, in that song", "[remotestate][remoteactions]") {
-    DemoSession d; auto& s = *d.session;  s.enterShow();
+    DemoSession d; auto& s = *d.session;  s.enterShow();  app::RemoteHolds holds;
     const auto act = [&](const char* action, double at, const char* phone = "stop-phone") {
-        return performRemoteAction(s, action, PhoneAccess::FullControl, phone, at);
+        return performRemoteAction(s, holds, action, PhoneAccess::FullControl, phone, at);
     };
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
     REQUIRE(s.now().playing);
@@ -70,16 +73,42 @@ TEST_CASE("a phone stops a song only after holding for about a second, in that s
     s.advanceWithoutDevice(4800);
     CHECK(s.now().playing);
     CHECK(act("stopHold", 150.0).status == 200);
+    const auto serial = s.now().playingSerial;
     CHECK(act("stop", 151.0).status == 200);
+    REQUIRE(s.now().playingSerial == serial);                                        // still the same song, in its window:
+    CHECK(act("stop", 151.5).status == 403);                                         // only a hold used once refuses this
+    CHECK(act("stop", 151.5).message == "Hold to stop.");
     s.advanceWithoutDevice(9600);
     CHECK_FALSE(s.now().playing);
-    CHECK(act("stop", 152.0).status == 403);                                         // a hold is used once
+}
+
+TEST_CASE("a hold counts from 0.9 s to 3.0 s after it, both ends included", "[remotestate][remoteactions]") {
+    DemoSession d; auto& s = *d.session;  s.enterShow();  app::RemoteHolds holds;
+    const auto act = [&](const char* action, double at) {
+        return performRemoteAction(s, holds, action, PhoneAccess::FullControl, "edge-phone", at);
+    };
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    REQUIRE(s.now().playing);
+    CHECK(act("stopHold", 200.0).status == 200);
+    CHECK(act("stop", 200.89).status == 403);                                        // just short of 0.9 s
+    CHECK(act("stopHold", 210.0).status == 200);
+    CHECK(act("stop", 213.01).status == 403);                                        // just past 3.0 s
+    CHECK(act("stopHold", 220.0).status == 200);
+    CHECK(act("stop", 220.9).status == 200);                                         // 0.9 s exactly
+    s.advanceWithoutDevice(9600);
+    REQUIRE_FALSE(s.now().playing);
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().playing);
+    CHECK(act("stopHold", 230.0).status == 200);
+    CHECK(act("stop", 233.0).status == 200);                                         // 3.0 s exactly
+    s.advanceWithoutDevice(9600);
+    CHECK_FALSE(s.now().playing);
 }
 
 TEST_CASE("a phone goes to the next song now only after holding for about a second, while it can", "[remotestate][remoteactions]") {
-    DemoSession d; auto& s = *d.session;  s.enterShow();
+    DemoSession d; auto& s = *d.session;  s.enterShow();  app::RemoteHolds holds;
     const auto act = [&](const char* action, double at) {
-        return performRemoteAction(s, action, PhoneAccess::FullControl, "next-phone", at);
+        return performRemoteAction(s, holds, action, PhoneAccess::FullControl, "next-phone", at);
     };
     CHECK(act("nextNowHold", 1.0).status == 403);                                    // nothing plays
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
@@ -110,8 +139,8 @@ TEST_CASE("a phone goes to the next song now only after holding for about a seco
 }
 
 TEST_CASE("a phone's section choice never starts a song", "[remotestate][remoteactions]") {
-    DemoSession d(true); auto& s = *d.session;  s.enterShow();                     // every song with sections
-    const auto act = [&](const char* action) { return performRemoteAction(s, action, PhoneAccess::FullControl, "section-phone", 0.0); };
+    DemoSession d(true); auto& s = *d.session;  s.enterShow();  app::RemoteHolds holds;                     // every song with sections
+    const auto act = [&](const char* action) { return performRemoteAction(s, holds, action, PhoneAccess::FullControl, "section-phone", 0.0); };
     CHECK(act("section1").status == 403);                                            // stopped, Section1 would be a Start
     CHECK(act("section2").status == 403);                                            // and Section2 a start from step 2
     CHECK(act("nextSectionLater").status == 200);                                    // nothing to choose: it does nothing
