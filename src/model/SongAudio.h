@@ -32,7 +32,7 @@ struct PrepareOptions {
 // the part's id; a part with no entry, a null one, or a role that isn't in the band is left out, and entries for parts
 // the song doesn't have are ignored. The song ends where its longest loaded part does. Its MIDI is buildMidi's, sent on
 // the rig's device channels, with what a device's offset puts before the song's start moved to its start (in order);
-// with a clock device, clockTicks are buildClockTicks over [countOffFloor, end).
+// with a clock device, clockTicks are buildClockTicks over [start, end). Each section has its count-off (finishSections).
 //
 // Sections: a song with none plays as one section, [0, end). Otherwise tileSections over barsInSong, in samples; those
 // starting at or after `end` are dropped and the last one left ends at `end`; a last section then shorter than a jump's

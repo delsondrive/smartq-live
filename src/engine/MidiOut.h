@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 
 #include "engine/Midi.h"
 #include "engine/MidiChase.h"
@@ -21,8 +22,9 @@ namespace sqlive::engine {
 //
 // The chase: when a song begins, each device is first sent the state it should be in at the chase point (program with
 // its bank, controllers), with the stream time of the song's first sample. A program or control change at or before the
-// chase point is then skipped, as the chase has covered it. Notes are never chased and never skipped: every note from the
-// first sample played onwards is sent at its own time. Channel-mode messages (CC 120 to 127) are not chased, and one at
+// chase point is then skipped, as the chase has covered it. Notes are never chased: every note written from where the song
+// begins or lands onwards is sent, at its own time, or at the landing when an early offset put it before (MidiEvent's
+// written place). Channel-mode messages (CC 120 to 127) are not chased, and one at
 // or before the chase point is skipped too: a reset played after the chase would undo it.
 //
 // It keeps what each device was last sent (every program and controller message queued, by the playing song's device
@@ -52,10 +54,13 @@ public:
     // fromStart: it begins at its start (or, following on seamlessly, at bar 1), so the chase point is the start of its
     // first step's section (or songTime, if later): a song whose arrangement begins elsewhere than bar 1 is on that step's
     // patch before its count-in. Otherwise the chase point is songTime. chaseAt, when given, is the chase point and the
-    // first event sent instead (startAtStep: the step's start, so nothing from the count-off's bar is sent); the clock
-    // still ticks from songTime.
+    // landing instead (startAtStep: the step's start, so nothing written in the count-off's bar is sent); then up to
+    // chaseAt the clock ticks are countOffClock's, the song's own from there.
+    // The landing (songTime, or chaseAt) goes by the written place (MidiEvent::written): an event written at or after it
+    // that a device's early offset puts before songTime is sent at streamTime, after the chase; one written before it is
+    // never sent, even when a late offset puts it after.
     void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime, bool fromStart,
-               std::optional<SamplePos> chaseAt = {}) noexcept;
+               std::optional<SamplePos> chaseAt = {}, std::span<const SamplePos> countOffClock = {}) noexcept;
     // Producer. The song plays [songFrom, songFrom + frames), its first sample at streamFrom: every event and clock tick in it
     // is queued, in time order (an event before a tick at the same time).
     void play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept;
@@ -64,7 +69,9 @@ public:
     // worked out and only what differs from what the devices were last sent goes out (MidiChase::emitChanges), at
     // streamTime. The landing becomes the chase point, so a program or control change exactly there is sent by the chase
     // and not again; the place in the song's events and in its clock ticks moves to the first at or after the landing, so
-    // a note there still sounds. Nothing without a song.
+    // a note there still sounds. As at begin, the landing goes by the written place: an event written at or after it
+    // that an early offset put before it is sent at streamTime (after the chase), and one written before it (the bar
+    // before's, late) is never sent. Nothing without a song.
     void jump(SamplePos landing, std::int64_t streamTime) noexcept;
     // Producer. Sends one device the state it should be in now, songTime being the next sample the song plays, at
     // streamTime. Nothing when no song is playing, or for a device number the engine can't have.
@@ -92,6 +99,9 @@ private:
 
     void endNotes(std::int64_t streamTime) noexcept;
     void seek(SamplePos events, SamplePos ticks) noexcept;
+    bool due(const MidiEvent&) const noexcept;   // not covered by the chase, and written at or after the landing
+    // The landing is `landing`; the events placed in [landing - most_early_, before) that are due are sent at streamTime.
+    void land(SamplePos landing, SamplePos before, std::int64_t streamTime) noexcept;
     void send(const MidiEvent&, std::int64_t streamTime) noexcept;
     void track(const MidiEvent&) noexcept;
     void tick(std::int64_t streamTime) noexcept;
@@ -110,6 +120,11 @@ private:
     std::size_t next_ = 0;               // the first of the song's events not yet sent
     std::size_t next_tick_ = 0;          // the first of the song's clock ticks not yet sent
     SamplePos chase_point_ = 0;          // program and control changes at or before it were covered by the chase
+    SamplePos landing_ = 0;              // where the song began or last jumped to: nothing written before it is sent
+    SamplePos most_early_ = 0;           // the most any of the song's events is early (MidiEvent::early), at least 0
+    std::span<const SamplePos> count_off_clock_;   // startAtStep's count-off: its clock ticks, up to count_off_to_
+    SamplePos count_off_to_ = 0;
+    bool in_count_off_ = false;
     std::array<Note, kMaxSoundingNotes> notes_{};
     int note_count_ = 0;
     // The devices sent 0xFA and not yet 0xFC, by device number (bit d), and the song whose device numbers they are. Between

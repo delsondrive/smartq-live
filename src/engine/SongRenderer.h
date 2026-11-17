@@ -17,8 +17,10 @@ struct RenderParts {
     bool click = true;        // its click, as its ClickSetup says
     bool advance = true;      // false: every part gain, mix level and the click gain is read as it stands and not stepped. A
                               // jump renders its outgoing tail so, beside the incoming sample, so no glide runs twice as fast
-    SamplePos forcedClickFrom = 0, forcedClickTo = 0;   // the song's ticks in [from, to) sound even with its click off,
-                                                        // those before its start too (startAtStep's count-off)
+    // startAtStep's count-off (CountOff): over [countOffFrom, countOffTo) the song's own ticks are left out and these sound
+    // instead, whatever the song's click setting, at the click's own level (no automation), the downbeat accented.
+    SamplePos countOffFrom = 0, countOffTo = 0;
+    std::span<const ClickTick> countOffTicks;
     const float* cue = nullptr;     // `frames` samples of mono cue audio, mixed as the mix's cuesRole inside the per-sample loop, through
                                     // the same smoothed mix levels as the parts and the click; nullptr = none
     // false: the click is not faded by render's envelope but by clickEnvelope (`frames` gains; nullptr = none). A song

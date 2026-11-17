@@ -160,20 +160,24 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     for (const auto& cue : song.cues)
         if (auto clip = clipAt(options, cue.clip))
             prepared.cues.push_back({tempo.sampleAt({cue.bar, cue.beat}, sampleRate), std::move(clip)});
-    prepareSections(prepared, song, band, options);
-    engine::finishSections(prepared);
     auto midi = buildMidi(song, band, rig, prepared.tempo, sampleRate);
     // An event a device's offset puts before the song's first sample (a note at bar 1, early, with no count-in or lead-in)
-    // would never play: it is sent at that first sample instead. Moving every such event keeps them in order, so a short
-    // note's note-off still follows its note-on; a program or control change there is covered by the chase all the same.
-    for (auto& event : midi.events) event.at = std::max(event.at, prepared.start);
+    // would never play: it is sent at that first sample instead, its written place kept. Moving every such event keeps
+    // them in order, so a short note's note-off still follows its note-on; a program or control change there is covered
+    // by the chase all the same.
+    for (auto& event : midi.events)
+        if (event.at < prepared.start) {
+            event.early = (std::int32_t) (event.written() - prepared.start);
+            event.at = prepared.start;
+        }
     prepared.midi = std::move(midi.events);
     prepared.clockDevices = std::move(midi.clockDevices);
     prepared.startStopDevices = std::move(midi.startStopDevices);
     prepared.midiDeviceIds = std::move(midi.deviceIds);
     if (!prepared.clockDevices.empty())
-        prepared.clockTicks = engine::buildClockTicks(
-            prepared.tempo, sampleRate, engine::countOffFloor(prepared.tempo, sampleRate, prepared.start), prepared.end);
+        prepared.clockTicks = engine::buildClockTicks(prepared.tempo, sampleRate, prepared.start, prepared.end);
+    prepareSections(prepared, song, band, options);
+    engine::finishSections(prepared);
     return prepared;
 }
 

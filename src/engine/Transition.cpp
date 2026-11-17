@@ -22,6 +22,7 @@ void Transition::cancel() noexcept {
 }
 
 bool Transition::leaving() const noexcept { return now_ || end_at_ != kNever; }
+bool Transition::crossfadeAsked() const noexcept { return now_; }
 bool Transition::busy() const noexcept { return leaving() || fading(); }
 SamplePos Transition::endsAt() const noexcept { return end_at_; }
 

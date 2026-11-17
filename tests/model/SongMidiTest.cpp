@@ -24,6 +24,7 @@ TEST_CASE("a lane becomes timed bytes", "[songmidi]") {
     auto built = buildMidi(song, band, rig, engine::TempoMap{}, 48000.0);
     REQUIRE(built.events.size() == 6);                              // CC0, CC32, PC, CC7, note on, note off
     CHECK(built.events[0].at == 96000 - 960);                       // bar 2 at 120 BPM, 20 ms early
+    CHECK(built.events[0].early == 960);  CHECK(built.events[0].written() == 96000);   // its written place is kept
     CHECK(built.events[0].device == 1);
     CHECK(built.events[0].data[0] == 0xB1);  CHECK(built.events[0].data[1] == 0);   CHECK(built.events[0].data[2] == 0);
     CHECK(built.events[1].data[1] == 32);    CHECK(built.events[1].data[2] == 1);

@@ -41,17 +41,28 @@ int sameDevice(const PreparedSong& from, int d, const PreparedSong& to, std::uin
 MidiOut::MidiOut() : queue_(kQueueCapacity) {}
 
 void MidiOut::begin(const PreparedSong& song, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime,
-                    bool fromStart, std::optional<SamplePos> chaseAt) noexcept {
+                    bool fromStart, std::optional<SamplePos> chaseAt, std::span<const SamplePos> countOffClock) noexcept {
     song_ = &song;
     serial_ = serial;
     sent_.clear();   // a song that follows on may number its devices otherwise: it sends its whole chase
+    most_early_ = 0;   // once per song: a few thousand comparisons at most, and nothing allocated
+    for (const MidiEvent& e : song.midi) most_early_ = std::max<SamplePos>(most_early_, e.early);
     Arrangement steps;
     steps.reset(&song);
     const SamplePos firstStep = steps.sectionOf(0).start;
     chase_point_ = chaseAt ? *chaseAt : fromStart ? std::max(songTime, firstStep) : songTime;
     chase(-1, chase_point_, streamTime);
-    // Events before where it begins (or before chaseAt) are not sent: the chase has covered the changes among them.
-    seek(chaseAt ? *chaseAt : songTime, songTime);
+    // Events written before where it begins (or before chaseAt) are not sent: the chase has covered the changes among them.
+    // Those written from there that an early offset put before songTime go now; the rest at their own times, from songTime
+    // (in a count-off, those written at the step's start but placed early in the count-off's bar).
+    land(chaseAt ? *chaseAt : songTime, songTime, streamTime);
+    seek(songTime, songTime);
+    in_count_off_ = chaseAt.has_value();
+    count_off_to_ = chaseAt ? *chaseAt : 0;
+    count_off_clock_ = chaseAt ? countOffClock : std::span<const SamplePos>();
+    if (in_count_off_)
+        next_tick_ = static_cast<std::size_t>(std::lower_bound(count_off_clock_.begin(), count_off_clock_.end(), songTime) -
+                                              count_off_clock_.begin());
 
     // The transport, after the chase. Following straight on, the devices end() found carrying on are running already (by
     // this song's numbers); every other start-stop device of this song starts.
@@ -66,10 +77,21 @@ void MidiOut::begin(const PreparedSong& song, std::uint64_t serial, SamplePos so
 
 void MidiOut::play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept {
     if (song_ == nullptr || frames <= 0) return;
+    if (in_count_off_ && songFrom < count_off_to_ && songFrom + frames > count_off_to_) {   // across the count-off's end
+        const std::int64_t first = count_off_to_ - songFrom;
+        play(songFrom, first, streamFrom);
+        play(count_off_to_, frames - first, streamFrom + first);
+        return;
+    }
+    if (in_count_off_ && songFrom >= count_off_to_) {   // the count-off is over: the song's own clock from here
+        in_count_off_ = false;
+        const auto& clock = song_->clockTicks;
+        next_tick_ = static_cast<std::size_t>(std::lower_bound(clock.begin(), clock.end(), count_off_to_) - clock.begin());
+    }
     const auto& midi = song_->midi;
     const SamplePos songTo = songFrom + frames;
     // Without a clock device the ticks are passed over.
-    const auto& ticks = song_->clockTicks;
+    const std::span<const SamplePos> ticks = in_count_off_ ? count_off_clock_ : std::span<const SamplePos>(song_->clockTicks);
     const std::size_t tickCount = song_->clockDevices.empty() ? 0 : ticks.size();
     // Catches up with songFrom should the place be behind it; begin() and jump() already put it there.
     while (next_ < midi.size() && midi[next_].at < songFrom) ++next_;
@@ -83,9 +105,22 @@ void MidiOut::play(SamplePos songFrom, std::int64_t frames, std::int64_t streamF
         }
         if (!event) break;
         const MidiEvent& e = midi[next_++];
-        if (e.at <= chase_point_ && isChased(e)) continue;
-        send(e, streamFrom + (e.at - songFrom));
+        if (due(e)) send(e, streamFrom + (e.at - songFrom));
     }
+}
+
+bool MidiOut::due(const MidiEvent& e) const noexcept {
+    return !(e.at <= chase_point_ && isChased(e)) && e.written() >= landing_;
+}
+
+void MidiOut::land(SamplePos landing, SamplePos before, std::int64_t streamTime) noexcept {
+    landing_ = landing;
+    if (most_early_ <= 0) return;
+    const auto& midi = song_->midi;
+    auto it = std::lower_bound(midi.begin(), midi.end(), landing - most_early_,
+                               [](const MidiEvent& e, SamplePos t) { return e.at < t; });
+    for (; it != midi.end() && it->at < before; ++it)
+        if (due(*it)) send(*it, streamTime);
 }
 
 void MidiOut::resend(int device, SamplePos songTime, std::int64_t streamTime) noexcept {
@@ -100,6 +135,8 @@ void MidiOut::jump(SamplePos landing, std::int64_t streamTime) noexcept {
     chase_.scan(song_->midi, landing);
     chase_.emitChanges(sent_, [&](int device, const std::uint8_t* b, int size) { pushRecorded(device, b, size, streamTime); });
     chase_point_ = landing;
+    in_count_off_ = false;
+    land(landing, landing, streamTime);
     seek(landing, landing);
 }
 
@@ -126,6 +163,11 @@ void MidiOut::end(std::int64_t streamTime, const PreparedSong* next) noexcept {
     next_ = 0;
     next_tick_ = 0;
     chase_point_ = 0;
+    landing_ = 0;
+    most_early_ = 0;
+    in_count_off_ = false;
+    count_off_clock_ = {};
+    count_off_to_ = 0;
 }
 
 bool MidiOut::pop(OutMidi& out) noexcept { return queue_.pop(out); }

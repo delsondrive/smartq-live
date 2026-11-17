@@ -93,7 +93,7 @@ MidiBuild buildMidi(const SongDoc& song, const BandDoc& band, const RigDoc& rig,
             return std::tie(a->bar, a->beat) < std::tie(b->bar, b->beat);
         });
         const auto add = [&](engine::SamplePos at, const MidiBytes& b) {
-            out.events.push_back({at, number, b.size, {b.data[0], b.data[1], b.data[2]}});
+            out.events.push_back({at, number, b.size, {b.data[0], b.data[1], b.data[2]}, (std::int32_t) -offset});
         };
         for (const auto* marker : markers) {
             const engine::BarBeat place{marker->bar, marker->beat};

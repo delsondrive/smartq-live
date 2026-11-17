@@ -30,8 +30,8 @@ struct AutoPoint {
 
 // The linear gain the points give at song time `at`: 1 when there are none; a straight line in dB between points, flat
 // outside them; -60 dB and below is 0. Where points share a time the last of them counts from that time on. Precondition:
-// the points are sorted by `at`, ties in written order: the caller supplies them so (Task 8's buildPreparedSong will sort
-// them, stably); the audio thread never sorts.
+// the points are sorted by `at`, ties in written order: the caller supplies them so (buildPreparedSong sorts them,
+// stably); the audio thread never sorts.
 // Searches by bisection, allocates nothing. std::pow runs only inside a segment whose two points differ in dB; a held level
 // is worked out once (the renderer does so once per segment, not per sample).
 float automationGain(std::span<const AutoPoint>, SamplePos at) noexcept;
@@ -60,6 +60,16 @@ struct ClickSetup {
 
 struct Section { SamplePos start = 0, end = 0; };                 // song time; end is one past the last sample
 
+// startAtStep's bar of click before a section: one bar, as long as the bar the section starts in, measured back from its
+// start; its click ticks and MIDI clock ticks are that bar's own (its tempo and meter, the downbeat first), moved one bar
+// earlier. Song time, in [at - length, at).
+struct CountOff {
+    SamplePos at = 0;                        // the section's start
+    SamplePos length = 0;
+    std::vector<ClickTick> ticks;
+    std::vector<SamplePos> clockTicks;       // 24 per quarter; sent only to the song's clock devices
+};
+
 // How long a jump's crossfade between sections lasts, and the fade after a last step: 240 samples at 48 kHz, scaled to the
 // rate. The one length the engine plays and buildPreparedSong folds a too-short last section by.
 std::int64_t jumpFadeLength(double sampleRate) noexcept;
@@ -81,14 +91,13 @@ struct PreparedSong {
     SamplePos end = 0;                 // song time one past the last sample
     std::vector<PreparedPart> parts;
     ClickSetup click;
-    std::vector<ClickTick> ticks;      // every tick in [start, end), from the bar before bar 1 if that is earlier (for a
-                                       // count-off only); those in [countInStart, 0) sound even with the click off
+    std::vector<ClickTick> ticks;      // every tick in [start, end); those in [countInStart, 0) sound even with the click off
     ClickSound clickSound;
     std::vector<AutoPoint> clickAutomation, cuesAutomation;   // the click's level and the cue voice's, on top of theirs
     // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
     std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order
     std::vector<std::uint16_t> clockDevices, startStopDevices;
-    std::vector<SamplePos> clockTicks; // 24 per quarter over [countOffFloor, end); only when clockDevices isn't empty
+    std::vector<SamplePos> clockTicks; // 24 per quarter over [start, end); only when clockDevices isn't empty
     std::vector<std::string> midiDeviceIds;   // the band's device id for each engine device number, as when prepared
     // Sections and the arrangement: the song plays the sections its steps name, in step order, and ends when the last
     // step does. `end` stays the audio's end; the sections tile [0, end).
@@ -96,6 +105,7 @@ struct PreparedSong {
     std::vector<std::uint16_t> arrangement;  // indices into sections; never empty once finishSections has run
     JumpTiming jumpTiming = JumpTiming::EndOfSection;
     std::vector<SamplePos> barStarts;        // every bar start in [0, end)
+    std::vector<CountOff> countOffs;         // one per section, in order
     // The cue voice. While a step plays and song time reaches announceAt of its section, the section of the step that
     // will play next is announced with its sectionCue; manual cues are said where they are placed. Empty: no cues.
     std::vector<std::shared_ptr<const PartAudio>> sectionCue;     // one per section: the clip that announces it; nullptr = none
@@ -103,11 +113,6 @@ struct PreparedSong {
     std::vector<CueEvent> cues;                                   // sorted by `at`
     float cueGain = 1.0f;                                         // the band's cue level when the song was prepared
 };
-
-// Where a count-off may begin: the start, or the bar before bar 1 when that is earlier. Click ticks and MIDI clock ticks are
-// built from here, so a step at bar 1 still has a bar of both for startAtStep's count-off; ordinary playback never
-// reaches before `start`.
-SamplePos countOffFloor(const TempoMap&, double sampleRate, SamplePos start);
 
 // explicitEnd below 0 means "where the longest part ends". Runs finishSections on what it makes.
 PreparedSong prepareSong(std::string id, TempoMap, int countInBars, SamplePos audioStartOffset,
@@ -117,7 +122,13 @@ PreparedSong prepareSong(std::string id, TempoMap, int countInBars, SamplePos au
 // when the arrangement is empty (or names no section the song has: steps out of range are removed first); the bar
 // starts, from the tempo map; and, unless they have one entry per section, sectionCue (all nullptr) and announceAt (each
 // section's end, which a step never reaches), so a song without cues announces nothing; and it sorts the cues by time
-// (stably).
+// (stably). The count-offs are always made again, from the sections, the tempo map and the click's subdivision.
 void finishSections(PreparedSong&);
+
+// The count-off before the section starting at `at` (nullptr when none does). Allocates nothing.
+const CountOff* countOffAt(const PreparedSong&, SamplePos at) noexcept;
+// How long startAtStep's count-off before a step starting at `at` is: its CountOff's length; for a song whose count-offs
+// weren't made, one bar of the bar `at` falls in.
+SamplePos countOffLength(const PreparedSong&, SamplePos at) noexcept;
 
 } // namespace sqlive::engine

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "engine/Arrangement.h"
@@ -123,10 +124,11 @@ public:
     // step 0. At 0: step 0, from its section's start, count-in or not. Otherwise the first step whose section holds it,
     // from there; else the first step whose section starts after it, from that start; else the song ends at once.
     void startAt(SamplePos songTime);
-    // Stopped and something cued at the engine's rate: one bar of click (a count-off at the tempo of the step's first bar,
-    // the parts silent, the click sounding even when the song's is off), then that step from its section's start. The MIDI
-    // chase for the step's start goes out at the very beginning, and no event before the step's start is sent. A step out
-    // of range: ignored.
+    // Stopped and something cued at the engine's rate: one bar of click (the section's CountOff: the step's first bar, at
+    // its tempo and meter, downbeat accented, moved one bar earlier; the parts silent, the click sounding even when the
+    // song's is off; the clock devices sent that bar's clock), then that step from its section's start. The MIDI chase for
+    // the step's start goes out at the very beginning, and no event written before the step's start is sent (one written
+    // there that a device's early offset puts in the count-off is sent at its own time). A step out of range: ignored.
     void startAtStep(int step);
     void stop();
     // For the playing song only (any other serial is ignored), while it plays (not in a gap, the stop fade or its tail).
@@ -138,7 +140,8 @@ public:
     // Moves on to the cued song now, while a step of the playing song plays (not in its lead-in, a count-off, a gap, the
     // stop fade or its tail) and a song is cued; ignored otherwise, and while an earlier goToNext is still under way or a
     // song still fades out. With a crossfade follow-on (of some length) the crossfade starts at once (as soon as a jump's
-    // 240-sample crossfade is over), lasting N seconds, or what is left of a last step. With any other, the playing song
+    // 240-sample crossfade is over), lasting N seconds, or what is left of a last step; should the cue go, or the follow-on
+    // change, before it can begin, it is let go of, and the song plays on as if goToNext had not come. With any other, the playing song
     // ends at the next bar start (or where its step ends, if that comes first), and choices and loops for it are ignored
     // from now on. There, with Seamless (or a crossfade of no length) and a song cued, the next song starts at once while
     // the old one's 50 ms fade plays on the second renderer; otherwise the old song's audio fades out over 50 ms from the
@@ -305,6 +308,7 @@ private:
                                              // or a choice or a loop arrived: where the playing step hands over
     bool count_off_ = false;                 // startAtStep's bar of click, [count_off_from_, count_off_to_), is playing
     SamplePos count_off_from_ = 0, count_off_to_ = 0;
+    std::span<const ClickTick> count_off_ticks_;   // its click: the playing song's CountOff for the step
     std::int64_t jump_fade_ = 0;             // 240 samples at 48 kHz: a jump's crossfade, and the tail after a last step
     std::int64_t xfade_left_ = 0;            // samples of a jump's crossfade still to come
     SamplePos tail_time_ = 0;                // during a jump's crossfade: the song time of the audio running on past the line

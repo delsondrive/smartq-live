@@ -262,7 +262,7 @@ TEST_CASE("the MIDI clock runs through a start-from-section count-off", "[jump]"
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     auto song = rampSong("r", 2, {1, 1}, {1, 0});                  // step 1 (section 0) starts at bar 1: its count-off is before the song's start
     song.clockDevices = {1};
-    song.clockTicks = buildClockTicks(song.tempo, 48000.0, countOffFloor(song.tempo, 48000.0, song.start), song.end);
+    song.clockTicks = buildClockTicks(song.tempo, 48000.0, song.start, song.end);   // the count-off has its own (CountOff)
     e.cue(share(song));  e.startAtStep(1);
     const auto base = e.status().streamTime;
     renderOffline(e, 2, 96000 + 1000, 512);
@@ -271,4 +271,60 @@ TEST_CASE("the MIDI clock runs through a start-from-section count-off", "[jump]"
         if (m.data[0] == 0xF8) times.push_back(m.streamTime);
     REQUIRE(times.size() >= 96 + 1);
     for (std::size_t i = 0; i < 97; ++i) CHECK(times[i] == base + static_cast<std::int64_t>(i) * 1000);   // 24 to the quarter, from the count-off's first sample
+}
+
+// ---- The final review's fixes (I3) ----
+
+TEST_CASE("a count-off is the step's own first bar, at its tempo and meter, downbeat accented, with its own clock", "[jump]") {
+    // Bars 1 and 2 at 120 BPM 4/4 (96000 samples a bar, a quarter every 24000); from bar 3, 150 BPM 3/4 (57600 a bar, a
+    // quarter every 19200). Section 1 is the 3/4 part, from bar 3.
+    const TempoMap tempo({{1, 1.0, 120.0, 4, 4}, {3, 1.0, 150.0, 3, 4}});
+    auto audio = std::make_shared<PartAudio>();
+    audio->left.assign(192000 + 2 * 57600, 0.0f);
+    auto song = prepareSong("t", tempo, 0, 0, {{audio, 0}}, ClickSetup{.enabled = true, .accentDownbeat = false}, 48000.0);
+    song.sections = {{0, 192000}, {192000, 192000 + 2 * 57600}};
+    song.arrangement.clear();
+    song.clockDevices = {1};
+    song.clockTicks = buildClockTicks(tempo, 48000.0, song.start, song.end);
+    finishSections(song);
+    REQUIRE(song.countOffs.size() == 2);
+    CHECK(song.countOffs[1].length == 57600);
+
+    Engine e; e.prepare(48000.0, 512); e.setMix(splitMix());       // the click alone on channel 1
+    e.cue(share(song));  e.startAtStep(1);                         // the count-off: song time [134400, 192000) from stream 0
+    auto out = renderOffline(e, 2, 57600 + 2000, 512, {{100, [](Engine& en) { CHECK(en.status().countOff); }}});
+    const auto sound = makeClickSound(0, 48000.0);
+    const auto length = static_cast<int>(sound.beat.size());
+    for (int i = 0; i < length; ++i) {
+        REQUIRE(out[1][i] == Catch::Approx(sound.downbeat[i]).margin(1e-6));        // the downbeat, accented though the song's isn't
+        REQUIRE(out[1][19200 + i] == Catch::Approx(sound.beat[i]).margin(1e-6));    // then 3/4 at 150 BPM
+        REQUIRE(out[1][38400 + i] == Catch::Approx(sound.beat[i]).margin(1e-6));
+        REQUIRE(out[1][57600 + i] == Catch::Approx(sound.beat[i]).margin(1e-6));    // the step's own first tick: the song's, not accented
+    }
+    for (int i = 9600; i < 9600 + length; ++i) REQUIRE(out[1][i] == 0.0f);         // nothing of bar 2's ticks (song time 144000)
+    for (int i = 33600; i < 33600 + length; ++i) REQUIRE(out[1][i] == 0.0f);       // or 168000
+    CHECK(e.status().step == 1);  CHECK_FALSE(e.status().countOff);
+
+    std::vector<std::int64_t> clock;
+    for (const auto& m : drainMidi(e))
+        if (m.data[0] == 0xF8) clock.push_back(m.streamTime);
+    REQUIRE(clock.size() >= 72 + 2);
+    for (std::size_t i = 0; i < 74; ++i)                           // 24 to the quarter at 150 BPM, through the step's start
+        CHECK(clock[i] == static_cast<std::int64_t>(i) * 800);
+}
+TEST_CASE("the count-off's click and clock are the same at any block size", "[jump]") {
+    const TempoMap tempo({{1, 1.0, 120.0, 4, 4}, {3, 1.0, 150.0, 3, 4}});
+    auto run = [&](int block) {
+        auto audio = std::make_shared<PartAudio>();
+        audio->left.assign(192000 + 2 * 57600, 0.5f);
+        auto song = prepareSong("t", tempo, 0, 0, {{audio, 0}}, ClickSetup{.enabled = true}, 48000.0);
+        song.sections = {{0, 192000}, {192000, 192000 + 2 * 57600}};
+        song.arrangement.clear();
+        finishSections(song);
+        Engine e; e.prepare(48000.0, 4096); e.setMix(splitMix());
+        e.cue(share(song));  e.startAtStep(1);
+        return renderOffline(e, 2, 57600 + 20000, block);
+    };
+    const auto reference = run(512);
+    for (int block : {1, 64, 4096}) CHECK(run(block) == reference);
 }

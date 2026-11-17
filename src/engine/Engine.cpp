@@ -54,6 +54,7 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     boundary_ = 0;
     count_off_ = false;
     count_off_from_ = count_off_to_ = 0;
+    count_off_ticks_ = {};
     xfade_left_ = 0;
     tail_time_ = 0;
     ending_ = false;
@@ -365,28 +366,28 @@ void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix,
     }
 }
 
-// startAtStep: the cue plays a count-off of one bar measured back from the step's start, with the length of the bar the
-// step starts in, its parts silent and its click forced on; then the step, straight on from where the count-off ends.
-// Song time runs through the count-off, so the click, the clock and the status read as they would in the song. The MIDI
-// chase is as of the step's start, sent at once, and nothing before the step's start is sent.
+// startAtStep: the cue plays its count-off for the step's section (CountOff: one bar of the bar the step starts in, at its
+// tempo and meter, measured back from the step's start), its parts silent and the count-off's click sounding; then the
+// step, straight on from where the count-off ends. Song time runs through the count-off, so the status reads as it would in
+// the song. The MIDI chase is as of the step's start, sent at once, and nothing written before the step's start is sent;
+// the count-off's own clock ticks go to the clock devices.
 void Engine::playCountOff(int step) noexcept {
     Arrangement probe;
     probe.reset(cued_.song);
     if (step < 0 || step >= probe.stepCount()) return;
     const PreparedSong& song = *cued_.song;
     const SamplePos stepStart = probe.sectionOf(step).start;
-    const auto& bars = song.barStarts;   // bar n starts at bars[n - 1]
-    const int bar = std::max(1, static_cast<int>(std::upper_bound(bars.begin(), bars.end(), stepStart) - bars.begin()));
-    const SamplePos oneBar =
-        song.tempo.sampleAt({bar + 1, 1.0}, song.sampleRate) - song.tempo.sampleAt({bar, 1.0}, song.sampleRate);
-    const SamplePos from = stepStart - std::max<SamplePos>(0, oneBar);
+    const SamplePos from = stepStart - countOffLength(song, stepStart);
+    const CountOff* off = countOffAt(song, stepStart);   // none only for a song whose count-offs weren't made: no click
 
     takeCue();
     arrangement_.leadInto(step, stepStart);
     count_off_ = true;
     count_off_from_ = from;
     count_off_to_ = stepStart;
-    midi_.begin(*playing_.song, playing_.serial, from, stream_time_, false, stepStart);
+    if (off != nullptr) count_off_ticks_ = off->ticks;
+    midi_.begin(*playing_.song, playing_.serial, from, stream_time_, false, stepStart,
+                off != nullptr ? std::span<const SamplePos>(off->clockTicks) : std::span<const SamplePos>());
     beginPlaying(from, stream_time_, true);
 }
 
@@ -403,6 +404,7 @@ void Engine::takeCue() noexcept {
     tail_left_ = 0;
     count_off_ = false;
     count_off_from_ = count_off_to_ = 0;
+    count_off_ticks_ = {};
     cue_player_.silence();   // a start silences a preview
     cue_schedule_.reset();
     // setSong resets the song's own levels; any live level for this song comes after it.
@@ -518,7 +520,8 @@ std::int64_t Engine::renderStraight(int numChannels, std::int64_t frames, std::i
         envelope = envelope_.data();
     }
     RenderParts what;
-    if (count_off_) what = {.parts = false, .forcedClickFrom = count_off_from_, .forcedClickTo = count_off_to_};
+    if (count_off_)
+        what = {.parts = false, .countOffFrom = count_off_from_, .countOffTo = count_off_to_, .countOffTicks = count_off_ticks_};
     if (fadingIn) {
         what.clickFollowsEnvelope = false;
         if (state_ == PlayState::Stopping) {
@@ -625,12 +628,13 @@ void Engine::settle(std::int64_t streamTime) noexcept {
 // The playing step (or the lead-in) is over at streamTime. The next step plays straight on when its section starts where
 // this one ended, and otherwise from its section's start as a jump: the MIDI chased, and cross-faded from the audio running
 // on, unless nothing has been heard to fade from (a lead-in with no pre-roll audio, or a count-off, whose parts are
-// silent). With no next step the song ends: at once where the audio ends, after a tail anywhere else. Returns whether a
-// step was entered.
+// silent). With no next step the song ends: at once where the audio ends, after a tail anywhere else; so it does when the
+// next step's section has no length (only a song with no audio could have one), which would otherwise hand over again at
+// once, for ever, while it loops. Returns whether a step was entered.
 bool Engine::handOver(std::int64_t streamTime) noexcept {
     const bool fromLeadIn = arrangement_.step() < 0;
     const int next = arrangement_.nextStep();
-    if (next < 0) {
+    if (next < 0 || arrangement_.sectionOf(next).end <= arrangement_.sectionOf(next).start) {
         arrangement_.enter(-1);
         xfade_left_ = 0;
         cue_player_.silence();   // the song's end
@@ -738,6 +742,11 @@ std::int64_t Engine::untilTransition() const noexcept {
 }
 
 void Engine::beginDueCrossfade(std::int64_t streamTime) noexcept {
+    // A "crossfade now" that can no longer begin (the cue cleared, or the follow-on changed, while a jump's crossfade ran)
+    // is let go of: otherwise the song would stay on its way out, ignoring choices and loops, and a later cue would start
+    // the crossfade at once.
+    if (transition_.crossfadeAsked() && (follow_.kind != FollowKind::Crossfade || gapFrames() <= 0 || !cueFits()))
+        transition_.cancel();
     if (crossfadeDue() > song_time_) return;
     const std::int64_t length = Transition::crossfadeLength(arrangement_, song_time_, gapFrames());
     if (length > 0) beginTransition(streamTime, length, true);

@@ -70,12 +70,9 @@ int ShowArrangement::startStep(Action a) {
 }
 
 engine::SamplePos ShowArrangement::countOffStart(const engine::PreparedSong& song, int step) {
-    // As Engine::startAtStep plays it: one bar, at the tempo of the bar the step starts in.
+    // As Engine::startAtStep plays it: the section's count-off, one bar of the bar the step starts in.
     const auto stepStart = probeOf(song).sectionOf(step).start;
-    const auto& bars = song.barStarts;
-    const int bar = std::max(1, static_cast<int>(std::upper_bound(bars.begin(), bars.end(), stepStart) - bars.begin()));
-    const auto oneBar = song.tempo.sampleAt({bar + 1, 1.0}, song.sampleRate) - song.tempo.sampleAt({bar, 1.0}, song.sampleRate);
-    return stepStart - std::max<engine::SamplePos>(0, oneBar);
+    return stepStart - engine::countOffLength(song, stepStart);
 }
 
 // ---- Following the song ------------------------------------------------------------------------------------------------

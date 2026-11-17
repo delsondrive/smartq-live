@@ -126,3 +126,79 @@ TEST_CASE("a new engine has dropped no MIDI", "[enginemidi]") {
     Engine e; e.prepare(48000.0, 512);
     CHECK(e.droppedMidiCount() == 0);
 }
+
+// ---- A device's early offset at a landing (final review I5) ----
+
+namespace {
+
+// A note-on written at `written` that its device's offset sends `early` samples before it (negative: late).
+MidiEvent shifted(SamplePos written, SamplePos early, std::uint8_t note, std::uint8_t velocity = 100) {
+    auto e = ev(written - early, 0, velocity > 0 ? 0x90 : 0x80, note, velocity);
+    e.early = static_cast<std::int32_t>(early);
+    return e;
+}
+
+// The stream times this note's note-ons went out at.
+std::vector<std::int64_t> noteOns(const std::vector<OutMidi>& midi, std::uint8_t note) {
+    std::vector<std::int64_t> times;
+    for (const auto& m : midi)
+        if ((m.data[0] & 0xF0) == 0x90 && m.data[1] == note && m.data[2] > 0) times.push_back(m.streamTime);
+    return times;
+}
+
+} // namespace
+
+TEST_CASE("a jump sends at the landing the notes an early device placed before it, never the bar before's late ones", "[enginemidi]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = rampSong("r", 3, {1, 1, 1}, {0, 2});                 // step 0, then a jump to section 2 at 192000
+    song.midi = {shifted(192000, 960, 60),                           // written on the landing, sent 20 ms early: at 191040
+                 shifted(191000, -2000, 61),                         // written just before it, sent late: at 193000
+                 shifted(192000 + 24000, 960, 60, 0)};
+    e.cue(share(song));  e.start();
+    renderOffline(e, 2, 2 * 96000, 512);
+    auto midi = drainMidi(e);
+    CHECK(noteOns(midi, 60) == std::vector<std::int64_t>{96000});   // at the landing, the jump's stream time
+    CHECK(noteOns(midi, 61).empty());
+}
+TEST_CASE("a loop's repeat sends the early note written on the section's first beat each time round", "[enginemidi]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = rampSong("r", 3, {1, 1, 1});
+    song.midi = {shifted(96000, 960, 60), shifted(96000 + 24000, 960, 60, 0)};
+    auto s = e.cue(share(song));  e.start();
+    renderOffline(e, 2, 3 * 96000 + 1000, 512, {{100000, [&](Engine& en) { en.setLoop(s, true); }}});
+    CHECK(noteOns(drainMidi(e), 60) == std::vector<std::int64_t>{95040, 192000, 288000});   // straight on early, then at each repeat
+}
+TEST_CASE("a start from a section sends the step's early note in its count-off, and nothing written before the step", "[enginemidi]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = rampSong("r", 3, {1, 1, 1});
+    song.midi = {ev(50000, 0, 0x90, 59, 100),                        // in the count-off's bar: never sent
+                 shifted(96000, 960, 60),                            // the step's first beat, early: in the count-off, at 95040
+                 shifted(95000, -2000, 61)};                         // the bar before's, late: at 97000, never sent
+    e.cue(share(song));  e.startAtStep(1);                           // the count-off is song time [0, 96000)
+    renderOffline(e, 2, 2 * 96000, 512);
+    auto midi = drainMidi(e);
+    CHECK(noteOns(midi, 60) == std::vector<std::int64_t>{95040});   // at its own early time
+    CHECK(noteOns(midi, 59).empty());
+    CHECK(noteOns(midi, 61).empty());
+}
+TEST_CASE("a song that follows on sends its bar-1 note an early device placed before where it begins", "[enginemidi]") {
+    struct Way { FollowKind kind; double seconds; bool goToNext; std::int64_t expected; };
+    for (const Way way : {Way{FollowKind::Seamless, 0.0, false, 48000},   // after a, which is 48000 samples long
+                          Way{FollowKind::Crossfade, 0.5, false, 24000},  // 0.5 s before a's end
+                          Way{FollowKind::Seamless, 0.0, true, 96000},    // go to next: at the bar line after it
+                          Way{FollowKind::Crossfade, 0.5, true, 30000}}) {   // go to next: the crossfade starts at once
+        CAPTURE(static_cast<int>(way.kind), way.goToNext);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.cue(share(way.goToNext ? rampSong("a", 4, {4}) : testSong("a", 48000, 0.0f)));  e.start();
+        e.setFollowOn({way.kind, way.seconds});
+        auto b = midiSong({shifted(0, 960, 60)}, 1);                 // a bar of count-in, skipped: b begins at bar 1
+        std::uint64_t serial = 0;
+        std::vector<TimedAction> actions{{10, [&](Engine& en) { serial = en.cue(share(b)); }}};
+        if (way.goToNext) actions.push_back({30000, [](Engine& en) { en.goToNext(); }});
+        renderOffline(e, 2, 2 * 96000, 512, actions);
+        auto midi = drainMidi(e);
+        CHECK(noteOns(midi, 60) == std::vector<std::int64_t>{way.expected});
+        for (const auto& m : midi)
+            if ((m.data[0] & 0xF0) == 0x90) CHECK(m.serial == serial);
+    }
+}

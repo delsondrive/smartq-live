@@ -4,6 +4,8 @@
 #include <cmath>
 #include <utility>
 
+#include "engine/MidiClock.h"
+
 namespace sqlive::engine {
 
 namespace {
@@ -14,6 +16,29 @@ float gainOfDb(double db) noexcept {
     if (db <= kSilentDb) return 0.0f;
     if (db == 0.0) return 1.0f;
     return static_cast<float>(std::pow(10.0, db / 20.0));
+}
+
+// The bar `at` falls in (bar 1 at the earliest), and how long it is.
+std::pair<int, SamplePos> barHolding(const PreparedSong& s, SamplePos at) noexcept {
+    const auto& bars = s.barStarts;   // bar n starts at bars[n - 1]
+    const int bar = std::max(1, static_cast<int>(std::upper_bound(bars.begin(), bars.end(), at) - bars.begin()));
+    const SamplePos length = s.tempo.sampleAt({bar + 1, 1.0}, s.sampleRate) - s.tempo.sampleAt({bar, 1.0}, s.sampleRate);
+    return {bar, std::max<SamplePos>(0, length)};
+}
+
+// The bar the section starts in, its click ticks and clock ticks moved one bar earlier.
+CountOff makeCountOff(const PreparedSong& s, SamplePos at) {
+    CountOff off;
+    off.at = at;
+    const auto [bar, length] = barHolding(s, at);
+    off.length = length;
+    const SamplePos from = s.tempo.sampleAt({bar, 1.0}, s.sampleRate);
+    off.ticks = buildClickTicks(s.tempo, s.sampleRate, from, from + length, s.click.subdivision);
+    off.clockTicks = buildClockTicks(s.tempo, s.sampleRate, from, from + length);
+    const SamplePos shift = at - length - from;   // the bar's first sample lands where the count-off begins
+    for (ClickTick& tick : off.ticks) tick.at += shift;
+    for (SamplePos& tick : off.clockTicks) tick += shift;
+    return off;
 }
 
 } // namespace
@@ -36,10 +61,6 @@ float automationGainIn(std::span<const AutoPoint> points, std::ptrdiff_t last, S
     const AutoPoint& b = points[static_cast<std::size_t>(last) + 1];   // later than at, so b.at > a.at
     const double along = static_cast<double>(at - a.at) / static_cast<double>(b.at - a.at);
     return gainOfDb(static_cast<double>(a.db) + (static_cast<double>(b.db) - static_cast<double>(a.db)) * along);
-}
-
-SamplePos countOffFloor(const TempoMap& tempo, double sampleRate, SamplePos start) {
-    return std::min(start, tempo.sampleAt({0, 1.0}, sampleRate));
 }
 
 std::int64_t jumpFadeLength(double sampleRate) noexcept { return std::llround(240.0 * sampleRate / 48000.0); }
@@ -68,10 +89,8 @@ PreparedSong prepareSong(std::string id, TempoMap tempo, int countInBars, Sample
 
     s.parts = std::move(parts);
     s.click = click;
-    // Always built: a song with its click off still clicks through its count-in. From the bar before bar 1 when that is
-    // earlier than the start, so a step at bar 1 still has a bar of ticks for startAtStep's count-off; ordinary playback
-    // never reaches them.
-    s.ticks = buildClickTicks(s.tempo, sampleRate, countOffFloor(s.tempo, sampleRate, s.start), s.end, click.subdivision);
+    // Always built: a song with its click off still clicks through its count-in.
+    s.ticks = buildClickTicks(s.tempo, sampleRate, s.start, s.end, click.subdivision);
     s.clickSound = makeClickSound(click.sound, sampleRate);
     finishSections(s);
     return s;
@@ -92,12 +111,25 @@ void finishSections(PreparedSong& s) {
     }
 
     s.barStarts.clear();
+    s.countOffs.clear();
     if (!(s.sampleRate > 0.0)) return;
     for (int bar = 1;; ++bar) {
         const SamplePos at = s.tempo.sampleAt({bar, 1.0}, s.sampleRate);
         if (at >= s.end) break;
         s.barStarts.push_back(at);
     }
+    for (const Section& section : s.sections) s.countOffs.push_back(makeCountOff(s, section.start));
+}
+
+const CountOff* countOffAt(const PreparedSong& s, SamplePos at) noexcept {
+    for (const CountOff& off : s.countOffs)
+        if (off.at == at) return &off;
+    return nullptr;
+}
+
+SamplePos countOffLength(const PreparedSong& s, SamplePos at) noexcept {
+    if (const CountOff* off = countOffAt(s, at)) return off->length;
+    return barHolding(s, at).second;
 }
 
 } // namespace sqlive::engine

@@ -234,49 +234,44 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
     const PreparedSong& song = *song_;
     const bool cueRouted = what.cue != nullptr && cues_role_ >= 0 && cues_role_ < role_rows_;
 
-    // The count-in always clicks; pre-roll before it and the body only when the song's click is on; and a forced range
+    // The count-in always clicks; pre-roll before it and the body only when the song's click is on; and a count-off
     // whatever the click. Rendered at unity: the click gain glides below.
     const bool clickRouted = what.click && click_role_ >= 0 && click_role_ < role_rows_;
     if (clickRouted) {
         std::fill_n(click_.data(), frames, 0.0f);
         const std::span<const ClickTick> all(song.ticks);
-        std::size_t first = song.click.enabled ? playable_first_ : count_in_first_;
-        std::size_t last = song.click.enabled ? all.size() : count_in_end_;
+        const std::size_t first = song.click.enabled ? playable_first_ : count_in_first_;
+        const std::size_t last = song.click.enabled ? all.size() : count_in_end_;
         const auto render = [&](std::size_t from, std::size_t to) {
+            if (from >= to) return;
             const std::span<const ClickTick> run = all.subspan(from, to - from);
             if (song.clickAutomation.empty()) {
                 renderClick(run, song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f, click_.data());
                 return;
             }
             // Automated: each tick sounds whole at the gain the automation has at the tick's own time, so a step point
-            // a few samples after a tick never cuts it. The count-in and a count-off (ticks before the song's start)
-            // keep the click's own level.
+            // a few samples after a tick never cuts it. The count-in (ticks before bar 1) keeps the click's own level.
             const auto length = static_cast<SamplePos>(song.clickSound.beat.size());
             auto it = std::lower_bound(run.begin(), run.end(), songTime - length + 1,
                                        [](const ClickTick& t, SamplePos v) { return t.at < v; });
             for (; it != run.end() && it->at < songTime + frames; ++it) {
-                const bool countOff = it->at < 0 || (it->at >= what.forcedClickFrom && it->at < what.forcedClickTo);
-                const float gain = countOff ? 1.0f : automationGain(song.clickAutomation, it->at);
+                const float gain = it->at < 0 ? 1.0f : automationGain(song.clickAutomation, it->at);
                 if (gain != 0.0f)
                     renderClick(std::span<const ClickTick>(&*it, 1), song.clickSound, song.click.accentDownbeat, songTime, frames,
                                 gain, click_.data());
             }
         };
 
-        if (what.forcedClickTo > what.forcedClickFrom) {
-            const std::size_t forcedFirst = firstTickAt(what.forcedClickFrom);
-            const std::size_t forcedLast = firstTickAt(what.forcedClickTo);
-            if (first >= last) {                                    // nothing else clicks
-                first = forcedFirst;
-                last = forcedLast;
-            } else if (forcedFirst <= last && first <= forcedLast) {   // overlapping or touching: one run, no tick twice
-                first = std::min(first, forcedFirst);
-                last = std::max(last, forcedLast);
-            } else if (forcedFirst < forcedLast) {
-                render(forcedFirst, forcedLast);
-            }
+        if (what.countOffTo > what.countOffFrom) {
+            // The song's own ticks under the count-off are the bar before's, at its tempo: left out, the count-off's in
+            // their place.
+            const std::size_t offFirst = firstTickAt(what.countOffFrom), offLast = firstTickAt(what.countOffTo);
+            render(first, std::min(last, offFirst));
+            render(std::max(first, offLast), last);
+            renderClick(what.countOffTicks, song.clickSound, true, songTime, frames, 1.0f, click_.data());
+        } else {
+            render(first, last);
         }
-        if (first < last) render(first, last);
     }
 
     const SamplePos audioOffset = song.audioStartOffset;

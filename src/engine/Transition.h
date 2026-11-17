@@ -48,6 +48,7 @@ public:
     // goToNext asked for something not yet done: the playing song is on its way out, so a choice of step or a loop for it
     // is ignored.
     bool leaving() const noexcept;
+    bool crossfadeAsked() const noexcept;          // crossfadeNow, not yet begun
     // Leaving, or a song still fades out: a second goToNext is ignored.
     bool busy() const noexcept;
     SamplePos endsAt() const noexcept;             // kNever: no end asked for

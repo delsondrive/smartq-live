@@ -23,6 +23,7 @@ struct MidiBuild {
 // Lane by lane in the band's device order, marker by marker in position order, message by message. A lane whose device
 // isn't among the band's first kMaxMidiDevices is left out. A message's channel is its own, else the rig's for the device,
 // else 1. A marker sounds at its bar and beat plus the device's offset; a note's note-off `beats` later, plus the same.
+// Each event's `early` is minus that offset, so its written place (MidiEvent::written) is the bar and beat.
 MidiBuild buildMidi(const SongDoc&, const BandDoc&, const RigDoc&, const engine::TempoMap&, double sampleRate);
 
 struct MidiBytes {
