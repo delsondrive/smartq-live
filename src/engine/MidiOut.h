@@ -28,6 +28,9 @@ namespace sqlive::engine {
 // more than kQueueCapacity. Like any other message, what doesn't fit is dropped (the tail of the chase, then the song's
 // events, until the dispatcher makes room); a song's lanes in practice chase a few messages per device.
 //
+// The place in the song's events and clock ticks moves forward as the song plays; it moves backwards only after a jump(),
+// which playing never makes.
+//
 // The clock and the transport: every clock device is sent 0xF8 at each of the song's clockTicks it plays. Each device that
 // follows start and stop is sent 0xFA at the song's first sample, after the chase, and 0xFC when the song is over, unless
 // another follows straight on: then a running device that song starts and stops too carries on (no 0xFC, no second 0xFA),
@@ -48,14 +51,18 @@ public:
     // Producer. The song plays [songFrom, songFrom + frames), its first sample at streamFrom: every event and clock tick in it
     // is queued, in time order (an event before a tick at the same time).
     void play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept;
+    // Producer. A jump: the song goes on from `landing` (song time) at streamTime. Every note still sounding is ended, the
+    // place in the song's events and in its clock ticks moves to the first at or after the landing, and the landing becomes
+    // the chase point (a program or control change there was covered). This sends no chase. Nothing without a song.
+    void jump(SamplePos landing, std::int64_t streamTime) noexcept;
     // Producer. Sends one device the state it should be in now, songTime being the next sample the song plays, at
     // streamTime. Nothing when no song is playing, or for a device number the engine can't have.
     void resend(int device, SamplePos songTime, std::int64_t streamTime) noexcept;
     // Producer. The song is over at streamTime: a note-off for every note still sounding, and the song is let go of. A
-    // note-off the full queue drops leaves its note kept, to be ended at the next end(). next: the song that begins at
-    // streamTime straight on (its begin() follows at once), or nullptr. A running start-stop device next starts and stops
-    // too carries on; every other one is sent 0xFC, and one the full queue drops is not sent again. next is only read
-    // here. Without a song (in a gap, or stopped) it still ends what is left: notes, and devices still running.
+    // note-off the full queue drops leaves its note kept, to be ended at the next end() or jump(). next: the song that
+    // begins at streamTime straight on (its begin() follows at once), or nullptr. A running start-stop device next starts
+    // and stops too carries on; every other one is sent 0xFC, and one the full queue drops is not sent again. next is only
+    // read here. Without a song (in a gap, or stopped) it still ends what is left: notes, and devices still running.
     void end(std::int64_t streamTime, const PreparedSong* next = nullptr) noexcept;
 
     // The one consumer thread.
@@ -72,6 +79,8 @@ private:
         std::uint8_t channel = 0, note = 0;
     };
 
+    void endNotes(std::int64_t streamTime) noexcept;
+    void seek(SamplePos songTime) noexcept;
     void send(const MidiEvent&, std::int64_t streamTime) noexcept;
     void track(const MidiEvent&) noexcept;
     void tick(std::int64_t streamTime) noexcept;

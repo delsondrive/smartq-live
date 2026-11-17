@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 
+#include "engine/Arrangement.h"
 #include "engine/Midi.h"
 #include "engine/MidiOut.h"
 #include "engine/MixSetup.h"
@@ -27,13 +28,18 @@ struct EngineStatus {
     std::uint64_t cuedSerial = 0;      // 0 = none
     SamplePos songTime = 0;            // the next sample the playing song will play; 0 when nothing plays
     std::int64_t streamTime = 0;       // samples processed since the engine was made; never goes backwards, even across prepare
+    int step = -1;                     // the arrangement step playing; -1 when none (lead-in, after the last step, stopped)
+    int pendingStep = -1;              // the step chosen to come next; -1 = the one that follows (Task 4 sets it)
+    bool looping = false;              // (Task 4 sets it)
 };
 
 struct EngineEvent {
-    enum class Type : std::uint8_t { Started, Ended, Stopped } type = Type::Started;
+    enum class Type : std::uint8_t { Started, Ended, Stopped, StepChanged } type = Type::Started;
     std::uint64_t serial = 0;
     std::int64_t streamTime = 0;       // Started: the song's first sample. Ended, Stopped: the first sample after it.
+                                       // StepChanged: the step's first sample
     bool inGap = false;                // Stopped during a gap: `serial` is the song that had already ended before it
+    int step = -1;                     // StepChanged: the step now playing (never -1)
 };
 
 // The most device channels process renders into; any beyond these are cleared and left silent.
@@ -42,6 +48,14 @@ inline constexpr int kMaxDeviceChannels = 256;
 // Plays one song at a time into the device's outputs. The control methods run on the message thread only: each pushes a
 // command that process, on the audio thread, takes at the start of its next block. process never allocates, locks or
 // frees: what it has finished with goes back through a queue, and collectGarbage frees it on the control thread.
+//
+// A song plays as its arrangement: the playhead is a step and a song time. Playback starts in the lead-in (count-in or
+// pre-roll, song time below 0, no step) when the song has one, and at song time 0 enters step 0. Where a step's section
+// ends, the next step plays: straight on when its section starts there, otherwise as a jump, which lands on the section's
+// start with a crossfade of 240 samples (scaled by sampleRate / 48000) from the audio running on past the line (parts
+// only) to the incoming audio. The song ends when its last step does; when that is not where its audio ends, the audio
+// running on fades out over the same 240 samples before Ended. Each step entered is reported (StepChanged), except in a
+// song without sections, whose one step is the whole song.
 class Engine {
 public:
     Engine();
@@ -68,7 +82,10 @@ public:
     std::uint64_t cue(std::shared_ptr<const PreparedSong>);
     bool clearCue();                      // false: the command queue was full and nothing was sent
     void start();                         // Stopped and something cued at the engine's rate: play it from its start
-    void startAt(SamplePos songTime);     // the same, from a position clamped to the song (at its start: as start())
+    // The same, from a position clamped to the song (at its start: as start()). Before 0: the lead-in from there, then
+    // step 0. Otherwise the first step whose section holds it, from there; else the first step whose section starts after
+    // it, from that start; else the song ends at once.
+    void startAt(SamplePos songTime);
     void stop();
     bool setFollowOn(FollowOn);           // false: the command queue was full and nothing was sent
     void setMix(std::shared_ptr<const MixSetup>);
@@ -141,10 +158,18 @@ private:
     bool cueFits() const noexcept;        // something is cued, made at the engine's rate; a cue that doesn't never plays
     void playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix, bool fromStart) noexcept;
     void renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept;
+    std::int64_t renderStraight(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept;
+    std::int64_t renderCrossfade(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept;
+    std::int64_t renderTail(int numChannels, std::int64_t frames) noexcept;
+    double stopGain(std::int64_t k) const noexcept;   // the stop fade's gain k samples on from where it stands
+    void settle(std::int64_t streamTime) noexcept;
+    bool handOver(std::int64_t streamTime) noexcept;
+    void enterStep(int step, std::int64_t streamTime) noexcept;
     void finishSong(EngineEvent::Type, std::int64_t streamTime) noexcept;
     void endGap(std::int64_t streamTime) noexcept;
     std::int64_t gapFrames() const noexcept;
-    void report(EngineEvent::Type, std::uint64_t serial, std::int64_t streamTime, bool inGap = false) noexcept;
+    void report(EngineEvent::Type, std::uint64_t serial, std::int64_t streamTime, bool inGap = false,
+                int step = -1) noexcept;
     void retire(std::shared_ptr<const void>&) noexcept;
     void retire(SongSlot&) noexcept;
     void flushHeld() noexcept;
@@ -165,6 +190,9 @@ private:
     std::atomic<std::uint64_t> status_cued_{0};
     std::atomic<SamplePos> status_song_time_{0};
     std::atomic<std::int64_t> status_stream_time_{0};
+    std::atomic<int> status_step_{-1};
+    std::atomic<int> status_pending_step_{-1};
+    std::atomic<bool> status_looping_{false};
 
     // Control thread only.
     std::uint64_t next_serial_ = 1;
@@ -172,7 +200,7 @@ private:
     // Audio thread only (and prepare, while process is not running).
     SongRenderer renderer_;
     int max_block_ = 0;
-    std::vector<float> envelope_;            // max_block_: the stop fade of one chunk
+    std::vector<float> envelope_;            // max_block_: the fade of one chunk (a stop, a song's tail, or both)
     std::vector<float*> channels_;           // the output channels from where a chunk's render begins
     SongSlot playing_, cued_;
     std::shared_ptr<const void> mix_hold_;
@@ -186,6 +214,12 @@ private:
     std::int64_t stream_time_ = 0;
     std::int64_t fade_length_ = 0;
     std::int64_t fade_pos_ = 0;              // samples of the stop fade already played
+    Arrangement arrangement_;                // the playing song's steps, and which plays
+    std::int64_t jump_fade_ = 0;             // 240 samples at 48 kHz: a jump's crossfade, and the tail after a last step
+    std::int64_t xfade_left_ = 0;            // samples of a jump's crossfade still to come
+    SamplePos tail_time_ = 0;                // during a crossfade: the song time of the audio running on past the line
+    bool ending_ = false;                    // the last step is over: the audio running on past it fades out (song_time_)
+    std::int64_t tail_left_ = 0;             // samples of that fade still to come
     std::array<std::shared_ptr<const void>, kHeldCapacity> held_;
     int held_count_ = 0;
 };

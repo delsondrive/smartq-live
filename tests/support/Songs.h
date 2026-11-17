@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -30,10 +31,38 @@ inline engine::PreparedSong testSong(std::string id, engine::SamplePos frames, f
                                engine::ClickSetup{.enabled = click}, 48000.0);
 }
 
+// One mono part whose sample i has the value float(i), on role 0, 120 BPM 4/4 at 48 kHz (a bar is 96000 samples), `bars`
+// bars long, with no click and no count-in; sections of the lengths given (in bars, from bar 1), then the arrangement,
+// then finishSections.
+inline engine::PreparedSong rampSong(std::string id, int bars, std::vector<int> barsPerSection,
+                                     std::vector<std::uint16_t> arrangement = {}) {
+    constexpr engine::SamplePos kBar = 96000;
+    auto audio = std::make_shared<engine::PartAudio>();
+    audio->left.resize(static_cast<std::size_t>(bars * kBar));
+    for (std::size_t i = 0; i < audio->left.size(); ++i) audio->left[i] = static_cast<float>(i);
+    auto song = engine::prepareSong(std::move(id), engine::TempoMap{}, 0, 0, {{audio, 0}},
+                                    engine::ClickSetup{.enabled = false}, 48000.0);
+    song.sections.clear();
+    engine::SamplePos at = 0;
+    for (const int n : barsPerSection) {
+        song.sections.push_back({at, at + n * kBar});
+        at += n * kBar;
+    }
+    song.arrangement = std::move(arrangement);
+    engine::finishSections(song);
+    return song;
+}
+
 // Two roles, role 1 the click, one stereo bus on channels 0 and 1, every gain 1.
 inline std::shared_ptr<const engine::MixSetup> stereoMix() {
     return std::make_shared<const engine::MixSetup>(
         engine::MixSetup{.buses = {{0, true, 1.0f}}, .roleCount = 2, .clickRole = 1, .gain = {1.0f, 1.0f}});
+}
+
+// Two roles, role 1 the click, two mono buses: the parts on channel 0 and the click on channel 1, every gain 1.
+inline std::shared_ptr<const engine::MixSetup> splitMix() {
+    return std::make_shared<const engine::MixSetup>(engine::MixSetup{
+        .buses = {{0, false, 1.0f}, {1, false, 1.0f}}, .roleCount = 2, .clickRole = 1, .gain = {1.0f, 0.0f, 0.0f, 1.0f}});
 }
 
 inline std::shared_ptr<const engine::PreparedSong> share(engine::PreparedSong song) {

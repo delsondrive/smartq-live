@@ -140,7 +140,8 @@ void SongRenderer::setSolo(int part) noexcept {
     updatePartTargets();
 }
 
-void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope) noexcept {
+void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
+                          RenderParts what) noexcept {
     if (song_ == nullptr || !has_mix_ || frames <= 0 || click_.empty()) return;
     for (int b = 0; b < bus_count_; ++b) {   // each side of a stereo bus on its own: a channel the device lacks is skipped
         const int first = bus_first_[b];
@@ -148,15 +149,16 @@ void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int
         bus_right_[b] = bus_stereo_[b] && first + 1 >= 0 && first + 1 < numChannels ? out[first + 1] : nullptr;
     }
     for (int offset = 0; offset < frames; offset += max_block_)
-        renderPiece(songTime + offset, std::min(max_block_, frames - offset), offset, envelope);
+        renderPiece(songTime + offset, std::min(max_block_, frames - offset), offset, envelope, what);
 }
 
-void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const float* envelope) noexcept {
+void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const float* envelope,
+                               RenderParts what) noexcept {
     const PreparedSong& song = *song_;
 
     // The count-in always clicks; pre-roll before it and the body only when the song's click is on. Rendered at unity: the
     // click gain glides below.
-    const bool clickRouted = click_role_ >= 0 && click_role_ < role_rows_;
+    const bool clickRouted = what.click && click_role_ >= 0 && click_role_ < role_rows_;
     if (clickRouted) {
         std::fill_n(click_.data(), frames, 0.0f);
         const std::span<const ClickTick> all(song.ticks);
@@ -166,8 +168,9 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
 
     const SamplePos audioOffset = song.audioStartOffset;
     for (int i = 0; i < frames; ++i) {
-        // Every smoothed value advances once per sample, before it is used, whatever the block.
-        if (cells_moving_) {
+        // Every smoothed value advances once per sample, before it is used, whatever the block (unless this call reads them
+        // as they stand).
+        if (what.advance && cells_moving_) {
             bool moving = false;
             for (int r = 0; r < role_rows_; ++r) {
                 Smoothed* row = &cells_[static_cast<std::size_t>(r) * kMaxBuses];
@@ -178,7 +181,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             }
             cells_moving_ = moving;
         }
-        if (parts_moving_) {
+        if (what.advance && parts_moving_) {
             bool moving = false;
             for (int p = 0; p < part_count_; ++p) {
                 step(part_gain_[p]);
@@ -186,13 +189,13 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             }
             parts_moving_ = moving;
         }
-        step(click_gain_);
+        if (what.advance) step(click_gain_);
 
         const int at = offset + i;
         const float env = envelope != nullptr ? envelope[at] : 1.0f;
         const SamplePos audioPos = songTime + i + audioOffset;
 
-        for (int p = 0; p < part_count_; ++p) {
+        for (int p = 0; what.parts && p < part_count_; ++p) {
             const PartView& v = part_view_[p];
             if (v.role < 0 || audioPos < 0 || audioPos >= v.length) continue;
             const float gain = static_cast<float>(part_gain_[p].value);

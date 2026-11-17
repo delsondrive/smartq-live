@@ -45,11 +45,7 @@ void MidiOut::begin(const PreparedSong& song, std::uint64_t serial, SamplePos so
     chase_point_ = fromStart ? std::max<SamplePos>(songTime, 0) : songTime;
     chase(-1, chase_point_, streamTime);
     // Events before where it begins are not sent: the chase has covered the changes among them.
-    const auto first = std::lower_bound(song.midi.begin(), song.midi.end(), songTime,
-                                        [](const MidiEvent& e, SamplePos t) { return e.at < t; });
-    next_ = static_cast<std::size_t>(first - song.midi.begin());
-    next_tick_ = static_cast<std::size_t>(std::lower_bound(song.clockTicks.begin(), song.clockTicks.end(), songTime) -
-                                          song.clockTicks.begin());
+    seek(songTime);
 
     // The transport, after the chase. Following straight on, the devices end() found carrying on are running already (by
     // this song's numbers); every other start-stop device of this song starts.
@@ -69,7 +65,7 @@ void MidiOut::play(SamplePos songFrom, std::int64_t frames, std::int64_t streamF
     // Without a clock device the ticks are passed over.
     const auto& ticks = song_->clockTicks;
     const std::size_t tickCount = song_->clockDevices.empty() ? 0 : ticks.size();
-    // Only after a jump, which playing never makes.
+    // Catches up with songFrom should the place be behind it; begin() and jump() already put it there.
     while (next_ < midi.size() && midi[next_].at < songFrom) ++next_;
     while (next_tick_ < tickCount && ticks[next_tick_] < songFrom) ++next_tick_;
     for (;;) {
@@ -92,14 +88,15 @@ void MidiOut::resend(int device, SamplePos songTime, std::int64_t streamTime) no
     chase(device, std::max(chase_point_, songTime - 1), streamTime);
 }
 
+void MidiOut::jump(SamplePos landing, std::int64_t streamTime) noexcept {
+    if (song_ == nullptr) return;
+    endNotes(streamTime);
+    chase_point_ = landing;
+    seek(landing);
+}
+
 void MidiOut::end(std::int64_t streamTime, const PreparedSong* next) noexcept {
-    int kept = 0;
-    for (int i = 0; i < note_count_; ++i) {
-        const Note n = notes_[static_cast<std::size_t>(i)];
-        if (push(n.serial, n.device, 3, static_cast<std::uint8_t>(0x80 | n.channel), n.note, 0, streamTime)) continue;
-        notes_[static_cast<std::size_t>(kept++)] = n;   // the queue is full: it still sounds, so it is ended next time
-    }
-    note_count_ = kept;
+    endNotes(streamTime);
     // A running device carries on into the next song when that song starts and stops the same device; it is kept under
     // the next song's number for it, and begin() takes it on. Every other running device stops, as the outgoing song's.
     std::uint32_t from = 0, to = 0;
@@ -124,6 +121,27 @@ void MidiOut::end(std::int64_t streamTime, const PreparedSong* next) noexcept {
 }
 
 bool MidiOut::pop(OutMidi& out) noexcept { return queue_.pop(out); }
+
+// A note-off for every note still sounding. One the full queue drops leaves its note kept, to be ended next time.
+void MidiOut::endNotes(std::int64_t streamTime) noexcept {
+    int kept = 0;
+    for (int i = 0; i < note_count_; ++i) {
+        const Note n = notes_[static_cast<std::size_t>(i)];
+        if (push(n.serial, n.device, 3, static_cast<std::uint8_t>(0x80 | n.channel), n.note, 0, streamTime)) continue;
+        notes_[static_cast<std::size_t>(kept++)] = n;   // the queue is full: it still sounds, so it is ended next time
+    }
+    note_count_ = kept;
+}
+
+// The place in the song's events and clock ticks: the first of each at or after songTime.
+void MidiOut::seek(SamplePos songTime) noexcept {
+    const auto& midi = song_->midi;
+    const auto first = std::lower_bound(midi.begin(), midi.end(), songTime,
+                                        [](const MidiEvent& e, SamplePos t) { return e.at < t; });
+    next_ = static_cast<std::size_t>(first - midi.begin());
+    const auto& ticks = song_->clockTicks;
+    next_tick_ = static_cast<std::size_t>(std::lower_bound(ticks.begin(), ticks.end(), songTime) - ticks.begin());
+}
 
 void MidiOut::send(const MidiEvent& e, std::int64_t streamTime) noexcept {
     if (push(serial_, e.device, e.size, e.data[0], e.data[1], e.data[2], streamTime)) track(e);

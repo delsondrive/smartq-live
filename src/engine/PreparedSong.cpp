@@ -32,7 +32,24 @@ PreparedSong prepareSong(std::string id, TempoMap tempo, int countInBars, Sample
     // Always built: a song with its click off still clicks through its count-in.
     s.ticks = buildClickTicks(s.tempo, sampleRate, s.start, s.end, click.subdivision);
     s.clickSound = makeClickSound(click.sound, sampleRate);
+    finishSections(s);
     return s;
+}
+
+void finishSections(PreparedSong& s) {
+    if (s.sections.empty()) s.sections.push_back({0, s.end});
+    const auto count = s.sections.size();
+    std::erase_if(s.arrangement, [&](std::uint16_t step) { return step >= count; });
+    if (s.arrangement.empty())
+        for (std::size_t i = 0; i < count && i <= 0xFFFF; ++i) s.arrangement.push_back(static_cast<std::uint16_t>(i));
+
+    s.barStarts.clear();
+    if (!(s.sampleRate > 0.0)) return;
+    for (int bar = 1;; ++bar) {
+        const SamplePos at = s.tempo.sampleAt({bar, 1.0}, s.sampleRate);
+        if (at >= s.end) break;
+        s.barStarts.push_back(at);
+    }
 }
 
 } // namespace sqlive::engine

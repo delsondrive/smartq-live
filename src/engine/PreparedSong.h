@@ -34,6 +34,11 @@ struct ClickSetup {
     bool accentDownbeat = true;
 };
 
+struct Section { SamplePos start = 0, end = 0; };                 // song time; end is one past the last sample
+
+// When a chosen jump happens (Task 4): at the end of the playing section, or at the next bar line.
+enum class JumpTiming : std::uint8_t { EndOfSection, NextBar };
+
 // Everything the audio thread needs to play one song, built on the control thread and never changed after.
 struct PreparedSong {
     std::string id;
@@ -53,10 +58,21 @@ struct PreparedSong {
     std::vector<std::uint16_t> clockDevices, startStopDevices;
     std::vector<SamplePos> clockTicks; // 24 per quarter over [start, end); only when clockDevices isn't empty
     std::vector<std::string> midiDeviceIds;   // the band's device id for each engine device number, as when prepared
+    // Sections and the arrangement: the song plays the sections its steps name, in step order, and ends when the last
+    // step does. `end` stays the audio's end; the sections tile [0, end).
+    std::vector<Section> sections;           // tile [0, end); never empty once finishSections has run
+    std::vector<std::uint16_t> arrangement;  // indices into sections; never empty once finishSections has run
+    JumpTiming jumpTiming = JumpTiming::EndOfSection;
+    std::vector<SamplePos> barStarts;        // every bar start in [0, end)
 };
 
-// explicitEnd below 0 means "where the longest part ends".
+// explicitEnd below 0 means "where the longest part ends". Runs finishSections on what it makes.
 PreparedSong prepareSong(std::string id, TempoMap, int countInBars, SamplePos audioStartOffset,
                          std::vector<PreparedPart>, ClickSetup, double sampleRate, SamplePos explicitEnd = -1);
+
+// Fills in whatever is missing: one section for the whole song, [0, end), when there are none; every section in order
+// when the arrangement is empty (or names no section the song has: steps out of range are removed first); and the bar
+// starts, from the tempo map.
+void finishSections(PreparedSong&);
 
 } // namespace sqlive::engine

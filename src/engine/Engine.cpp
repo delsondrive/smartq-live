@@ -12,6 +12,7 @@ constexpr std::size_t kCommandCapacity = 1024;
 constexpr std::size_t kGarbageCapacity = 1024;
 constexpr std::size_t kEventCapacity = 256;
 constexpr double kStopFadeSeconds = 0.050;
+constexpr double kJumpFadeAt48k = 240.0;   // samples at 48 kHz, scaled to the engine's rate
 
 } // namespace
 
@@ -24,6 +25,7 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     channels_.assign(static_cast<std::size_t>(kMaxDeviceChannels), nullptr);
     renderer_.prepare(sampleRate, max_block_);
     fade_length_ = std::llround(kStopFadeSeconds * sampleRate);
+    jump_fade_ = std::llround(kJumpFadeAt48k * sampleRate / 48000.0);
 
     // Song times made at another rate mean nothing now, so whatever played stops. The audio thread isn't running, so it
     // is freed here. The mix is kept: a start snaps it into the renderer again. So is the cue, unless it was made for
@@ -44,6 +46,11 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     gap_after_ = 0;
     song_time_ = 0;
     fade_pos_ = 0;
+    arrangement_.reset(nullptr);
+    xfade_left_ = 0;
+    tail_time_ = 0;
+    ending_ = false;
+    tail_left_ = 0;
     publishStatus();
 }
 
@@ -121,6 +128,9 @@ EngineStatus Engine::status() const noexcept {
             s.cuedSerial = status_cued_.load(std::memory_order_relaxed);
             s.songTime = status_song_time_.load(std::memory_order_relaxed);
             s.streamTime = status_stream_time_.load(std::memory_order_relaxed);
+            s.step = status_step_.load(std::memory_order_relaxed);
+            s.pendingStep = status_pending_step_.load(std::memory_order_relaxed);
+            s.looping = status_looping_.load(std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_acquire);   // the loads above happen before the count is read again
             if (status_seq_.load(std::memory_order_relaxed) == before) return s;
         }
@@ -238,24 +248,49 @@ bool Engine::cueFits() const noexcept { return cued_.song != nullptr && fitsRate
 
 // The cue becomes the playing song, from songTime; streamTime is that of its first sample. fromStart: it begins at its
 // start, or at bar 1 following on, so the MIDI chase covers bar 1 beat 1. The cue must be set and nothing may be playing.
+// Before 0 it begins in the lead-in, with no step yet. From 0 on: from its start, step 0, from that step's section's start
+// (nothing has played to cross-fade from); otherwise the step startAt's position names (Arrangement::stepAt), or, with
+// none, nothing: the song ends at once, as one started at its end does.
 void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix, bool fromStart) noexcept {
     playing_.hold = std::move(cued_.hold);
     playing_.song = cued_.song;
     playing_.serial = cued_.serial;
     cued_ = {};   // its hold was moved out, so this frees nothing
+    arrangement_.reset(playing_.song);
+    xfade_left_ = 0;
+    ending_ = false;
+    tail_left_ = 0;
+    int step = -1;
+    SamplePos at = songTime;
+    if (songTime >= 0) {
+        step = fromStart ? 0 : arrangement_.stepAt(songTime);
+        if (step >= 0) at = std::max(songTime, arrangement_.sectionOf(step).start);   // from the start: songTime is 0
+    }
     // setSong resets the song's own levels; any live level for this song comes after it. Dropping the mix first makes
     // setMix snap, so a song started out of silence hears the current mix from its first sample rather than gliding in
     // from an older one. A song that follows straight on keeps the glide going, as the song before it would have.
     renderer_.setSong(playing_.song);
-    midi_.begin(*playing_.song, playing_.serial, songTime, streamTime, fromStart);
+    midi_.begin(*playing_.song, playing_.serial, at, streamTime, fromStart);
     if (snapMix) {
         renderer_.setMix(nullptr);
         renderer_.setMix(mix_);
     }
     state_ = PlayState::Playing;
-    song_time_ = songTime;
+    song_time_ = at;
     fade_pos_ = 0;
     report(EngineEvent::Type::Started, playing_.serial, streamTime);
+    if (step >= 0) {
+        enterStep(step, streamTime);
+    } else if (songTime >= 0) {   // no step left to play: a tail of no length, so the first render ends it
+        arrangement_.enter(-1);
+        ending_ = true;
+    }
+}
+
+// The playing song is in `step` from streamTime on. A song without sections announces no step: its one step is the song.
+void Engine::enterStep(int step, std::int64_t streamTime) noexcept {
+    arrangement_.enter(step);
+    if (!arrangement_.wholeSong()) report(EngineEvent::Type::StepChanged, playing_.serial, streamTime, false, step);
 }
 
 // Renders out[offset, offset + frames), at most max_block_ frames, which already hold silence. The song can end, the stop
@@ -271,31 +306,124 @@ void Engine::renderChunk(float* const* out, int numChannels, int offset, int fra
             if (gap_left_ <= 0) endGap(stream_time_ + pos);
             continue;
         }
-        const PreparedSong& song = *playing_.song;
-        std::int64_t n = std::min<std::int64_t>(frames - pos, std::max<std::int64_t>(0, song.end - song_time_));
-        const float* envelope = nullptr;
-        if (state_ == PlayState::Stopping) {
-            n = std::min(n, fade_length_ - fade_pos_);
-            for (std::int64_t k = 0; k < n; ++k)   // a straight line from 1 down towards 0
-                envelope_[static_cast<std::size_t>(k)] =
-                    static_cast<float>(static_cast<double>(fade_length_ - (fade_pos_ + k)) / static_cast<double>(fade_length_));
-            envelope = envelope_.data();
-        }
-        if (n > 0) {
-            for (int c = 0; c < numChannels; ++c) channels_[c] = out[c] != nullptr ? out[c] + offset + pos : nullptr;
-            renderer_.render(song_time_, static_cast<int>(n), channels_.data(), numChannels, envelope);
-            midi_.play(song_time_, n, stream_time_ + pos);
-            song_time_ += n;
-            pos += static_cast<int>(n);
-            if (state_ == PlayState::Stopping) fade_pos_ += n;
-        }
+        for (int c = 0; c < numChannels; ++c) channels_[c] = out[c] != nullptr ? out[c] + offset + pos : nullptr;
+        std::int64_t n = frames - pos;
+        if (state_ == PlayState::Stopping) n = std::min(n, fade_length_ - fade_pos_);
         const std::int64_t now = stream_time_ + pos;
-        if (state_ == PlayState::Stopping && fade_pos_ >= fade_length_)
-            finishSong(EngineEvent::Type::Stopped, now);
-        else if (song_time_ >= song.end)   // a song ending during the fade ends the fade early
-            finishSong(state_ == PlayState::Stopping ? EngineEvent::Type::Stopped : EngineEvent::Type::Ended, now);
+        if (ending_) n = renderTail(numChannels, n);
+        else if (xfade_left_ > 0) n = renderCrossfade(numChannels, n, now);
+        else n = renderStraight(numChannels, n, now);
+        pos += static_cast<int>(n);
+        if (state_ == PlayState::Stopping) fade_pos_ += n;
+        settle(stream_time_ + pos);
     }
     stream_time_ += frames;
+}
+
+// The playing step (or the lead-in) up to its boundary, at most `frames`; returns how many were rendered.
+std::int64_t Engine::renderStraight(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept {
+    const std::int64_t n = std::min(frames, std::max<std::int64_t>(0, arrangement_.boundary() - song_time_));
+    if (n <= 0) return 0;
+    const float* envelope = nullptr;
+    if (state_ == PlayState::Stopping) {
+        for (std::int64_t k = 0; k < n; ++k) envelope_[static_cast<std::size_t>(k)] = static_cast<float>(stopGain(k));
+        envelope = envelope_.data();
+    }
+    renderer_.render(song_time_, static_cast<int>(n), channels_.data(), numChannels, envelope);
+    midi_.play(song_time_, n, streamTime);
+    song_time_ += n;
+    return n;
+}
+
+// One sample of a jump's crossfade: the audio running on past the line (parts only, its levels read as they stand) at
+// 1 - k / jump_fade_, then the incoming audio, rendered as ever, at k / jump_fade_. One at a time, so every level glides
+// once per sample whatever the block. Past the song's end the outgoing audio is silent.
+std::int64_t Engine::renderCrossfade(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept {
+    if (frames <= 0) return 0;
+    const double stop = state_ == PlayState::Stopping ? stopGain(0) : 1.0;
+    const std::int64_t k = jump_fade_ - xfade_left_;
+    const double length = static_cast<double>(jump_fade_);
+    const float outgoing = static_cast<float>(static_cast<double>(jump_fade_ - k) / length * stop);
+    const float incoming = static_cast<float>(static_cast<double>(k) / length * stop);
+    if (tail_time_ < playing_.song->end)
+        renderer_.render(tail_time_, 1, channels_.data(), numChannels, &outgoing, {.click = false, .advance = false});
+    ++tail_time_;
+    renderer_.render(song_time_, 1, channels_.data(), numChannels, &incoming);
+    midi_.play(song_time_, 1, streamTime);
+    ++song_time_;
+    --xfade_left_;
+    return 1;
+}
+
+// After the last step, when that is not where the audio ends: the audio running on fades out in a straight line over
+// jump_fade_ samples, parts only, with no MIDI. Past the song's end it is silent.
+std::int64_t Engine::renderTail(int numChannels, std::int64_t frames) noexcept {
+    const std::int64_t n = std::min(frames, tail_left_);
+    if (n <= 0) return 0;
+    const double length = static_cast<double>(jump_fade_);
+    for (std::int64_t k = 0; k < n; ++k) {
+        const std::int64_t at = jump_fade_ - tail_left_ + k;
+        const double stop = state_ == PlayState::Stopping ? stopGain(k) : 1.0;
+        envelope_[static_cast<std::size_t>(k)] = static_cast<float>(static_cast<double>(jump_fade_ - at) / length * stop);
+    }
+    const std::int64_t audible = std::clamp<std::int64_t>(playing_.song->end - song_time_, 0, n);
+    if (audible > 0)
+        renderer_.render(song_time_, static_cast<int>(audible), channels_.data(), numChannels, envelope_.data(),
+                         {.click = false});
+    song_time_ += n;
+    tail_left_ -= n;
+    return n;
+}
+
+// A straight line from 1 down towards 0.
+double Engine::stopGain(std::int64_t k) const noexcept {
+    return static_cast<double>(fade_length_ - (fade_pos_ + k)) / static_cast<double>(fade_length_);
+}
+
+// What follows a render, at streamTime: the stop fade finished, the song's tail run out, or the step's boundary reached.
+// The step moves on as soon as song time reaches the boundary, even on a chunk's last sample, so a command taken on the
+// next block finds the next step already playing.
+void Engine::settle(std::int64_t streamTime) noexcept {
+    if (state_ == PlayState::Stopping && fade_pos_ >= fade_length_) {
+        finishSong(EngineEvent::Type::Stopped, streamTime);
+        return;
+    }
+    if (ending_) {   // a song ending during the stop fade ends the fade early
+        if (tail_left_ <= 0)
+            finishSong(state_ == PlayState::Stopping ? EngineEvent::Type::Stopped : EngineEvent::Type::Ended, streamTime);
+        return;
+    }
+    while (song_time_ >= arrangement_.boundary())
+        if (!handOver(streamTime)) return;
+}
+
+// The playing step (or the lead-in) is over at streamTime. The next step plays straight on when its section starts where
+// this one ended, and otherwise from its section's start, cross-faded. With no next step the song ends: at once where the
+// audio ends, after a tail anywhere else. Returns whether a step was entered.
+bool Engine::handOver(std::int64_t streamTime) noexcept {
+    const int next = arrangement_.nextStep();
+    if (next < 0) {
+        arrangement_.enter(-1);
+        xfade_left_ = 0;
+        if (song_time_ >= playing_.song->end || jump_fade_ <= 0) {   // a song ending during the stop fade ends it early
+            finishSong(state_ == PlayState::Stopping ? EngineEvent::Type::Stopped : EngineEvent::Type::Ended, streamTime);
+        } else {
+            ending_ = true;
+            tail_left_ = jump_fade_;
+        }
+        return false;
+    }
+    const SamplePos landing = arrangement_.sectionOf(next).start;
+    if (landing != song_time_) {
+        if (jump_fade_ > 0) {
+            tail_time_ = song_time_;
+            xfade_left_ = jump_fade_;
+        }
+        song_time_ = landing;
+        midi_.jump(landing, streamTime);
+    }
+    enterStep(next, streamTime);
+    return true;
 }
 
 // The playing song is over at streamTime: it ended by itself, or its stop fade finished. A song that ended by itself is
@@ -305,6 +433,10 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     const std::uint64_t ended = playing_.serial;
     report(type, ended, streamTime);
     renderer_.setSong(nullptr);   // before the song can be freed
+    arrangement_.reset(nullptr);
+    xfade_left_ = 0;
+    ending_ = false;
+    tail_left_ = 0;
     // What follows: the cue straight on (seamlessly, or after a gap of no length), the cue after a gap, or nothing.
     const bool followOn = type == EngineEvent::Type::Ended && cueFits() && follow_.kind != FollowKind::Stop;
     const std::int64_t gap = followOn && follow_.kind == FollowKind::Gap ? gapFrames() : 0;
@@ -347,8 +479,8 @@ std::int64_t Engine::gapFrames() const noexcept {
     return std::llround(std::min(frames, kLongest));
 }
 
-void Engine::report(EngineEvent::Type type, std::uint64_t serial, std::int64_t streamTime, bool inGap) noexcept {
-    EngineEvent event{type, serial, streamTime, inGap};
+void Engine::report(EngineEvent::Type type, std::uint64_t serial, std::int64_t streamTime, bool inGap, int step) noexcept {
+    EngineEvent event{type, serial, streamTime, inGap, step};
     events_.push(std::move(event));   // a full queue drops the event
 }
 
@@ -388,6 +520,9 @@ void Engine::publishStatus() noexcept {
     status_cued_.store(cued_.serial, std::memory_order_relaxed);
     status_song_time_.store(state_ != PlayState::Stopped ? song_time_ : 0, std::memory_order_relaxed);
     status_stream_time_.store(stream_time_, std::memory_order_relaxed);
+    status_step_.store(state_ != PlayState::Stopped ? arrangement_.step() : -1, std::memory_order_relaxed);
+    status_pending_step_.store(-1, std::memory_order_relaxed);
+    status_looping_.store(false, std::memory_order_relaxed);
     status_seq_.store(seq + 2, std::memory_order_release);       // even: done
 }
 

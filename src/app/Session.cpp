@@ -1033,6 +1033,8 @@ void Session::handleEvent(const engine::EngineEvent& event) {
         playing_ = {};
         stop_requested_ = false;
         break;
+    case Type::StepChanged:   // nothing here yet: the step playing is in the engine's status
+        break;
     }
 }
 

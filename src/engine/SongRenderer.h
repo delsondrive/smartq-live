@@ -10,6 +10,14 @@
 
 namespace sqlive::engine {
 
+// What one render call plays.
+struct RenderParts {
+    bool parts = true;        // the song's parts
+    bool click = true;        // its click, as its ClickSetup says
+    bool advance = true;      // false: every part gain, mix level and the click gain is read as it stands and not stepped. A
+                              // jump renders its outgoing tail so, beside the incoming sample, so no glide runs twice as fast
+};
+
 // Mixes one song's parts and click into the output buses of a mix. Every gain, every mix level and the click gain glide
 // on a one-pole with a 10 ms time constant, advanced once per sample, so the output never depends on how the calls to
 // render are split into blocks. prepare allocates; nothing else does. The song and the mix must outlive their use here.
@@ -23,7 +31,8 @@ public:
     void setClickGain(float linear) noexcept;
     void setSolo(int part) noexcept;                  // -1 = none; a soloed part silences the other parts, never the click
     // Adds into out; envelope may be null.
-    void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope) noexcept;
+    void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
+                RenderParts = {}) noexcept;
 
 private:
     struct Smoothed {
@@ -38,7 +47,7 @@ private:
 
     void step(Smoothed&) const noexcept;
     void updatePartTargets() noexcept;
-    void renderPiece(SamplePos songTime, int frames, int offset, const float* envelope) noexcept;
+    void renderPiece(SamplePos songTime, int frames, int offset, const float* envelope, RenderParts) noexcept;
 
     double coefficient_ = 0.0;
     int max_block_ = 0;
