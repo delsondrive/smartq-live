@@ -124,3 +124,19 @@ TEST_CASE("a part's file is found only inside its song's folder", "[folder]") {
     }
     CHECK(folder.audioFile(s, part(t.dir().getChildFile("secret.wav").getFullPathName().toRawUTF8())) == juce::File());
 }
+TEST_CASE("a song comes back from the trash by its id, even in a later session", "[folder]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    SongDoc s; s.id = newId(); s.title = "Gone";
+    juce::File dir;
+    {
+        BandFolder folder(root); BandModel model; folder.load(model);
+        dir = folder.assignSongFolder(s.id, s.title);  dir.getChildFile("audio/Keys.wav").create();
+        model.putSong(s);  folder.save({DocKind::Song, s.id}, model);
+        model.removeSong(s.id);  REQUIRE(folder.save({DocKind::Song, s.id}, model).wasOk());
+    }
+    BandFolder fresh(root); BandModel later; fresh.load(later);    // knows nothing of what this folder trashed
+    later.putSong(s);
+    REQUIRE(fresh.save({DocKind::Song, s.id}, later).wasOk());
+    CHECK(dir.getChildFile("audio/Keys.wav").existsAsFile());      // its own folder, audio and all
+    CHECK(root.getChildFile("trash").getNumberOfChildFiles(juce::File::findDirectories) == 0);
+}

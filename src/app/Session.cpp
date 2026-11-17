@@ -8,6 +8,7 @@
 
 #include "app/MidiPorts.h"
 #include "model/CoreCommands.h"
+#include "model/DocumentSet.h"
 #include "model/MidiCommands.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
@@ -37,6 +38,12 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     model::registerCoreCommands(commands_);
     model::registerMidiCommands(commands_);
     OutsideChanges::registerReloadCommand(commands_);
+    // Going back to a snapshot (SnapshotStore::restore): every document at once. Show mode never changes the band folder.
+    commands_.registerCommand("snapshot.apply", [this](model::BandModel& m, const juce::var& params) {
+        if (mode_ == Mode::Show)
+            return model::CommandResult::failure("Show mode never changes the band folder. Go back to a snapshot after the show.");
+        return model::applyDocuments(m, params, "This snapshot couldn't be read, so nothing was changed.");
+    });
     commands_.onChanged = [this](const std::vector<model::DocKey>& keys) {
         autosaver_.noteChanged(keys);
         outside_->followReloadSteps();
@@ -71,6 +78,8 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     rememberChoices();                                           // a fallback is remembered too
     setNext(entryIdAt(0));
     restoreShow();
+    if (mode_ == Mode::Edit) snapshotOnOpening();
+    else snapshot_owed_ = true;                                  // nothing is written in a show: made when it ends
 
     refresh();
     startTimerHz(kTimerHz);
@@ -97,6 +106,8 @@ Settings& Session::settings() { return settings_; }
 const Settings& Session::settings() const { return settings_; }
 engine::Engine& Session::engine() { return engine_; }
 const model::LoadReport& Session::loadReport() const { return load_report_; }
+model::SnapshotStore& Session::snapshots() { return snapshots_; }
+const model::SnapshotStore& Session::snapshots() const { return snapshots_; }
 juce::ChangeBroadcaster& Session::changes() { return changes_; }
 juce::String Session::rigId() const { return rig_id_; }
 juce::String Session::setlistId() const { return setlist_id_; }
@@ -314,6 +325,7 @@ bool Session::leaveShow() {
     if (now().playing) return false;
     mode_ = Mode::Edit;
     writeShowMemory();                                           // no longer in the show; tonight's changes wait for the answer
+    if (std::exchange(snapshot_owed_, false)) snapshotOnOpening();   // the band opened straight into this show
     pollFolder();                                                // what changed on other computers during the show
     refresh();
     return true;
@@ -472,6 +484,12 @@ void Session::writeShowMemory() {
 void Session::tonightChanged() {
     writeShowMemory();
     refresh();
+}
+
+void Session::snapshotOnOpening() {
+    if (!load_report_.bandFound) return;                         // not a band yet: there is nothing to go back to
+    // A failure here only means no snapshot this time: the band itself is untouched, and the next opening tries again.
+    juce::ignoreUnused(snapshots_.create(model_, "Opened the folder", true));
 }
 
 void Session::advanceWithoutDevice(int frames) {

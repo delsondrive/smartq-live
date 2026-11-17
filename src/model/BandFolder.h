@@ -35,7 +35,11 @@ public:
 private:
     juce::File place(const DocKey&) const;                       // folder (song) or file (setlist, rig); {} when unknown
     juce::Result moveToTrash(const DocKey&);
-    juce::Result restoreFromTrash(const DocKey&);
+    // What moveToTrash took, back in its place. A song this folder never trashed (removed in an earlier session, or on
+    // another computer) that has no folder now: the newest folder in trash/ whose song.json has its id, moved back under
+    // songs/ as assignSongFolder would name it for that title. None there: nothing is done, and save makes a new folder.
+    juce::Result restoreFromTrash(const DocKey&, const juce::String& songTitle = {});
+    juce::File trashedSongFolder(const juce::String& songId) const;   // {} when trash/ has none
 
     juce::File root_folder_;
     std::map<DocKey, juce::File> places_;    // where each id lives

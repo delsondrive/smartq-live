@@ -94,6 +94,17 @@ void PillButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
         case Style::Danger: ink = theme::danger; break;
     }
     LiveLookAndFeel::fillButton(g, getLocalBounds().toFloat(), fill, border, hot, down);
+    if (style_ == Style::Plain && getToggleState()) {                 // open: the mockup's inset mint line along its foot
+        const auto area = getLocalBounds().toFloat();
+        juce::Path shape;
+        shape.addRoundedRectangle(area, theme::radiusButton);
+        g.saveState();
+        g.reduceClipRegion(shape);
+        g.setColour(theme::mint);
+        g.fillRect(area.withTop(area.getBottom() - 2.0f));
+        g.restoreState();
+        ink = theme::text;
+    }
 
     g.setColour(ink);
     g.setFont(buttonFont());

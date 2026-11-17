@@ -62,6 +62,7 @@ juce::String undoWords(const juce::String& command) {
     if (command.startsWith("device.")) return "change the MIDI devices";
     if (command.startsWith("marker.")) return "change the pedal changes";
     if (command == "controls.set") return "change the controls";
+    if (command == "snapshot.apply") return "go back to a snapshot";
     return "the last change";
 }
 
@@ -290,6 +291,7 @@ private:
 TopBar::TopBar(app::Session& session)
     : session_(session),
       undo_(std::make_unique<PillButton>(juce::String::fromUTF8("\xe2\x86\xb6 Undo"))),
+      snapshots_(std::make_unique<PillButton>("Snapshots")),
       earlier_(std::make_unique<TransportButton>(TransportButton::Kind::Earlier)),
       play_(std::make_unique<TransportButton>(TransportButton::Kind::Play)),
       later_(std::make_unique<TransportButton>(TransportButton::Kind::Later)) {
@@ -298,6 +300,9 @@ TopBar::TopBar(app::Session& session)
     undo_->setWantsKeyboardFocus(false);
     undo_->onClick = [this] { if (onUndo) onUndo(); };
     addChildComponent(*undo_);
+    snapshots_->setWantsKeyboardFocus(false);
+    snapshots_->onClick = [this] { if (onSnapshots) onSnapshots(); };
+    addChildComponent(*snapshots_);
     addChildComponent(beats_);
 
     earlier_->onPress = [this] { if (onAction) onAction(Action::NextSongEarlier); };
@@ -323,6 +328,8 @@ TopBar::TopBar(app::Session& session)
 }
 
 TopBar::~TopBar() { stopTimer(); }
+
+void TopBar::setSnapshotsOpen(bool open) { snapshots_->setToggleState(open, juce::dontSendNotification); }
 
 void TopBar::setState(const TopBarState& next) {
     if (next == state_) return;
@@ -392,7 +399,7 @@ void TopBar::layout() {
     modeSwitch_ = juce::Rectangle<int>(w - kPadX - switchWidth, centreY - 14, switchWidth, 28);
     int right = modeSwitch_.getX() - kGap;
 
-    // Edit mode: the tabs and Undo.
+    // Edit mode: the tabs, Undo and Snapshots.
     tabs_.clear();
     if (edit) {
         int x = left;
@@ -401,10 +408,12 @@ void TopBar::layout() {
             tabs_.emplace_back(x, centreY - 15, tw, 30);
             x += tw + 4;
         }
-        const int uw = undo_->idealWidth();
-        undo_->setBounds(right - uw, centreY - 15, uw, 30);
+        const int snapW = snapshots_->idealWidth(), uw = undo_->idealWidth();
+        snapshots_->setBounds(right - snapW, centreY - 15, snapW, 30);
+        undo_->setBounds(snapshots_->getX() - kGap - uw, centreY - 15, uw, 30);
     }
     undo_->setVisible(edit);
+    snapshots_->setVisible(edit);
     // Show mode: the status pills, right to left before the switch. Edit mode: only what needs a look, right to left before
     // Undo: the audio pill when audio isn't OK, the MIDI pill when it is a Warning (editToo), and "Check files", where a
     // click opens the files dialog (in Show mode it only says so: nothing there may change the band folder).

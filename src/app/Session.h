@@ -21,6 +21,7 @@
 #include "model/BandModel.h"
 #include "model/CloudFiles.h"
 #include "model/CommandLayer.h"
+#include "model/Snapshots.h"
 #include "model/SongImport.h"
 
 namespace sqlive::app {
@@ -65,6 +66,10 @@ public:
     Settings& settings();                   const Settings& settings() const;               // const: computerName, showMemory
     engine::Engine& engine();
     const model::LoadReport& loadReport() const;
+    // The band's snapshots. One named "Opened the folder" is made, automatically, when the band opens in Edit mode; when it
+    // opens straight into a show, at the first leaveShow instead, as Show mode never writes the band folder. The command
+    // "snapshot.apply" (SnapshotStore::restore runs it) is refused in Show mode, and views offer no snapshots there.
+    model::SnapshotStore& snapshots();      const model::SnapshotStore& snapshots() const;
     // Saving while the autosaver has changes pending; Waiting while one of them is held back for the user's answer to an
     // outside change; Failed after a flush that failed.
     SaveState saveState() const;
@@ -232,6 +237,7 @@ private:
     void rememberShow();                                         // in Show mode: the show memory, when it differs
     void writeShowMemory();                                      // the show memory as it is now; the file is saved by the flush
     void tonightChanged();
+    void snapshotOnOpening();                                    // Edit mode: the automatic "Opened the folder" snapshot
 
     Settings& settings_;
     model::BandFolder folder_;
@@ -239,6 +245,8 @@ private:
     model::CommandLayer commands_{model_};
     model::Autosaver autosaver_{folder_, model_};
     model::LoadReport load_report_;
+    model::SnapshotStore snapshots_{folder_};
+    bool snapshot_owed_ = false;                                 // opened straight into a show: made when it ends
     engine::Engine engine_;
     juce::ChangeBroadcaster changes_;
 

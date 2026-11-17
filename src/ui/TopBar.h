@@ -41,7 +41,7 @@ TopBarState makeTopBarState(const app::Session&, const app::AudioHost*, const ap
 // The words on the tabs, "Setlists", "Song editor", "Mixer", "Setup".
 juce::String pageName(Page);
 
-// The top bar, 62 px high. Edit mode: logo, the four tabs, a gap, "↶ Undo", the EDIT/SHOW switch. Show mode, main view:
+// The top bar, 62 px high. Edit mode: logo, the four tabs, a gap, "↶ Undo", "Snapshots", the EDIT/SHOW switch. Show mode, main view:
 // logo, clock, chips, beat lights, the transport (⏮ ▶ ⏭), status pills, the switch. Show mode, stage view: logo, a gap,
 // pills, the switch. Clicking the logo in Edit mode opens the About panel. In Edit mode only the pills that need a look sit
 // before Undo: the audio pill when audio isn't OK ("No audio", "Audio lost"), the MIDI pill when a device is missing or
@@ -62,6 +62,8 @@ public:
     std::function<void()> onUndo;
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
     std::function<void()> onCheckFiles;                           // Edit mode: the "Check files" pill was clicked
+    std::function<void()> onSnapshots;                            // Edit mode: "Snapshots" was clicked
+    void setSnapshotsOpen(bool);                                  // "Snapshots" drawn as the open dialog's (the mockup's screen 15)
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -82,7 +84,7 @@ private:
     app::Session& session_;
     TopBarState state_;
 
-    std::unique_ptr<PillButton> undo_;
+    std::unique_ptr<PillButton> undo_, snapshots_;
     std::vector<std::unique_ptr<Chip>> chips_;
     BeatLights beats_;
     std::unique_ptr<TransportButton> earlier_, play_, later_;

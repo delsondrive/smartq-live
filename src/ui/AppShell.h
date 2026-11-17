@@ -61,6 +61,9 @@ public:
     // Edit mode: the "Check files" pill opens the FilesDialog (one dialog at a time). It closes when Show mode starts.
     void openFilesDialog();
     bool showingFilesDialog() const;
+    // Edit mode: the top bar's "Snapshots" opens the SnapshotsDialog (one dialog at a time). It closes when Show mode starts.
+    void openSnapshotsDialog();
+    bool showingSnapshotsDialog() const;
     bool showingOutsideChangesBanner() const;                     // files changed on another computer wait for an answer
 
     TopBar& topBar() { return topBar_; }
@@ -99,7 +102,7 @@ private:
     ComesBackBox comesBack_;
     KeyboardBanner banner_;
     OutsideChangesBanner outside_;
-    std::unique_ptr<Veil> preShow_, tonight_, files_;
+    std::unique_ptr<Veil> preShow_, tonight_, files_, snapshots_;
     std::vector<std::unique_ptr<Veil>> closed_;                   // hidden, waiting to be deleted
     juce::ScopedMessageBox dialog_;
 };

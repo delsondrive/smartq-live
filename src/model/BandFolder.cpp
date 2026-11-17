@@ -199,9 +199,29 @@ juce::Result BandFolder::moveToTrash(const DocKey& key) {
     return juce::Result::ok();
 }
 
-juce::Result BandFolder::restoreFromTrash(const DocKey& key) {
+juce::File BandFolder::trashedSongFolder(const juce::String& songId) const {
+    // The newest first: each one's name starts with the date and time it went to the trash.
+    auto dirs = root_folder_.getChildFile("trash").findChildFiles(juce::File::findDirectories, false);
+    std::sort(dirs.begin(), dirs.end(), [](const juce::File& a, const juce::File& b) { return a.getFileName() > b.getFileName(); });
+    for (const auto& dir : dirs) {
+        const auto file = dir.getChildFile("song.json");
+        if (file.existsAsFile() && juce::JSON::parse(file.loadFileAsString()).getProperty("id", {}).toString() == songId) return dir;
+    }
+    return {};
+}
+
+juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String& songTitle) {
     auto it = trashed_.find(key);
-    if (it == trashed_.end()) return juce::Result::ok();
+    if (it == trashed_.end()) {
+        if (key.kind != DocKind::Song || place(key) != juce::File()) return juce::Result::ok();
+        const auto from = trashedSongFolder(key.id);
+        if (from == juce::File()) return juce::Result::ok();
+        const auto to = uniqueChild(root_folder_.getChildFile("songs"), safeFileName(songTitle), "");
+        to.getParentDirectory().createDirectory();
+        if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
+        places_[key] = to;
+        return juce::Result::ok();
+    }
     auto from = it->second;
     if (! from.exists()) { trashed_.erase(it); return juce::Result::ok(); }
     auto to = place(key);
@@ -224,7 +244,7 @@ juce::Result BandFolder::save(const DocKey& key, const BandModel& model) {
         case DocKind::Song: {
             auto* d = model.song(key.id);
             if (d == nullptr) return moveToTrash(key);
-            if (auto r = restoreFromTrash(key); r.failed()) return r;
+            if (auto r = restoreFromTrash(key, d->title); r.failed()) return r;
             return writeFileAtomically(assignSongFolder(key.id, d->title).getChildFile("song.json"), toJson(*d));
         }
         case DocKind::Setlist:

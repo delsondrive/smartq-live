@@ -148,7 +148,7 @@ TEST_CASE("Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes on every Edit page, n
     }
     ui::TopBar& bar = shell.topBar();
     for (auto* child : bar.getChildren())
-        if (auto* button = dynamic_cast<PillButton*>(child))
+        if (auto* button = dynamic_cast<PillButton*>(child); button != nullptr && button->getButtonText() != "Snapshots")
             CHECK(button->getTooltip() == juce::String::fromUTF8("Undo: rename the band (Ctrl+Z undo \xc2\xb7 Ctrl+Y redo)"));
     s.enterShow();  d.settle();
     CHECK_FALSE(shell.keyPressed(undo));

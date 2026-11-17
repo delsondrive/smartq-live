@@ -15,7 +15,8 @@ namespace sqlive::ui {
 // is drawn at 40% (the mockup's .off) and ignores the mouse. idealWidth() is the width the mockup gives it.
 
 // The mockup's .btn: 13 px semibold text on a field with a hairline border, 8 px corners, 12 px either side.
-// Primary is .btn.pri (mint, onAccent text), Ember .btn.emb, Danger .btn.red (danger text on the field).
+// Primary is .btn.pri (mint, onAccent text), Ember .btn.emb, Danger .btn.red (danger text on the field). A Plain one whose
+// toggle state is on is drawn open: its text bright, a 2 px mint line along its foot (the top bar's Snapshots, screen 15).
 class PillButton : public juce::Button {
 public:
     enum class Style { Plain, Primary, Ember, Danger };

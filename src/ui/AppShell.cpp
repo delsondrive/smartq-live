@@ -6,6 +6,7 @@
 #include "app/AudioHost.h"
 #include "app/ShowController.h"
 #include "ui/PreShowDialog.h"
+#include "ui/SnapshotsDialog.h"
 #include "ui/Theme.h"
 #include "ui/Veil.h"
 #include "ui/Widgets.h"
@@ -94,6 +95,7 @@ AppShell::AppShell(app::Session& session, app::AudioHost* host)
     };
     topBar_.onOpenAnotherBand = [this] { if (onOpenAnotherBand) onOpenAnotherBand(); };
     topBar_.onCheckFiles = [this] { openFilesDialog(); };
+    topBar_.onSnapshots = [this] { openSnapshotsDialog(); };
     addAndMakeVisible(topBar_);
 
     addChildComponent(interrupted_);
@@ -126,7 +128,7 @@ void AppShell::showPage(Page page) {
 void AppShell::requestMode(Mode mode) {
     if (mode == session_.mode()) return;
     if (mode == Mode::Show) {
-        if (preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr) return;   // one dialog at a time
+        if (preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr || snapshots_ != nullptr) return;   // one dialog at a time
         auto dialog = std::make_unique<PreShowDialog>(session_, host_);
         auto* d = dialog.get();
         d->onGo = [this] {
@@ -192,6 +194,7 @@ bool AppShell::showingInterruptedBanner() const { return interrupted_.isVisible(
 bool AppShell::showingComesBackBox() const { return comesBack_.isVisible(); }
 bool AppShell::showingTonightQuestion() const { return tonight_ != nullptr; }
 bool AppShell::showingFilesDialog() const { return files_ != nullptr; }
+bool AppShell::showingSnapshotsDialog() const { return snapshots_ != nullptr; }
 bool AppShell::showingOutsideChangesBanner() const { return outside_.isVisible(); }
 
 void AppShell::answerTonightQuestion(bool keep) {
@@ -248,7 +251,7 @@ void AppShell::resized() {
     if (interrupted_.isVisible()) area.removeFromTop(InterruptedBanner::height);
     banner_.setBounds(area.withHeight(KeyboardBanner::height));
     outside_.setBounds(area.withHeight(OutsideChangesBanner::height));   // Edit mode only: the two above are Show mode's
-    for (auto* veil : {preShow_.get(), tonight_.get(), files_.get()})
+    for (auto* veil : {preShow_.get(), tonight_.get(), files_.get(), snapshots_.get()})
         if (veil != nullptr) veil->setBounds(getLocalBounds());
 }
 
@@ -292,6 +295,7 @@ void AppShell::followMode() {
         close(preShow_);
         close(tonight_);
         close(files_);
+        close(snapshots_);
         return;
     }
     // In Edit mode tonight's changes only come from a show that has ended (here, or before a restart), so whenever there
@@ -303,7 +307,7 @@ void AppShell::followMode() {
 }
 
 void AppShell::openFilesDialog() {
-    if (session_.mode() != Mode::Edit || preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr) return;
+    if (session_.mode() != Mode::Edit || preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr || snapshots_ != nullptr) return;
     if (makeFilesState(session_).isEmpty()) return;               // nothing to check
     auto dialog = std::make_unique<FilesDialog>(session_);
     auto* d = dialog.get();
@@ -311,6 +315,18 @@ void AppShell::openFilesDialog() {
     files_ = std::make_unique<Veil>(std::move(dialog), FilesDialog::width, [d] { return d->idealHeight(); });
     addAndMakeVisible(*files_);
     files_->setBounds(getLocalBounds());
+    if (d->isShowing()) d->grabKeyboardFocus();
+}
+
+void AppShell::openSnapshotsDialog() {
+    if (session_.mode() != Mode::Edit || preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr || snapshots_ != nullptr) return;
+    auto dialog = std::make_unique<SnapshotsDialog>(session_);
+    auto* d = dialog.get();
+    d->onClose = [this] { close(snapshots_); };
+    snapshots_ = std::make_unique<Veil>(std::move(dialog), SnapshotsDialog::width, [d] { return d->idealHeight(); });
+    addAndMakeVisible(*snapshots_);
+    snapshots_->setBounds(getLocalBounds());
+    topBar_.setSnapshotsOpen(true);
     if (d->isShowing()) d->grabKeyboardFocus();
 }
 
@@ -332,6 +348,7 @@ void AppShell::close(std::unique_ptr<Veil>& veil) {
     veil->setVisible(false);
     removeChildComponent(veil.get());
     closed_.push_back(std::move(veil));
+    topBar_.setSnapshotsOpen(snapshots_ != nullptr);
     // Often asked from inside the dialog's own button: it is deleted once that call has returned.
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<AppShell>(this)] {
         if (safe != nullptr) safe->closed_.clear();
@@ -344,7 +361,7 @@ void AppShell::raiseOverlays() {
     comesBack_.toFront(false);
     banner_.toFront(false);
     outside_.toFront(false);
-    for (auto* veil : {preShow_.get(), tonight_.get(), files_.get()})
+    for (auto* veil : {preShow_.get(), tonight_.get(), files_.get(), snapshots_.get()})
         if (veil != nullptr) veil->toFront(false);
 }
 

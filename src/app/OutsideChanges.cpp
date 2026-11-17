@@ -4,47 +4,13 @@
 #include <utility>
 
 #include "model/AtomicFile.h"
+#include "model/DocumentSet.h"
 #include "model/DocumentsJson.h"
 #include "model/FileNames.h"
 
 namespace sqlive::app {
 
 namespace {
-
-// "folder.reload" names each document "<kind>:<id>": "band:", "song:<id>", "setlist:<id>", "rig:<id>".
-const char* kindName(model::DocKind kind) {
-    switch (kind) {
-    case model::DocKind::Band: return "band";
-    case model::DocKind::Song: return "song";
-    case model::DocKind::Setlist: return "setlist";
-    case model::DocKind::Rig: return "rig";
-    }
-    return "";
-}
-
-juce::String keyName(const model::DocKey& key) { return juce::String(kindName(key.kind)) + ":" + key.id; }
-
-bool parseKeyName(const juce::String& name, model::DocKey& key) {
-    const auto kind = name.upToFirstOccurrenceOf(":", false, false);
-    for (auto k : {model::DocKind::Band, model::DocKind::Song, model::DocKind::Setlist, model::DocKind::Rig}) {
-        if (kind != kindName(k)) continue;
-        key = {k, name.fromFirstOccurrenceOf(":", false, false)};
-        return name.containsChar(':') && (k == model::DocKind::Band) == key.id.isEmpty();
-    }
-    return false;
-}
-
-// The text is a document of this kind (fromJson repairs anything but text that isn't a JSON object).
-bool readableAs(model::DocKind kind, const juce::String& text) {
-    model::ParseNotes notes;
-    switch (kind) {
-    case model::DocKind::Band: { model::BandDoc d; return model::fromJson(text, d, notes); }
-    case model::DocKind::Song: { model::SongDoc d; return model::fromJson(text, d, notes); }
-    case model::DocKind::Setlist: { model::SetlistDoc d; return model::fromJson(text, d, notes); }
-    case model::DocKind::Rig: { model::RigDoc d; return model::fromJson(text, d, notes); }
-    }
-    return false;
-}
 
 // The text, read as a document, is the one the model has: the same document, however it is laid out (another tool writes
 // the same JSON differently). Only when it reads with no notes at all: a newer version's file that reads the same here is
@@ -77,26 +43,6 @@ juce::String documentText(const model::BandModel& m, const model::DocKey& key) {
     return {};
 }
 
-// {documents: {"<kind>:<id>": JSON text, or "" for a removed one}}: sets each document from the text read from disk.
-model::CommandResult reloadDocuments(model::BandModel& m, const juce::var& params) {
-    const auto* documents = params.getProperty("documents", {}).getDynamicObject();
-    if (documents == nullptr) return model::CommandResult::failure("There was nothing to load.");
-    for (const auto& property : documents->getProperties()) {
-        model::DocKey key;
-        if (!parseKeyName(property.name.toString(), key))
-            return model::CommandResult::failure("There is no document called " + property.name.toString() + ".");
-        const auto text = property.value.toString();
-        if (text.isNotEmpty() && !readableAs(key.kind, text))
-            return model::CommandResult::failure("A file from another computer couldn't be read, so nothing was loaded.");
-        if (key.kind == model::DocKind::Band) {
-            if (text.isEmpty()) return model::CommandResult::failure("A band can't be without its band.json.");
-            m.editBand();                                        // applyText sets the band without noting it as changed
-        }
-        m.applyText(key, text);
-    }
-    return model::CommandResult::success();
-}
-
 bool sameCopies(const std::vector<model::ConflictCopy>& a, const std::vector<model::ConflictCopy>& b) {
     return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const model::ConflictCopy& x, const model::ConflictCopy& y) {
         return x.original == y.original && x.copy == y.copy && x.id == y.id;
@@ -114,7 +60,11 @@ juce::File trashTargetFor(const juce::File& bandRoot, const juce::File& file) {
 
 }  // namespace
 
-void OutsideChanges::registerReloadCommand(model::CommandLayer& commands) { commands.registerCommand("folder.reload", reloadDocuments); }
+void OutsideChanges::registerReloadCommand(model::CommandLayer& commands) {
+    commands.registerCommand("folder.reload", [](model::BandModel& m, const juce::var& params) {
+        return model::applyDocuments(m, params, "A file from another computer couldn't be read, so nothing was loaded.");
+    });
+}
 
 OutsideChanges::OutsideChanges(Session& session, Parts parts, std::function<void()> changed, std::function<void()> flush)
     : folder_(parts.folder), model_(parts.model), commands_(parts.commands), autosaver_(parts.autosaver),
@@ -247,7 +197,7 @@ model::CommandResult OutsideChanges::loadFromDisk(const std::vector<OutsideChang
     if (texts.empty()) return model::CommandResult::success();
     auto* documents = new juce::DynamicObject();
     const juce::var holder(documents);
-    for (const auto& [key, text] : texts) documents->setProperty(keyName(key), text);
+    for (const auto& [key, text] : texts) documents->setProperty(model::keyName(key), text);
     auto* params = new juce::DynamicObject();
     const juce::var paramsHolder(params);
     params->setProperty("documents", holder);
@@ -390,7 +340,7 @@ juce::Result OutsideChanges::take() {
         }
         const auto file = change.kind == OutsideChange::Kind::Added ? change.file : folder_.fileFor(change.key);
         const auto text = file.loadFileAsString();
-        if (!readableAs(change.key.kind, text)) {
+        if (!model::readableAs(change.key.kind, text)) {
             leftOut(change, file);
             continue;
         }
@@ -449,7 +399,7 @@ juce::Result OutsideChanges::resolve(const model::ConflictCopy& conflict, bool k
     juce::String text;
     if (keepTheCopy) {
         text = conflict.copy.loadFileAsString();
-        if (!readableAs(key->kind, text)) return finish(juce::Result::fail(conflict.copy.getFullPathName() + " couldn't be read."));
+        if (!model::readableAs(key->kind, text)) return finish(juce::Result::fail(conflict.copy.getFullPathName() + " couldn't be read."));
         // A copy that is another document (another id): it comes in as that one, and only when it isn't here already.
         if (const auto id = idInside(text); key->kind != model::DocKind::Band && id.isNotEmpty() && id != key->id
                                             && documentLoaded(model_, {key->kind, id}))
