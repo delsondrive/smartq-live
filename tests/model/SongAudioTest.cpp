@@ -93,6 +93,39 @@ TEST_CASE("a note at bar 1 pushed early by its device's offset is sent at the so
     REQUIRE(e.popMidi(m));                                         // the note is played, at the song's first sample
     CHECK(m.data[0] == 0x90);  CHECK(m.data[1] == 36);  CHECK(m.streamTime == base);
 }
+TEST_CASE("a program change with a bank leaves the engine as CC 0, CC 32 and the program, at one time, in that order", "[songaudio]") {
+    BandDoc band; band.roles = defaultRoles();
+    band.midiDevices = {{"d0", "Guitar 1", {}, false, false, 0.0, {}}};
+    RigDoc rig; rig.midiChannels["d0"] = 3;
+    SongDoc song; song.id = "s";
+    song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, 0.0f, false, 1}};
+    MidiMessageDoc pc; pc.program = 12; pc.bankMsb = 1; pc.bankLsb = 2;
+    song.midiLanes["d0"] = {{"m1", 2, 1.0, "", {pc}}};                // bar 2: 96000 samples in at 120 BPM
+    auto prepared = buildPreparedSong(song, band, rig, {{"p1", sqlive::test::constantAudio(192000, 0.5f, NAN)}}, 48000.0);
+    engine::Engine e; e.prepare(48000.0, 512); e.setMix(sqlive::test::stereoMix());
+    e.cue(sqlive::test::share(std::move(prepared)));  e.start();
+    const auto base = e.status().streamTime;
+    std::vector<float> l(512), r(512); float* out[2] = {l.data(), r.data()};
+    for (int i = 0; i < 200; ++i) e.process(out, 2, 512);
+    std::vector<engine::OutMidi> sent;
+    for (engine::OutMidi m; e.popMidi(m);) sent.push_back(m);
+    REQUIRE(sent.size() == 3);
+    CHECK(sent[0].data[0] == 0xB2);  CHECK(sent[0].data[1] == 0);   CHECK(sent[0].data[2] == 1);
+    CHECK(sent[1].data[0] == 0xB2);  CHECK(sent[1].data[1] == 32);  CHECK(sent[1].data[2] == 2);
+    CHECK(sent[2].data[0] == 0xC2);  CHECK(sent[2].data[1] == 12);  CHECK(sent[2].size == 2);
+    for (const auto& m : sent) CHECK(m.streamTime == base + 96000);
+}
+TEST_CASE("a prepared song carries the band's MIDI devices: their ids, the clock and start-stop ones", "[songaudio]") {
+    BandDoc band; band.roles = defaultRoles();
+    band.midiDevices = {{"d0", "Lights", {}, false, true, 0.0, {}}, {"d1", "Delay", {}, true, false, 0.0, {}},
+                        {"d2", "Drum machine", {}, true, true, 0.0, {}}};
+    SongDoc song; song.id = "s";
+    song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, 0.0f, false, 1}};
+    auto prepared = buildPreparedSong(song, band, RigDoc{}, {{"p1", sqlive::test::constantAudio(96000, 0.5f, NAN)}}, 48000.0);
+    CHECK(prepared.midiDeviceIds == std::vector<std::string>{"d0", "d1", "d2"});
+    CHECK(prepared.clockDevices == std::vector<std::uint16_t>{1, 2});
+    CHECK(prepared.startStopDevices == std::vector<std::uint16_t>{0, 2});
+}
 TEST_CASE("a band with a clock device gets clock ticks in its prepared songs", "[songaudio]") {
     BandDoc band; band.roles = defaultRoles();
     band.midiDevices = {{"d0", "Delay", {}, true, false, 0.0, {}}};

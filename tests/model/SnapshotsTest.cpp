@@ -147,6 +147,20 @@ TEST_CASE("when the safety copy can't be written, going back is taken back and c
     CHECK(commands.undoName() == "band.rename");
     CHECK_FALSE(commands.canRedo());                                            // Ctrl+Y can't go back without the safety copy
 }
+TEST_CASE("going back to a snapshot never writes over a document a bandmate changed meanwhile: it is held back and offered", "[snapshots]") {
+    DemoSession d; auto& s = *d.session;
+    const auto opened = s.snapshots().list().front().id;
+    s.commands().run("band.rename", params({{"name", "Mine"}}));  s.flushNow();
+    const auto file = s.folder().root().getChildFile("band.json");
+    file.replaceWithText(file.loadFileAsString().replace("\"Mine\"", "\"Theirs\""));   // a bandmate's change, not looked at yet
+    file.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::seconds(5));
+    REQUIRE(s.snapshots().restore(opened, s.commands()).wasOk());
+    CHECK(s.model().band().name == "Demo band");
+    s.flushNow();
+    CHECK(file.loadFileAsString().contains("\"Theirs\""));        // theirs is still there
+    REQUIRE(s.outsideChanges().size() == 1);                        // and offered
+    CHECK(s.outsideChanges()[0].key.kind == DocKind::Band);
+}
 TEST_CASE("a song removed on another computer comes back from the trash with its audio", "[snapshots]") {
     DemoSession d; auto& s = *d.session; auto root = s.folder().root();
     const auto opened = s.snapshots().list().front().id;

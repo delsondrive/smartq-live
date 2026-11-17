@@ -32,6 +32,8 @@ TEST_CASE("importing a MIDI file sets the tempo, the sections and the lanes in o
     DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
     auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
     s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 2}, {"beat", 1}}));
+    auto g2 = s.commands().run("device.add", params({{"name", "Guitar 2"}})).value.toString();
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g2}, {"bar", 3}, {"beat", 1}}));
     MidiFileContent c; c.tempo = {{1, 1.0, 128.0, 4, 4}}; c.sections = {{"", "Intro", 1, 5}, {"", "Verse", 5, 9}}; c.bars = 8;
     MidiMessageDoc pc; pc.program = 12;
     c.tracks = {{"Gtr 1 FX", {1}, 1, 0, 0, {{"", 5, 1.0, "", {pc}}}}, {"Other", {2}, 1, 0, 0, {{"", 1, 1.0, "", {pc}}}}};
@@ -42,7 +44,9 @@ TEST_CASE("importing a MIDI file sets the tempo, the sections and the lanes in o
     REQUIRE(after.sections.size() == 2);  CHECK(after.sections[0].id.isNotEmpty());
     REQUIRE(after.midiLanes.at(g1).size() == 1);                   // the lane is replaced by the file's
     CHECK(after.midiLanes.at(g1)[0].bar == 5);
-    CHECK(after.midiLanes.size() == 1);                            // the other track was left out
+    CHECK(after.midiLanes.size() == 2);                            // the other track was left out
+    REQUIRE(after.midiLanes.count(g2) == 1);                       // and a device not chosen keeps its markers
+    REQUIRE(after.midiLanes.at(g2).size() == 1);  CHECK(after.midiLanes.at(g2)[0].bar == 3);
     s.commands().undo();
     CHECK(s.model().song(song)->tempo[0].bpm == 100.0);  CHECK(s.model().song(song)->midiLanes.at(g1)[0].bar == 2);
     choice.tempo = false; choice.sections = false;

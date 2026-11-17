@@ -3,6 +3,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "model/Defaults.h"
 #include "model/Documents.h"
 #include "model/DocumentsJson.h"
 
@@ -43,6 +44,22 @@ TEST_CASE("each MIDI part reads and writes on its own, with the same limits", "[
     CHECK(x.id.isNotEmpty());  CHECK(x.endBar == 10);
     ControlBinding b{'q', 0, 1, 10, 64};  ControlBinding b2; REQUIRE(fromVar(toVar(b), b2, notes));  CHECK(b2 == b);
     CHECK_FALSE(fromVar(juce::var(), b2, notes));
+}
+TEST_CASE("a band file from before MIDI reads with no notes and comes back the same", "[mididoc]") {
+    // What sameAsLoaded relies on: a stage 1 band.json reads cleanly, so it is taken as this app's own.
+    BandDoc band; band.id = "b"; band.name = "Band"; band.roles = defaultRoles();
+    auto old = toVar(band);
+    old.getDynamicObject()->removeProperty("midiDevices");
+    old.getDynamicObject()->removeProperty("controls");
+    const auto text = juce::JSON::toString(old);
+    REQUIRE_FALSE(text.contains("midiDevices"));  REQUIRE_FALSE(text.contains("controls"));
+    ParseNotes notes; BandDoc read;
+    REQUIRE(fromJson(text, read, notes));
+    CHECK(notes.notes.isEmpty());
+    CHECK(read == band);
+    ParseNotes again; BandDoc back;
+    REQUIRE(fromJson(toJson(read), back, again));
+    CHECK(again.notes.isEmpty());  CHECK(back == read);
 }
 TEST_CASE("MIDI values are kept in range", "[mididoc]") {
     SongDoc song; ParseNotes notes;

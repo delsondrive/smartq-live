@@ -241,6 +241,21 @@ TEST_CASE("learning takes the next press instead of acting on it", "[controls]")
     CHECK(learned->midiKind == 2);  CHECK(learned->midiChannel == 10);  CHECK(learned->midiNumber == 40);
     CHECK_FALSE(input.learning().has_value());  CHECK(actions == 0);
 }
+TEST_CASE("a bound pedal does nothing in Edit mode, except to be learned", "[controls]") {
+    DemoSession d; auto& s = *d.session;
+    REQUIRE(s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding(juce::KeyPress::spaceKey, 1, 10, 64)}})).ok);
+    REQUIRE(s.mode() == Mode::Edit);
+    app::ShowController show(s); int actions = 0; show.onAction = [&](Action) { ++actions; };
+    app::ControlInput input(s, show, [] { return juce::StringArray(); }, {});
+    input.handle(juce::MidiMessage::controllerEvent(10, 64, 127), 1.0);
+    input.handle(juce::MidiMessage::controllerEvent(10, 64, 0), 1.1);
+    CHECK(actions == 0);  CHECK_FALSE(s.now().playing);
+    std::optional<model::ControlBinding> learned;
+    input.learn(Action::NextSongLater, [&](model::ControlBinding b) { learned = b; });
+    input.handle(juce::MidiMessage::controllerEvent(10, 64, 127), 2.0);
+    REQUIRE(learned.has_value());                                   // learning takes it
+    CHECK(learned->midiNumber == 64);  CHECK(actions == 0);
+}
 TEST_CASE("learning never takes a pedal on the move, or a note pressed again while down", "[controls]") {
     Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
     p.cc(1, 11, 100, 1.0);                                                                // an expression pedal, already up
