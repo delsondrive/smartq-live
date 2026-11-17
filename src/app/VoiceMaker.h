@@ -28,6 +28,7 @@ class VoiceMaker {
 public:
     using Runner = std::function<bool(const VoiceCommand&)>;      // runs it and waits; true when it finished well
     explicit VoiceMaker(Runner = {});                             // the default runs it with juce::ChildProcess, waiting up to 20 s
+    static Runner systemRunner();                                 // that default, for a caller that wraps it
 
     // Says the text, kept to letters, digits, spaces and , . ' - and at most 80 characters, into wavTarget (its folder is
     // made). The voice is made in a temporary folder outside the band folder, deleted either way, and wavTarget is

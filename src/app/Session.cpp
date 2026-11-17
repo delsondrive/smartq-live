@@ -93,6 +93,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
 }
 
 Session::~Session() {
+    stopVoice(true);                                             // its onDone never reaches a session that has gone
     stopTimer();
     cache_.onChanged = nullptr;
     cues_.onChanged = nullptr;
@@ -375,6 +376,7 @@ void Session::enterShow() {
     if (mode_ == Mode::Show) return;
     // A song played on its own from an Edit page isn't part of the show: it stops before the show starts.
     if (playing_.active() && playing_.single) perform(Action::Stop);
+    stopVoice(false);                                            // Show mode never writes the band folder
     mode_ = Mode::Show;
     writeShowMemory();
     flushNow();                                                  // what is waiting is written now, not left for the show

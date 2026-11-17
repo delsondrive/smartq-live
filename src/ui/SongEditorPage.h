@@ -38,7 +38,8 @@ struct SongEditorState {
     bool anyPlaying = false;                                      // a song plays (this one or another): Play would stop it
     double barOneSeconds = 0.0;                                   // "Bar 1 starts at": where bar 1 falls in the audio
     bool clickOn = true, accentFirstBeat = true;                  // the CLICK panel
-    int clickSound = 0, subdivision = 0;                          // 0..2 Wood block, Beep, Rim; 0..3 None, 8ths, Triplets, 16ths
+    juce::String clickSound = "wood";                             // as song.setClick takes it: "wood", "beep", "rim", "clicks/<name>.wav"
+    int subdivision = 0;                                          // 0..3 None, 8ths, Triplets, 16ths
     juce::String saved;  bool saveFailed = false;                 // "Saved ✓", "Saving…", or Session::saveError() (in danger)
     bool operator==(const SongEditorState&) const = default;
 };
@@ -89,7 +90,7 @@ public:
     void tap(double nowSeconds);                                  // "Tap": sets the BPM, to the nearest whole one, from the third tap on
     void setBarOneSeconds(double);
     void setBarOneAtCursor();                                     // the audio under the cursor becomes bar 1, and the cursor goes there
-    void setClick(bool on, int sound, int subdivision, bool accentFirstBeat);
+    void setClick(bool on, const juce::String& sound, int subdivision, bool accentFirstBeat);
     void togglePlay();                                            // plays this song from the cursor, or stops
     void playAsArranged();                                        // from the start, as the arrangement row shows it
 

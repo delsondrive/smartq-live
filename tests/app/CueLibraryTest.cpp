@@ -158,3 +158,43 @@ TEST_CASE("the built-in cues are made for each section type and the extra phrase
     CHECK(root.getChildFile("cues/built-in/Verse.wav").loadFileAsString() == "made");       // made again when asked to
     CHECK(said.size() == 8 + 4);
 }
+TEST_CASE("a cue clip a bandmate rewrote on disk is read again, at most once a second", "[cuelib]") {
+    DemoSession d; auto root = d.session->folder().root();
+    const auto file = root.getChildFile("cues/Watch me.wav");
+    writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);
+    app::CueLibrary lib(d.session->folder(), 48000.0);
+    int changes = 0;  lib.onChanged = [&] { ++changes; };
+    lib.clip("cues/Watch me.wav");
+    REQUIRE(lib.waitUntilIdle(5000));
+    const auto first = lib.clip("cues/Watch me.wav");
+    REQUIRE(first != nullptr);
+    CHECK(first->left.size() == 24000);
+    writeSine(file, 48000.0, 1, 0.25, 440.0, 0.5f);               // rewritten: another size
+    CHECK(lib.clip("cues/Watch me.wav") == first);                 // looked at again only after a second
+    REQUIRE(lib.waitUntilIdle(5000));
+    CHECK(lib.clip("cues/Watch me.wav") == first);
+    juce::Thread::sleep(1100);
+    const auto revision = lib.revision();
+    CHECK(lib.clip("cues/Watch me.wav") == first);                 // the change is seen; the clip read before is given meanwhile
+    REQUIRE(lib.waitUntilIdle(5000));
+    const auto second = lib.clip("cues/Watch me.wav");
+    REQUIRE(second != nullptr);
+    CHECK(second->left.size() == 12000);
+    CHECK(lib.revision() > revision);  CHECK(changes == 2);
+    juce::Thread::sleep(1100);
+    CHECK(lib.clip("cues/Watch me.wav") == second);                // unchanged: still the same clip
+    REQUIRE(lib.waitUntilIdle(5000));
+    CHECK(lib.clip("cues/Watch me.wav") == second);  CHECK(changes == 2);
+    file.deleteFile();                                             // a bandmate took it away
+    juce::Thread::sleep(1100);
+    lib.clip("cues/Watch me.wav");
+    REQUIRE(lib.waitUntilIdle(5000));
+    CHECK(lib.clip("cues/Watch me.wav") == nullptr);  CHECK(changes == 3);
+    writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);                 // and put it back
+    juce::Thread::sleep(1100);
+    lib.clip("cues/Watch me.wav");
+    REQUIRE(lib.waitUntilIdle(5000));
+    REQUIRE(lib.clip("cues/Watch me.wav") != nullptr);
+    CHECK(lib.clip("cues/Watch me.wav")->left.size() == 24000);
+    CHECK(lib.clickSoundsInFolder().isEmpty());
+}

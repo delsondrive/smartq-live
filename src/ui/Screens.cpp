@@ -1,10 +1,13 @@
 #include "ui/Screens.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <memory>
 #include <utility>
+
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include "app/AudioHost.h"
 #include "app/ControlInput.h"
@@ -37,6 +40,25 @@ constexpr int kRate = 48000;
 
 // Runs the message thread's pending work: change messages, async updates and timers the views wait on.
 void pump() { juce::MessageManager::getInstance()->runDispatchLoopUntil(30); }
+
+// A short tone as a 16-bit mono WAV: what the pictures' voice and the band's own recording say.
+bool writeTone(const juce::File& file, double seconds, double hz) {
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+    if (stream == nullptr) return false;
+    juce::WavAudioFormat wav;
+    auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}
+                                                  .withSampleRate(kRate)
+                                                  .withNumChannels(1)
+                                                  .withBitsPerSample(16));
+    if (writer == nullptr) return false;
+    juce::AudioBuffer<float> tone(1, static_cast<int>(seconds * kRate));
+    for (int i = 0; i < tone.getNumSamples(); ++i)
+        tone.setSample(0, i, 0.3f * static_cast<float>(std::sin(juce::MathConstants<double>::twoPi * hz * i / kRate)));
+    const bool written = writer->writeFromAudioSampleBuffer(tone, 0, tone.getNumSamples());
+    writer.reset();                                               // writes the header and closes the file
+    return written;
+}
 
 // The pedalboards' ports in the pictures: two outputs that are always there and send nowhere.
 class SilentOutput : public app::MidiPorts::Output {
@@ -378,6 +400,17 @@ juce::Image render(const juce::String& name, int width, int height) {
         }
     } else if (name == "routing") {
         scene.page<juce::Component>(Page::Setup);
+    } else if (name == "cue-voice") {
+        // As the mockup's screen 13 has it: the voice made, Solo announced by the band's own recording, Breakdown by none.
+        session.setVoiceRunner([](const app::VoiceCommand& command) { return writeTone(command.wavFile, 0.6, 330.0); });
+        const auto done = std::make_shared<bool>(false);
+        if (session.makeVoice(false, {}, [done](juce::Result) { *done = true; }).wasOk())
+            for (int i = 0; i < 300 && !*done; ++i) pump();
+        if (const auto recording = scene.folder().getChildFile("Solo, Jeff.wav"); writeTone(recording, 0.8, 440.0))
+            if (const auto path = session.importCueClip(recording); path.isNotEmpty())
+                session.commands().run("sectionType.set", model::jsonObject({{"typeId", "solo"}, {"cueClip", path}}));
+        session.commands().run("sectionType.set", model::jsonObject({{"typeId", "breakdown"}, {"cueClip", ""}}));
+        if (auto* setup = scene.page<SetupPage>(Page::Setup)) setup->showSubTab(SetupPage::SubTab::CueVoice);
     } else {
         return {};
     }
@@ -390,7 +423,7 @@ juce::Image render(const juce::String& name, int width, int height) {
 juce::StringArray screenNames() {
     return {"main-view", "stage-playing", "stage-looping", "stage-between", "stage-loading", "preshow-check", "interrupted",
             "welcome", "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing",
-            "midi-setup", "snapshots"};
+            "midi-setup", "cue-voice", "snapshots"};
 }
 
 juce::Image renderScreen(const juce::String& name, int width, int height) {

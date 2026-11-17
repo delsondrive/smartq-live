@@ -116,10 +116,12 @@ RoutingState makeRoutingState(const app::Session& session, const app::AudioHost*
         state.columns.push_back({out.id, out.name, formatChannels(out.firstChannel, out.stereo), outputLabelName(out.label), out.label,
                                  out.label == model::OutputLabel::Unused ? juce::String() : formatLevelDb(out.trimDb)});
 
-    // The click first, then the parts, each in the band's order.
+    // The click, then the cues, then the parts, each in the band's order.
     std::vector<const model::Role*> roles;
     for (const auto& role : model.band().roles)
         if (role.kind == model::RoleKind::Click) roles.push_back(&role);
+    for (const auto& role : model.band().roles)
+        if (role.kind == model::RoleKind::Cues) roles.push_back(&role);
     for (const auto& role : model.band().roles)
         if (role.kind == model::RoleKind::Part) roles.push_back(&role);
     for (const auto* role : roles) {

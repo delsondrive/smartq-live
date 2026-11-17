@@ -58,6 +58,30 @@ void addMidi(std::vector<CheckItem>& items, const Session& session) {
                              "No pedalboard has a MIDI port on this laptop. Choose them in Setup, or go on without them."));
 }
 
+// A warning when a song in the setlist has more than one section and one of them is of a type whose cue clip isn't in the
+// band folder: its sections wouldn't be announced. Nothing when every cue the setlist needs is there.
+void addCues(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
+    if (setlist == nullptr) return;
+    const auto& model = session.model();
+    const auto& root = session.folder().root();
+    const auto clipMissing = [&](const juce::String& typeId) {
+        for (const auto& type : model.band().sectionTypes)
+            if (type.id == typeId)
+                return type.cueClip.isNotEmpty() && !root.getChildFile(type.cueClip).existsAsFile();
+        return false;
+    };
+    for (const auto& entry : setlist->entries) {
+        const auto* song = model.song(entry.songId);
+        if (song == nullptr || song->sections.size() < 2) continue;
+        for (const auto& section : song->sections)
+            if (section.typeId.isNotEmpty() && clipMissing(section.typeId)) {
+                items.push_back(item(Level::Warning, "cues", "The cue voice hasn't been made",
+                                     "Sections won't be announced. Make it in Setup, under Cue voice."));
+                return;
+            }
+    }
+}
+
 void addFiles(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
     std::vector<PartFileProblem> missing;
     juce::StringArray cloudSongs;                                // "<song>: <part names>" per song, at most three parts in all
@@ -100,6 +124,7 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
     addRouting(items, session, in);
     addMidi(items, session);
     const auto* setlist = session.model().setlist(session.setlistId());
+    addCues(items, session, setlist);
     addFiles(items, session, setlist);
     if (setlist == nullptr || setlist->entries.empty())
         items.push_back(item(Level::Blocker, "setlist", "This setlist is empty", "Add songs to it first."));

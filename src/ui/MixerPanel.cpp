@@ -131,6 +131,17 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
             if (!show) click.footer = soundName(heard.click.sound);
             state.strips.push_back(click);
 
+            Strip cues;                                           // the band's cue level: every song's, in either mode
+            cues.target = {LevelTarget::Kind::BandCues, {}, {}, {}, {}};
+            cues.name = "Cues";
+            const auto cuesRole = std::find_if(model.band().roles.begin(), model.band().roles.end(),
+                                           [](const model::Role& r) { return r.kind == model::RoleKind::Cues; });
+            cues.colour = cuesRole != model.band().roles.end() ? cuesRole->colour : theme::mid;
+            cues.db = session.level(cues.target);
+            cues.inEarsOnly = true;
+            cues.group = 0;
+            state.strips.push_back(cues);
+
             for (const auto& part : heard.parts) {
                 Strip strip;
                 strip.target = {LevelTarget::Kind::Part, songId, part.id, {}, {}};
@@ -158,7 +169,7 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
         // Click and cues first, then the parts, then the pad, each in the band's order.
         std::vector<const model::Role*> roles;
         for (const auto& role : model.band().roles)
-            if (role.kind != model::RoleKind::Cues && role.kind != model::RoleKind::Pad && model::mayRoute(role.kind, output->label))
+            if (role.kind != model::RoleKind::Pad && model::mayRoute(role.kind, output->label))
                 roles.push_back(&role);
         std::stable_sort(roles.begin(), roles.end(),
                          [](const model::Role* a, const model::Role* b) { return groupOf(a->kind) < groupOf(b->kind); });

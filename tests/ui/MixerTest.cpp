@@ -54,21 +54,23 @@ TEST_CASE("the mixer shows the song's levels, or one output's mix", "[mixer]") {
     auto here = makeMixerState(s, song.id, {});
     REQUIRE(here.options.size() == 2);
     CHECK(here.options[0].name == "This song");  CHECK(here.options[1].name == "Headphones");
-    REQUIRE(here.strips.size() == 4);
+    REQUIRE(here.strips.size() == 5);
     CHECK(here.strips[0].name == "Click");  CHECK(here.strips[0].group == 0);  CHECK(here.strips[0].inEarsOnly);  CHECK_FALSE(here.strips[0].canMute);
     CHECK(here.strips[0].target.kind == LevelTarget::Kind::SongClick);
     CHECK(here.strips[0].value == "0.0");  CHECK(here.strips[0].footer == "Wood block");
-    CHECK(here.strips[1].name == "Keys");  CHECK(here.strips[1].canMute);  CHECK(here.strips[1].value == formatStripDb(song.parts[0].gainDb));
+    CHECK(here.strips[1].name == "Cues");  CHECK(here.strips[1].target.kind == LevelTarget::Kind::BandCues);
+    CHECK(here.strips[1].value == "-9.0");
+    CHECK(here.strips[2].name == "Keys");  CHECK(here.strips[2].canMute);  CHECK(here.strips[2].value == formatStripDb(song.parts[0].gainDb));
     CHECK(here.panelTitle == "THIS SONG");
     auto output = makeMixerState(s, song.id, rig.outputs[0].id);
     CHECK(output.chosen == 1);
-    CHECK(output.strips.size() == 10);                            // every role but Cues and Pad
+    CHECK(output.strips.size() == 11);                            // every role but Pad
     CHECK(output.strips[0].target.kind == LevelTarget::Kind::Mix);
     CHECK(output.panelTitle == "HEADPHONES");  CHECK(output.panelLabel == "In-ears");  CHECK(output.panelChannels == "OUT 1/2");
     CHECK(output.panelText == "This mix is the same in every song.");   // every role at 0 dB: nothing to point out
     s.commands().run("mix.setLevel", params({{"rigId", rig.id}, {"outputId", rig.outputs[0].id}, {"roleId", s.model().band().roles[3].id}, {"db", juce::var()}}));
     auto off = makeMixerState(s, song.id, rig.outputs[0].id);
-    CHECK(off.strips[1].value == "off");
+    CHECK(off.strips[2].value == "off");
     CHECK(off.panelText == "What the headphones hears: no keys. This mix is the same in every song.");
     s.commands().run("output.add", params({{"rigId", rig.id}, {"name", "PA"}, {"firstChannel", 3}, {"stereo", true}, {"label", "foh"}}));
     auto pa = makeMixerState(s, song.id, s.model().rig(rig.id)->outputs[1].id);
@@ -96,7 +98,7 @@ TEST_CASE("a mixer with thirty strips still lays out", "[mixer]") {
     auto& rig = *s.model().rig(s.rigId());
     for (auto& role : s.model().band().roles) if (role.kind == model::RoleKind::Part)
         s.commands().run("mix.setLevel", params({{"rigId", rig.id}, {"outputId", rig.outputs[0].id}, {"roleId", role.id}, {"db", 0}}));
-    REQUIRE(makeMixerState(s, d.setlist().entries[0].songId, rig.outputs[0].id).strips.size() == 34);   // Click and 33 part roles
+    REQUIRE(makeMixerState(s, d.setlist().entries[0].songId, rig.outputs[0].id).strips.size() == 35);   // Click, Cues and 33 part roles
     sqlive::test::ScopedLook look;
     ui::MixerPage page(s);  page.openSong(d.setlist().entries[0].songId);  page.chooseOutput(rig.outputs[0].id);
     snapshot(page, 1100, 618);
@@ -124,7 +126,7 @@ TEST_CASE("a mixer for sixteen outputs and thirty parts lays out at every window
     const auto& rig = *s.model().rig(rigId);
     REQUIRE(rig.outputs.size() == 16);
     CHECK(makeMixerState(s, song.id, {}).options.size() == 17);
-    CHECK(makeMixerState(s, song.id, {}).strips.size() == 31);    // Click and thirty parts
+    CHECK(makeMixerState(s, song.id, {}).strips.size() == 32);    // Click, Cues and thirty parts
 
     sqlive::test::ScopedLook look;
     ui::MixerPage page(s);  page.openSong(song.id);
@@ -141,7 +143,7 @@ TEST_CASE("a mixer for sixteen outputs and thirty parts lays out at every window
             // The strips sit side by side, each at least 56 px wide, none overlapping the next.
             std::vector<juce::Rectangle<int>> strips;
             for (auto* child : body->getChildren()) strips.push_back(child->getBounds());
-            CHECK(strips.size() == 31);
+            CHECK(strips.size() == 32);
             for (size_t i = 0; i < strips.size(); ++i) {
                 CHECK(strips[i].getWidth() >= 56);
                 if (i > 0) CHECK(strips[i].getX() >= strips[i - 1].getRight());
@@ -166,8 +168,8 @@ TEST_CASE("a click on a fader that isn't sent sends nothing; a drag is one undo 
     ui::MixerPanel panel(s);  panel.show(d.setlist().entries[0].songId, rig.outputs[0].id);
     snapshot(panel, 900, 400);
     auto faders = fadersIn(panel);
-    REQUIRE(faders.size() == 10);
-    auto& fader = *faders[1];                                     // Keys
+    REQUIRE(faders.size() == 11);
+    auto& fader = *faders[2];                                     // Keys
     REQUIRE(fader.onDrag != nullptr);
     fader.onDrag(LevelFader::kMinDb, true, false);                // pressed and released where it is: -60 is "off", not a level
     fader.onDrag(LevelFader::kMinDb, false, true);
@@ -225,17 +227,17 @@ TEST_CASE("the mixer's M stops sending a role, or mutes a part in this song", "[
     ui::MixerPanel panel(s);
     panel.show(songId, rig.outputs[0].id);
     snapshot(panel, 900, 400);
-    REQUIRE(panel.state().strips.size() == 10);
-    panel.toggleMute(1);                                          // Keys: no longer sent to the headphones
-    CHECK_FALSE(s.level(panel.state().strips[1].target).has_value());
+    REQUIRE(panel.state().strips.size() == 11);
+    panel.toggleMute(2);                                          // Keys: no longer sent to the headphones
+    CHECK_FALSE(s.level(panel.state().strips[2].target).has_value());
     panel.show(songId, rig.outputs[0].id);
-    CHECK(panel.state().strips[1].muted);  CHECK(panel.state().strips[1].value == "off");
-    panel.toggleMute(1);                                          // and sent again, at 0 dB
-    CHECK(s.level(panel.state().strips[1].target) == std::optional<float>(0.0f));
+    CHECK(panel.state().strips[2].muted);  CHECK(panel.state().strips[2].value == "off");
+    panel.toggleMute(2);                                          // and sent again, at 0 dB
+    CHECK(s.level(panel.state().strips[2].target) == std::optional<float>(0.0f));
 
     panel.show(songId, {});
-    const auto part = panel.state().strips[1];
-    panel.toggleMute(1);
+    const auto part = panel.state().strips[2];
+    panel.toggleMute(2);
     CHECK(s.muted(songId, part.target.partId));
     panel.toggleMute(0);                                          // the click has no M: nothing happens
     CHECK(makeMixerState(s, songId, {}).strips[0].value == "0.0");
@@ -267,7 +269,7 @@ TEST_CASE("the mixer page is the Mixer tab and follows the song opened in the ed
     auto* mixer = dynamic_cast<ui::MixerPage*>(shell.currentContent());
     REQUIRE(mixer != nullptr);
     CHECK(mixer->songId().isNotEmpty());                          // some song is shown rather than nothing
-    CHECK(mixer->panel().state().strips.size() == 4);
+    CHECK(mixer->panel().state().strips.size() == 5);
     CHECK(childrenInside(*mixer));
 }
 

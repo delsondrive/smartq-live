@@ -47,8 +47,8 @@ struct RoutingState {
     bool operator==(const RoutingState&) const = default;
 };
 
-// The session's rig as the band folder has it. Rows: the click, then the band's part roles in order (cues and pad come in
-// a later stage). A cell model::mayRoute forbids is not allowed, and never shows as sent. With no host (tests, screenshots)
+// The session's rig as the band folder has it. Rows: the click, the cues, then the band's part roles in order (the pad comes
+// in a later stage). A cell model::mayRoute forbids is not allowed, and never shows as sent. With no host (tests, screenshots)
 // the interface is "Not connected" and its channel count unknown.
 RoutingState makeRoutingState(const app::Session&, const app::AudioHost*);
 

@@ -42,7 +42,7 @@ const model::ComputerBinding* bindingOf(const app::Session& session) {
 
 SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlInput* input)
     : session_(session), host_(host), duplicate_("Duplicate rig"), more_(juce::String::fromUTF8("\xe2\x8b\xaf")), tone_("Test tone"),
-      grid_(session), midi_(session, input) {
+      grid_(session), midi_(session, input), cue_voice_(session) {
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
                                                                &more_, &tone_, &grid_})
         addAndMakeVisible(*child);
@@ -78,6 +78,7 @@ SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlIn
     grid_.onOutputPressed = [this](const juce::String& outputId) { return playTone(outputId); };
 
     addChildComponent(midi_);                                     // shown with its sub-tab
+    addChildComponent(cue_voice_);
     keepOffKeyboard(*this);
     session_.changes().addChangeListener(this);
     refresh(true);
@@ -102,18 +103,20 @@ void SetupPage::visibilityChanged() {
     refresh(true);
     grid_.refreshNow();                                           // it isn't told when the page is shown
     if (midi_.isVisible()) midi_.refreshNow();
+    if (cue_voice_.isVisible()) cue_voice_.refreshNow();
 }
 
 void SetupPage::showSubTab(SubTab tab) {
     if (tab == sub_tab_choice_) return;
     sub_tab_choice_ = tab;
-    const bool midi = tab == SubTab::Midi;
-    if (midi) setTestTone(false);
+    const bool audio = tab == SubTab::Audio, midi = tab == SubTab::Midi;
+    if (!audio) setTestTone(false);
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
                                                                &more_, &tone_, &grid_})
-        child->setVisible(!midi);
+        child->setVisible(audio);
     midi_.setVisible(midi);                                       // shown, it reads the band again; hidden, it stops waiting
-    if (!midi) {
+    cue_voice_.setVisible(tab == SubTab::CueVoice);
+    if (audio) {
         interfaces_for_.clear();
         refresh(true);
         grid_.refreshNow();
@@ -126,6 +129,11 @@ void SetupPage::mouseDown(const juce::MouseEvent& e) {
     if (e.mods.isPopupMenu()) return;
     if (sub_tab_.contains(e.getPosition())) showSubTab(SubTab::Audio);
     else if (midi_tab_.contains(e.getPosition())) showSubTab(SubTab::Midi);
+    else if (cue_tab_.contains(e.getPosition())) showSubTab(SubTab::CueVoice);
+}
+
+juce::Rectangle<int> SetupPage::subTabBounds(SubTab tab) const {
+    return tab == SubTab::Audio ? sub_tab_ : tab == SubTab::Midi ? midi_tab_ : cue_tab_;
 }
 
 void SetupPage::refresh(bool force) {
@@ -332,7 +340,9 @@ void SetupPage::resized() {
     sub_tabs_ = area.removeFromLeft(std::min(kSubTabsWidth, area.getWidth()));
     sub_tab_ = sub_tabs_.withHeight(kSubTabHeight);
     midi_tab_ = sub_tab_.translated(0, kSubTabHeight + kSubTabGap);
+    cue_tab_ = midi_tab_.translated(0, kSubTabHeight + kSubTabGap);
     midi_.setBounds(area.withTrimmedLeft(std::min(kGap, area.getWidth())));
+    cue_voice_.setBounds(midi_.getBounds());
     area.removeFromLeft(kGap);
 
     // The panel's groups side by side; the pill and the buttons at its right, or on a row of their own when they don't fit.
@@ -428,7 +438,8 @@ void SetupPage::paint(juce::Graphics& g) {
     };
     drawSubTab(sub_tab_, "Audio & routing", "Rig, outputs, roles", sub_tab_choice_ == SubTab::Audio);
     drawSubTab(midi_tab_, "MIDI & controls", "Pedalboards, keys, pedals", sub_tab_choice_ == SubTab::Midi);
-    if (sub_tab_choice_ != SubTab::Audio) return;                 // the MIDI page draws itself
+    drawSubTab(cue_tab_, "Cue voice", "Section types, sounds", sub_tab_choice_ == SubTab::CueVoice);
+    if (sub_tab_choice_ != SubTab::Audio) return;                 // the MIDI and cue voice pages draw themselves
 
     theme::paintPanel(g, top_.toFloat());
     g.setColour(theme::dim);

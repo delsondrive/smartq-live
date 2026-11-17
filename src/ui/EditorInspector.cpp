@@ -4,6 +4,7 @@
 #include <initializer_list>
 #include <utility>
 
+#include "model/FileNames.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/MidiLane.h"
@@ -17,11 +18,37 @@ namespace {
 constexpr int kPad = 12, kCardGap = 10, kCardPadX = 12, kCardPadY = 10, kCapsHeight = 14, kCapsGap = 6, kCardRow = 30;
 constexpr int kValueWidth = 96, kFieldHeight = 24, kChoiceWidth = 130, kLabelGap = 10;
 
-const juce::StringArray kSoundWords{"Wood block", "Beep", "Rim"}, kSubdivisionWords{"None", "8ths", "Triplets", "16ths"};
+const juce::StringArray kSoundWords{"Wood block", "Beep", "Rim"}, kSoundNames{"wood", "beep", "rim"};
+const juce::StringArray kSubdivisionWords{"None", "8ths", "Triplets", "16ths"};
 
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 
+// A sound of the band's own that song.setClick takes: clicks/<name>.wav, inside the band folder.
+bool isOwnSound(const juce::String& sound) {
+    return sound.startsWith("clicks/") && sound.endsWithIgnoreCase(".wav") && model::isPathInsideFolder(sound)
+           && sound.length() > 11;
+}
+
 }  // namespace
+
+ClickSoundChoice makeClickSoundChoice(const juce::String& sound, const juce::StringArray& bandSounds) {
+    ClickSoundChoice choice;
+    choice.items = kSoundWords;
+    choice.sounds = kSoundNames;
+    juce::StringArray own;
+    for (const auto& path : bandSounds)
+        if (isOwnSound(path)) own.addIfNotAlreadyThere(path);
+    if (isOwnSound(sound)) own.addIfNotAlreadyThere(sound);       // the song's, even before the folder has it
+    own.sort(true);
+    for (const auto& path : own) {
+        choice.items.add(path.fromFirstOccurrenceOf("clicks/", false, false).dropLastCharacters(4));
+        choice.sounds.add(path);
+    }
+    choice.items.add("Import a sound" + kEllipsis);
+    choice.sounds.add({});
+    choice.selected = std::max(0, choice.sounds.indexOf(sound));
+    return choice;
+}
 
 EditorInspector::EditorInspector(app::Session& session)
     : session_(session), markerInspector_(session), sectionCard_(session), cueCard_(session), quickActions_(session), jumpCard_(session) {
@@ -55,11 +82,23 @@ EditorInspector::EditorInspector(app::Session& session)
     setToCursor_.onClick = [this] {
         if (onBarOneAtCursor) onBarOneAtCursor();
     };
-    clickSound_.setItems(kSoundWords, 0);
+    refreshClickSounds(false);
     subdivision_.setItems(kSubdivisionWords, 0);
     clickOn_.onChange = [this](bool) { sendClick(); };
     accent_.onChange = [this](bool) { sendClick(); };
-    clickSound_.onChange = [this](int) { sendClick(); };
+    clickSound_.onChange = [this](int index) {
+        const auto sound = soundChoice_.sounds[index];
+        if (sound.isNotEmpty()) {
+            sendClick(sound);
+            return;
+        }
+        clickSound_.setSelected(soundChoice_.selected);           // "Import a sound…": the song's sound until one is brought in
+        chooser_ = std::make_unique<juce::FileChooser>("Import a click sound", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [safe = juce::Component::SafePointer<EditorInspector>(this)](const juce::FileChooser& chooser) {
+                                  if (safe != nullptr && chooser.getResult() != juce::File()) safe->importClickSound(chooser.getResult());
+                              });
+    };
     subdivision_.onChange = [this](int) { sendClick(); };
     for (juce::Component* child : std::initializer_list<juce::Component*>{&songLabel_, &clickLabel_, &barOneEditor_, &setToCursor_,
                                                                           &clickOn_, &accent_, &clickSound_, &subdivision_})
@@ -95,6 +134,7 @@ bool EditorInspector::show(const juce::String& songId, const EditorSelection& pi
     jumpCard_.setVisible(true);
     markerInspector_.show(songId, change ? picked : EditorSelection{});
     markerView_.setVisible(change);
+    refreshClickSounds(true);                                     // a sound a bandmate put in clicks/ shows from here on
     // The song panels give the column to the change inspector.
     for (juce::Component* c : std::initializer_list<juce::Component*>{&songLabel_, &clickLabel_, &barOneEditor_, &setToCursor_, &clickOn_,
                                                                       &accent_, &clickSound_, &subdivision_})
@@ -115,7 +155,7 @@ void EditorInspector::setSongValues(const SongCardValues& values, bool editable)
     setToCursor_.setEnabled(editable);
     clickOn_.setOn(values.clickOn);
     accent_.setOn(values.accentFirstBeat);
-    clickSound_.setSelected(values.clickSound);
+    refreshClickSounds(false);
     subdivision_.setSelected(values.subdivision);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&clickOn_, &accent_, &clickSound_, &subdivision_})
         c->setEnabled(editable);
@@ -130,9 +170,6 @@ void EditorInspector::finishBarOne(bool keep) {
         getParentComponent()->grabKeyboardFocus();
 }
 
-void EditorInspector::sendClick() {
-    if (onClick) onClick(clickOn_.isOn(), clickSound_.selected(), subdivision_.selected(), accent_.isOn());
-}
 
 void EditorInspector::resized() {
     rowLabels_.clear();
@@ -203,6 +240,35 @@ void EditorInspector::paint(juce::Graphics& g) {
     g.setFont(bodyFont());
     for (const auto& [area, label] : rowLabels_)
         g.drawText(shorten(label, bodyFont(), static_cast<float>(area.getWidth())), area, juce::Justification::centredLeft, false);
+}
+
+// ---- The click's sound -------------------------------------------------------------------------------------------------
+
+void EditorInspector::refreshClickSounds(bool lookAtFolder) {
+    if (lookAtFolder) bandSounds_ = session_.cues().clickSoundsInFolder();
+    auto next = makeClickSoundChoice(values_.clickSound, bandSounds_);
+    if (next == soundChoice_ && clickSound_.items() == next.items) return;
+    soundChoice_ = std::move(next);
+    clickSound_.setItems(soundChoice_.items, soundChoice_.selected);
+}
+
+void EditorInspector::sendClick() { sendClick(values_.clickSound); }
+
+void EditorInspector::sendClick(const juce::String& sound) {
+    if (onClick) onClick(clickOn_.isOn(), sound, subdivision_.selected(), accent_.isOn());
+}
+
+void EditorInspector::importClickSound(const juce::File& file) {
+    const auto path = session_.importClickSound(file);
+    if (path.isEmpty()) {
+        tellUser(message_, *this,
+                 session_.mode() == app::Mode::Show ? "Show mode never changes the band folder. Import the sound after the show."
+                                                    : file.getFileName() + " couldn't be brought in as a click sound: it couldn't be "
+                                                                           "read as audio, or the band folder couldn't be written.");
+        return;
+    }
+    refreshClickSounds(true);
+    sendClick(path);
 }
 
 }  // namespace sqlive::ui

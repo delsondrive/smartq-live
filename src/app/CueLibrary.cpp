@@ -1,5 +1,6 @@
 #include "app/CueLibrary.h"
 
+#include <optional>
 #include <utility>
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -8,6 +9,10 @@
 #include "model/SongAudio.h"
 
 namespace sqlive::app {
+
+namespace {
+constexpr double kCheckEveryMs = 1000.0;                         // how often clip() looks at a file again, at most
+}  // namespace
 
 CueLibrary::CueLibrary(const model::BandFolder& folder, double sampleRate)
     : juce::Thread("Smart Q Live cues"), root_(folder.root()), sampleRate_(sampleRate) {
@@ -28,27 +33,66 @@ void CueLibrary::setSampleRate(double rate) {
         sampleRate_ = rate;
         ++generation_;                                             // a load at the old rate stops, and is queued again
         for (auto it = entries_.begin(); it != entries_.end();) {
-            if (it->second.state == State::Queued || it->second.state == State::Loading) ++it;
-            else it = entries_.erase(it);
+            if (it->second.state == State::Queued || it->second.state == State::Loading) {
+                it->second.clip = nullptr;                         // one being read again: the clip it had is at the old rate
+                ++it;
+            } else {
+                it = entries_.erase(it);
+            }
         }
     }
     ++revision_;
     notify();
 }
 
+CueLibrary::Stamp CueLibrary::stampOf(const juce::File& file) {
+    if (!file.existsAsFile()) return {};
+    return {file.getLastModificationTime(), file.getSize()};
+}
+
 std::shared_ptr<const engine::PartAudio> CueLibrary::clip(const juce::String& pathInBandFolder) {
     const auto file = fileFor(pathInBandFolder);
     if (file == juce::File()) return nullptr;
     const auto key = file.getFullPathName();
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    std::optional<Stamp> seen;                                   // the stamp the entry had, when it is time to look again
     {
         const juce::ScopedLock sl(lock_);
-        if (const auto found = entries_.find(key); found != entries_.end())
-            return found->second.state == State::Loaded ? found->second.clip : nullptr;
-        entries_.emplace(key, Entry{});
-        queue_.push_back(key);
+        if (const auto found = entries_.find(key); found != entries_.end()) {
+            auto& entry = found->second;
+            const bool settled = entry.state == State::Loaded || entry.state == State::Failed;
+            if (!settled || now - entry.checkedMs < kCheckEveryMs) return entry.clip;
+            entry.checkedMs = now;
+            seen = entry.stamp;
+        } else {
+            entries_.emplace(key, Entry{});
+            queue_.push_back(key);
+        }
     }
-    notify();
-    return nullptr;
+    if (!seen) {
+        notify();
+        return nullptr;
+    }
+
+    // The file's date and size, read without the lock: the loader never waits on a look at the disk.
+    const auto stamp = stampOf(file);
+    std::shared_ptr<const engine::PartAudio> clip;
+    bool queued = false;
+    {
+        const juce::ScopedLock sl(lock_);
+        const auto found = entries_.find(key);
+        if (found == entries_.end()) return nullptr;               // forgotten meanwhile
+        auto& entry = found->second;
+        const bool settled = entry.state == State::Loaded || entry.state == State::Failed;
+        if (settled && entry.stamp == *seen && !(stamp == *seen)) {
+            entry.state = State::Queued;                           // read again; the clip read before is given until then
+            queue_.push_back(key);
+            queued = true;
+        }
+        clip = entry.clip;
+    }
+    if (queued) notify();
+    return clip;
 }
 
 void CueLibrary::forget(const juce::String& pathInBandFolder) {
@@ -61,17 +105,20 @@ void CueLibrary::forget(const juce::String& pathInBandFolder) {
     ++revision_;
 }
 
-juce::StringArray CueLibrary::clipsInFolder() const {
+juce::StringArray CueLibrary::audioFilesUnder(const juce::String& folderName) const {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     juce::StringArray paths;
-    const auto cues = root_.getChildFile("cues");
-    for (const auto& file : cues.findChildFiles(juce::File::findFiles | juce::File::ignoreHiddenFiles, true,
-                                                formats.getWildcardForAllFormats()))
+    const auto folder = root_.getChildFile(folderName);
+    for (const auto& file : folder.findChildFiles(juce::File::findFiles | juce::File::ignoreHiddenFiles, true,
+                                                  formats.getWildcardForAllFormats()))
         paths.add(file.getRelativePathFrom(root_).replaceCharacter('\\', '/'));
     paths.sort(true);
     return paths;
 }
+
+juce::StringArray CueLibrary::clipsInFolder() const { return audioFilesUnder("cues"); }
+juce::StringArray CueLibrary::clickSoundsInFolder() const { return audioFilesUnder("clicks"); }
 
 std::uint64_t CueLibrary::revision() const { return revision_.load(); }
 
@@ -127,6 +174,7 @@ void CueLibrary::run() {
         }
 
         const juce::File file(key);
+        const auto stamp = stampOf(file);                          // before reading: a change made during the read shows next time
         // A cloud placeholder would block until it downloads: skipped, and asked for again on a later clip().
         const bool placeholder = file.existsAsFile() && !model::isOnThisComputer(file);
         auto audio = placeholder ? nullptr : load(file, rate, generation);
@@ -140,11 +188,15 @@ void CueLibrary::run() {
                     entry.state = State::Queued;
                     queue_.push_back(key);
                 } else if (placeholder) {
-                    entries_.erase(found);
-                } else if (audio == nullptr) {
-                    entry.state = State::Failed;                 // missing or unreadable: until forgotten
+                    if (entry.clip == nullptr) entries_.erase(found);
+                    else entry.state = State::Loaded;            // the clip read before stays; its file is looked at again
+                } else if (audio == nullptr && entry.clip == nullptr) {
+                    entry.state = State::Failed;                 // missing or unreadable: until the file changes, or is forgotten
+                    entry.stamp = stamp;
                 } else {
-                    entry = {State::Arrived, std::move(audio)};
+                    entry.state = State::Arrived;                // a clip, or one read before that can no longer be read
+                    entry.arrived = std::move(audio);
+                    entry.stamp = stamp;
                     arrived = true;
                 }
             }
@@ -160,9 +212,13 @@ void CueLibrary::deliverArrivals() {
     int arrivals = 0;
     {
         const juce::ScopedLock sl(lock_);
+        const auto now = juce::Time::getMillisecondCounterHiRes();
         for (auto& [key, entry] : entries_)
             if (entry.state == State::Arrived) {
-                entry.state = State::Loaded;
+                entry.clip = std::move(entry.arrived);
+                entry.arrived = nullptr;
+                entry.state = entry.clip != nullptr ? State::Loaded : State::Failed;
+                entry.checkedMs = now;
                 ++arrivals;
             }
     }

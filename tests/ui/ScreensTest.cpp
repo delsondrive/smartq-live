@@ -25,7 +25,7 @@ constexpr double kDrawnFloor = 0.008;
 TEST_CASE("every screen renders, and none is blank", "[screens]") {
     juce::ScopedJuceInitialiser_GUI gui;
     sqlive::test::ScopedLook look;
-    CHECK(ui::screenNames().size() == 17);
+    CHECK(ui::screenNames().size() == 18);
     for (auto& name : ui::screenNames()) {
         INFO(name);
         auto image = ui::renderScreen(name);
@@ -34,7 +34,7 @@ TEST_CASE("every screen renders, and none is blank", "[screens]") {
     }
     sqlive::test::TempDir t;
     REQUIRE(ui::renderScreens(t.dir()).wasOk());
-    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.png") == 17);
+    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.png") == 18);
     CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.part") == 0);
 }
 

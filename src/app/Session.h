@@ -17,6 +17,7 @@
 #include "app/Settings.h"
 #include "app/SongCache.h"
 #include "app/Tonight.h"
+#include "app/VoiceMaker.h"
 #include "engine/Engine.h"
 #include "model/Autosaver.h"
 #include "model/BandFolder.h"
@@ -156,6 +157,24 @@ public:
     // (a gap included), and until the clip has loaded (asking for it starts the load, so pressing again works).
     bool hearCue(const juce::String& pathInBandFolder);
     std::uint64_t preparedBuilds() const;                        // for tests: how many songs have been built for the engine
+
+    // The cue voice and the band's own clips (SessionVoice.cpp): the file work, so no view writes the band folder. Each is
+    // refused in Show mode, which never writes the band folder.
+    //
+    // Makes the built-in clips (VoiceMaker::makeBuiltIns) on a background thread of its own, each through a temporary file
+    // outside the band folder that is moved in once whole; then, on the message thread, forgets them in the CueLibrary and
+    // calls onDone. onProgress (0 to 1) comes on the message thread too. Fails at once in Show mode or while a voice is
+    // already being made. evenIfPresent replaces the built-in clips already there (a bandmate's included): the page asks
+    // first. Entering Show mode stops it after the clip being made, which is then not put in place; closing the band stops it
+    // the same way and waits for that clip, and onDone is never called once the session has gone.
+    juce::Result makeVoice(bool evenIfPresent, std::function<void(double)> onProgress, std::function<void(juce::Result)> onDone);
+    bool makingVoice() const;
+    void setVoiceRunner(VoiceMaker::Runner);                     // tests: how the voice is made (default: the system's speech)
+    // Copies an audio file into cues/ (or clicks/), converted like a stem (24-bit WAV at the band's rate), under a free name:
+    // its own, else "<name> 2", "<name> 3", …; never over a file already there (a bandmate's). The path inside the band
+    // folder; "" when it couldn't be read or written, or in Show mode.
+    juce::String importCueClip(const juce::File&);
+    juce::String importClickSound(const juce::File&);
 
     Mode mode() const;
     void enterShow();                                            // views run the pre-show check first (Task 18). Stops a
@@ -301,6 +320,12 @@ private:
     void tonightChanged();
     void snapshotOnOpening();                                    // Edit mode: the automatic "Opened the folder" snapshot
 
+    // The voice being made (SessionVoice.cpp): its thread, what it may write, and its callbacks.
+    struct VoiceJob;
+    void finishVoice(const std::shared_ptr<VoiceJob>&, juce::Result);   // message thread, once the thread has finished
+    void stopVoice(bool wait);                                   // the clip being made is the last; wait: its thread is joined
+    juce::String importAudio(const juce::File&, const juce::String& folderName);
+
     Settings& settings_;
     model::BandFolder folder_;
     model::BandModel model_;
@@ -374,6 +399,8 @@ private:
 
     std::unique_ptr<ShowArrangement> arrangement_;               // the playing song's steps, choices and time along them
     MidiEcho midi_echo_;
+    VoiceMaker::Runner voice_runner_;                            // setVoiceRunner's; empty = the system's speech
+    std::shared_ptr<VoiceJob> voice_job_;                        // the voice being made; nullptr when none is
 
     // Last: their loader threads stop first, and their onChanged reach into the members above.
     CueLibrary cues_{folder_, sample_rate_};

@@ -48,6 +48,8 @@ juce::Result placeVoice(const juce::File& voice, const juce::File& target) {
 
 VoiceMaker::VoiceMaker(Runner runner) : runner_(runner ? std::move(runner) : Runner(runAndWait)) {}
 
+VoiceMaker::Runner VoiceMaker::systemRunner() { return runAndWait; }
+
 juce::Result VoiceMaker::make(const juce::String& text, const juce::File& wavTarget) {
     const auto words = wordsOnly(text);
     if (words.isEmpty()) return juce::Result::fail("There are no words to say.");

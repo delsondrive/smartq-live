@@ -45,7 +45,6 @@ constexpr int kEmptyCardWidth = 460, kEmptyCardHeight = 150;
 const juce::StringArray kMajorKeys{"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
 const juce::StringArray kMinorKeys{"Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"};
 const int kCountIns[] = {0, 1, 2, 4};
-const juce::StringArray kSoundNames{"wood", "beep", "rim"};
 const juce::StringArray kSubdivisionNames{"none", "eighths", "triplets", "sixteenths"};
 
 juce::Font titleFont() { return theme::font(18.0f, true); }
@@ -147,7 +146,7 @@ SongEditorState makeSongEditorState(const app::Session& session, const juce::Str
     state.barOneSeconds = song->audioStartSeconds;
     state.clickOn = song->click.enabled;
     state.accentFirstBeat = song->click.accentDownbeat;
-    state.clickSound = std::max(0, kSoundNames.indexOf(song->click.sound));
+    state.clickSound = song->click.sound;
     state.subdivision = std::max(0, kSubdivisionNames.indexOf(song->click.subdivision));
     return state;
 }
@@ -310,7 +309,9 @@ SongEditorPage::SongEditorPage(app::Session& session)
     inspector_.onSelect = [this](EditorSelection picked) { timeline_.select(std::move(picked)); };
     inspector_.onBarOne = [this](double seconds) { setBarOneSeconds(seconds); };
     inspector_.onBarOneAtCursor = [this] { setBarOneAtCursor(); };
-    inspector_.onClick = [this](bool on, int sound, int subdivision, bool accent) { setClick(on, sound, subdivision, accent); };
+    inspector_.onClick = [this](bool on, const juce::String& sound, int subdivision, bool accent) {
+        setClick(on, sound, subdivision, accent);
+    };
     addChildComponent(inspector_);
     arrangementRow_.onPlayAsArranged = [this] { playAsArranged(); };
     addChildComponent(arrangementRow_);
@@ -745,10 +746,10 @@ void SongEditorPage::setBarOneAtCursor() {
     setCursorSeconds(std::abs(moved) < 1e-9 ? 0.0 : moved);
 }
 
-void SongEditorPage::setClick(bool on, int sound, int subdivision, bool accentFirstBeat) {
+void SongEditorPage::setClick(bool on, const juce::String& sound, int subdivision, bool accentFirstBeat) {
     run("song.setClick", jsonObject({{"songId", songId_},
                                  {"enabled", on},
-                                 {"sound", kSoundNames[juce::jlimit(0, kSoundNames.size() - 1, sound)]},
+                                 {"sound", sound},
                                  {"subdivision", kSubdivisionNames[juce::jlimit(0, kSubdivisionNames.size() - 1, subdivision)]},
                                  {"accentDownbeat", accentFirstBeat}}));
 }

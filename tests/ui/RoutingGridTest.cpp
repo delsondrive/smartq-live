@@ -53,11 +53,12 @@ TEST_CASE("the routing grid is the rig, with forbidden cells marked", "[routing-
     REQUIRE(state.columns.size() == 2);
     CHECK(state.columns[0].name == "Headphones");  CHECK(state.columns[0].channels == "1/2");  CHECK(state.columns[0].label == "In-ears");  CHECK(state.columns[0].trim == "0 dB");
     CHECK(state.columns[1].label == "PA");
-    REQUIRE(state.rows.size() == 10);                             // Click, then the nine part roles (Cues and Pad come later)
+    REQUIRE(state.rows.size() == 11);                             // Click, Cues, then the nine part roles (the pad comes later)
+    CHECK(state.rows[1].name == "Cues");  CHECK(state.rows[1].cells[0].sent);  CHECK_FALSE(state.rows[1].cells[1].allowed);
     CHECK(state.rows[0].name == "Click");
     CHECK(state.rows[0].cells[0].sent);  CHECK(state.rows[0].cells[0].text == "0");
     CHECK_FALSE(state.rows[0].cells[1].allowed);  CHECK(state.rows[0].cells[1].whyNot == "Click can only go to in-ear outputs.");
-    CHECK(state.rows[1].cells[1].allowed);  CHECK_FALSE(state.rows[1].cells[1].sent);
+    CHECK(state.rows[2].cells[1].allowed);  CHECK_FALSE(state.rows[2].cells[1].sent);
 }
 
 TEST_CASE("clicking and dragging cells edits the mixes through commands", "[routing-ui]") {
@@ -65,16 +66,16 @@ TEST_CASE("clicking and dragging cells edits the mixes through commands", "[rout
     s.commands().run("output.add", params({{"rigId", rigId}, {"name", "PA"}, {"firstChannel", 3}, {"stereo", true}, {"label", "foh"}}));
     sqlive::test::ScopedLook look;
     ui::RoutingGrid grid(s);  grid.setBounds(0, 0, 1000, 500);
-    grid.clickCell(1, 1);                                         // Keys → PA
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[1].text == "0");
-    grid.dragCell(1, 1, -3.0f, "g1");  grid.dragCell(1, 1, -3.5f, "g1");
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[1].text == "-3.5");
-    grid.dragCell(1, 1, 5.0f, "g2");
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[1].boosted);
+    grid.clickCell(2, 1);                                         // Keys → PA
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[1].text == "0");
+    grid.dragCell(2, 1, -3.0f, "g1");  grid.dragCell(2, 1, -3.5f, "g1");
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[1].text == "-3.5");
+    grid.dragCell(2, 1, 5.0f, "g2");
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[1].boosted);
     s.commands().undo();  s.commands().undo();                    // each drag is one step
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[1].text == "0");
-    grid.clickCell(1, 1);
-    CHECK_FALSE(makeRoutingState(s, nullptr).rows[1].cells[1].sent);
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[1].text == "0");
+    grid.clickCell(2, 1);
+    CHECK_FALSE(makeRoutingState(s, nullptr).rows[2].cells[1].sent);
     grid.clickCell(0, 1);                                         // Click → PA: refused
     CHECK(grid.lastMessage() == "Click can only go to in-ear outputs.");
     CHECK_FALSE(makeRoutingState(s, nullptr).rows[0].cells[1].sent);
@@ -112,7 +113,7 @@ TEST_CASE("the routing state says how the rig is set up and what is wrong with i
     state = makeRoutingState(s, nullptr);
     REQUIRE(state.columns.size() == 2);
     CHECK(state.columns[1].channels == "3");  CHECK(state.columns[1].label == "Timecode");
-    CHECK_FALSE(state.rows[1].cells[1].allowed);  CHECK(state.rows[1].cells[1].whyNot == "A timecode output carries timecode only.");
+    CHECK_FALSE(state.rows[2].cells[1].allowed);  CHECK(state.rows[2].cells[1].whyNot == "A timecode output carries timecode only.");
 }
 
 TEST_CASE("the routing grid's header menu and cells refuse what the commands refuse, and say why", "[routing-ui]") {
@@ -124,13 +125,13 @@ TEST_CASE("the routing grid's header menu and cells refuse what the commands ref
     grid.setOutputChannels(paId, 2, true);                        // would share output 2 with Headphones
     CHECK(grid.lastMessage() == "Headphones would share output 2 with PA, which goes to the PA.");
     CHECK(makeRoutingState(s, nullptr).columns[1].channels == "3/4");
-    grid.clickCell(1, 1);                                         // Keys → PA
+    grid.clickCell(2, 1);                                         // Keys → PA
     grid.setOutputLabel(paId, model::OutputLabel::Timecode);      // Keys taken out, as the command says
     CHECK(grid.lastMessage() == "Keys was taken out of PA.");
-    CHECK_FALSE(makeRoutingState(s, nullptr).rows[1].cells[1].sent);
-    grid.dragCell(1, 1, 2.0f, "g1");                             // a timecode output takes nothing
+    CHECK_FALSE(makeRoutingState(s, nullptr).rows[2].cells[1].sent);
+    grid.dragCell(2, 1, 2.0f, "g1");                             // a timecode output takes nothing
     CHECK(grid.lastMessage() == "A timecode output carries timecode only.");
-    CHECK_FALSE(makeRoutingState(s, nullptr).rows[1].cells[1].sent);
+    CHECK_FALSE(makeRoutingState(s, nullptr).rows[2].cells[1].sent);
 
     // Overall level: one drag is one undo step.
     CHECK(makeRoutingState(s, nullptr).columns[0].trim == "0 dB");
@@ -141,8 +142,8 @@ TEST_CASE("the routing grid's header menu and cells refuse what the commands ref
 
     // Show mode: the grid changes nothing.
     s.enterShow();
-    grid.clickCell(1, 0);
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
+    grid.clickCell(2, 0);
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[0].sent);
 }
 
 TEST_CASE("one output per role replaces the rig's outputs, as one undo step", "[routing-ui]") {
@@ -161,7 +162,7 @@ TEST_CASE("one output per role replaces the rig's outputs, as one undo step", "[
         CHECK(s.model().role(out.mix.begin()->first)->name == out.name);
     }
     auto state = makeRoutingState(s, nullptr);
-    CHECK(state.rows[1].cells[0].sent);  CHECK_FALSE(state.rows[1].cells[1].sent);
+    CHECK(state.rows[2].cells[0].sent);  CHECK_FALSE(state.rows[2].cells[1].sent);
     s.commands().undo();
     REQUIRE(s.model().rig(s.rigId())->outputs.size() == 1);
     CHECK(s.model().rig(s.rigId())->outputs[0].name == "Headphones");
@@ -178,7 +179,7 @@ TEST_CASE("the routing grid scrolls both ways with sixteen outputs and many role
         INFO(w << " x " << h);
         snapshot(grid, w, h);
         CHECK(childrenInside(grid));
-        REQUIRE(grid.state().columns.size() == 16);  REQUIRE(grid.state().rows.size() == 30);
+        REQUIRE(grid.state().columns.size() == 16);  REQUIRE(grid.state().rows.size() == 31);
         auto& area = grid.viewport();
         auto& names = grid.roleNames();
         REQUIRE(area.getViewedComponent() != nullptr);  REQUIRE(names.getViewedComponent() != nullptr);
@@ -192,10 +193,10 @@ TEST_CASE("the routing grid scrolls both ways with sixteen outputs and many role
         CHECK(names.getHeight() == area.getViewHeight());
         // Every cell is inside its column, the columns side by side.
         for (int c = 0; c < 16; ++c) {
-            const auto cell = grid.cellBounds(29, c);
+            const auto cell = grid.cellBounds(30, c);
             CHECK(cell.getWidth() >= 72);
             CHECK(body->getLocalBounds().contains(cell));
-            if (c > 0) CHECK(cell.getX() >= grid.cellBounds(29, c - 1).getRight());
+            if (c > 0) CHECK(cell.getX() >= grid.cellBounds(30, c - 1).getRight());
         }
         // The footer is under the grid.
         CHECK(grid.footerBounds().getY() >= area.getBottom());
@@ -313,15 +314,15 @@ TEST_CASE("typed levels and outputs are read in the grid, and bad ones are refus
     sqlive::test::ScopedLook look;
     ui::RoutingGrid grid(s);  grid.setBounds(0, 0, 1000, 500);
     const auto headphones = grid.state().columns[0].outputId;
-    grid.typeCellLevel(1, 0, "-6 dB");                            // Keys in Headphones
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].text == "-6");
-    grid.typeCellLevel(1, 0, "-60");                              // sent, all the way down: still sent
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
-    grid.typeCellLevel(1, 0, "loud");
+    grid.typeCellLevel(2, 0, "-6 dB");                            // Keys in Headphones
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[0].text == "-6");
+    grid.typeCellLevel(2, 0, "-60");                              // sent, all the way down: still sent
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[0].sent);
+    grid.typeCellLevel(2, 0, "loud");
     CHECK(grid.lastMessage() == "Type a level in dB, like -6 or +3.");
-    CHECK(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
-    grid.typeCellLevel(1, 0, "off");
-    CHECK_FALSE(makeRoutingState(s, nullptr).rows[1].cells[0].sent);
+    CHECK(makeRoutingState(s, nullptr).rows[2].cells[0].sent);
+    grid.typeCellLevel(2, 0, "off");
+    CHECK_FALSE(makeRoutingState(s, nullptr).rows[2].cells[0].sent);
 
     grid.typeTrim(0, "+2dB");
     CHECK(makeRoutingState(s, nullptr).columns[0].trim == "+2 dB");
@@ -365,7 +366,7 @@ TEST_CASE("a role's menu offers colours that mean nothing else, and none for the
     CHECK(named(click, juce::String("Rename") + juce::String::fromUTF8("\xe2\x80\xa6")));
     CHECK_FALSE(named(click, "Colour"));
 
-    const auto keys = items(rows[1].roleId);
+    const auto keys = items(rows[2].roleId);
     CHECK(named(keys, "Colour"));
     int colours = 0;
     for (const auto& item : keys) {

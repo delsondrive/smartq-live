@@ -117,7 +117,7 @@ TEST_CASE("the song editor's chips edit the first tempo point, the key and the c
     CHECK(s.model().song(id)->audioStartSeconds == Catch::Approx(1.5));
     CHECK(page.cursorSeconds() == 0.0);
 
-    page.setClick(false, 2, 3, false);                            // off, Rim, 16ths, no accent
+    page.setClick(false, "rim", 3, false);                        // off, Rim, 16ths, no accent
     const auto& click = s.model().song(id)->click;
     CHECK_FALSE(click.enabled);  CHECK(click.sound == "rim");  CHECK(click.subdivision == "sixteenths");  CHECK_FALSE(click.accentDownbeat);
 
@@ -260,7 +260,7 @@ TEST_CASE("the song editor survives its song being undone away before it refresh
     REQUIRE(lanes != nullptr);
     press(*lanes, {40.0f, 38.0f});                                  // the Keys header, under the 28 px Tempo lane
     page.setBpm(130.0);  page.setKey("E");  page.setCountIn(2);  page.setBarOneAtCursor();  page.tap(1.0);
-    page.setClick(true, 0, 0, true);  page.togglePlay();
+    page.setClick(true, "wood", 0, true);  page.togglePlay();
     d.settle();                                                    // the refresh: the empty state
     CHECK(page.songId().isEmpty());
     CHECK(page.state().songId.isEmpty());

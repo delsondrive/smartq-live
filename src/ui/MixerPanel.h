@@ -39,9 +39,10 @@ struct MixerState {
 };
 
 // The options are "This song" and each output of the chosen rig. An output id that isn't in the rig gives "This song".
-// "This song": Click (the song's click offset in Edit mode, the band's click level in Show mode), then each part of the
-// song. An output: every role it may carry (model::mayRoute), click and cues first, in the band's order; Cues and Pad
-// have no strip in this stage. A strip changed tonight says by how much in its footer ("+2 dB"), as a warning.
+// "This song": Click (the song's click offset in Edit mode, the band's click level in Show mode), Cues (the band's cue
+// level, in either mode), then each part of the song. An output: every role it may carry (model::mayRoute), click and
+// cues first, in the band's order; Pad has no strip in this stage. A strip changed tonight says by how much in its footer
+// ("+2 dB"), as a warning.
 MixerState makeMixerState(const app::Session&, const juce::String& songId, const juce::String& outputId);
 
 // The mixer's strips in a panel (the mockup's .mixer), used by the Mixer page and the main view. Each strip, top to

@@ -24,25 +24,40 @@ public:
     // The clip, mono at the library's rate, once loaded. nullptr until then (a path not asked for before is queued for the
     // loader), and when the file is missing, unreadable, outside the band folder, or not on this computer yet
     // (model::isOnThisComputer: it is asked for again later).
+    // A file a bandmate changed is read again: at most once a second, this looks at the date and size of the file a clip
+    // was read from (or found missing or unreadable), and one that changed is loaded again in the background. Until it
+    // arrives the clip read before is still given; one that can no longer be read goes (both bump revision()).
     std::shared_ptr<const engine::PartAudio> clip(const juce::String& pathInBandFolder);
     void forget(const juce::String& pathInBandFolder);            // loaded again when next asked for
     juce::StringArray clipsInFolder() const;                      // every audio file under cues/, as paths inside the band folder
-    std::uint64_t revision() const;                               // goes up whenever a clip arrives or is forgotten
+    juce::StringArray clickSoundsInFolder() const;                // every audio file under clicks/, as paths inside the band folder
+    std::uint64_t revision() const;                               // goes up whenever a clip arrives, goes or is forgotten
     std::function<void()> onChanged;                              // message thread, once for the clips that arrived together
     bool waitUntilIdle(int timeoutMs);                            // tests: true once nothing is waiting to load; delivers arrivals
 
 private:
-    enum class State { Queued, Loading, Arrived, Loaded, Failed };   // Arrived: loaded, not yet handed to the message thread
+    enum class State { Queued, Loading, Arrived, Loaded, Failed };   // Arrived: read, not yet handed to the message thread
+    // A file as it was when it was read: its date and size; size -1 when it wasn't there.
+    struct Stamp {
+        juce::Time modified;
+        juce::int64 size = -1;
+        bool operator==(const Stamp&) const = default;
+    };
     struct Entry {
         State state = State::Queued;
-        std::shared_ptr<const engine::PartAudio> clip;
+        std::shared_ptr<const engine::PartAudio> clip;           // what clip() gives: the last one delivered
+        std::shared_ptr<const engine::PartAudio> arrived;        // Arrived: what replaces it (nullptr: the file can't be read now)
+        Stamp stamp;                                             // the file when it was last read
+        double checkedMs = 0.0;                                  // when clip() last looked at the file
     };
 
+    static Stamp stampOf(const juce::File&);
     void run() override;
     void handleAsyncUpdate() override;
     void deliverArrivals();
     bool isIdle() const;
     juce::File fileFor(const juce::String& pathInBandFolder) const;   // {} when it isn't inside the band folder
+    juce::StringArray audioFilesUnder(const juce::String& folderName) const;
     std::shared_ptr<const engine::PartAudio> load(const juce::File&, double sampleRate, std::uint64_t generation);   // loader
 
     const juce::File root_;

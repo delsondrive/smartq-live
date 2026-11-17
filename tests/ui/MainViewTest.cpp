@@ -279,7 +279,7 @@ TEST_CASE("the main view with an empty setlist, and with a song of thirty parts"
         snapshot(view, w, h);
         CHECK(childrenInside(view));
         CHECK(view.mixer().songId() == thirty);
-        CHECK(view.mixer().state().strips.size() == 31);
+        CHECK(view.mixer().state().strips.size() == 32);
         auto& row = view.mixer().viewport();
         if (w < 1920) CHECK(row.getViewedComponent()->getWidth() > row.getViewWidth());   // the strips scroll sideways
         CHECK(row.getViewedComponent()->getHeight() <= row.getMaximumVisibleHeight());
