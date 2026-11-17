@@ -1,8 +1,10 @@
 #include <vector>
 
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "model/SectionCommands.h"
+#include "model/MidiFileImport.h"
 #include "model/Sections.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/MidiParams.h"
@@ -65,7 +67,7 @@ TEST_CASE("sections are added, moved and removed, and an arrangement follows the
     auto a = run("section.add", {{"songId", song}, {"name", "Intro"}, {"startBar", 1}}).value.toString();
     auto v = run("section.add", {{"songId", song}, {"name", "Verse 1"}, {"startBar", 5}}).value.toString();
     auto c = run("section.add", {{"songId", song}, {"name", "Chorus"}, {"startBar", 9}}).value.toString();
-    auto c2 = run("section.add", {{"songId", song}, {"name", "Chorus"}, {"startBar", 13}}).value.toString();
+    run("section.add", {{"songId", song}, {"name", "Chorus"}, {"startBar", 13}}).value.toString();
     CHECK(run("section.add", {{"songId", song}, {"name", "Again"}, {"startBar", 9}}).message == "A section already starts at bar 9.");
     CHECK(run("section.add", {{"songId", song}, {"name", "Late"}, {"startBar", 17}}).message == "Bar 17 is past the end of the song.");
     REQUIRE(D().sections.size() == 4);
@@ -110,7 +112,6 @@ TEST_CASE("sections are added, moved and removed, and an arrangement follows the
           == "Two sections can't start at the same bar.");
     CHECK(D().sections.size() == 3);                                 // and nothing changed
     auto bridge = D().sections[2].id;
-    (void) c2;
 
     // renaming a section with no type guesses one; a type it has is kept
     auto partB = run("section.add", {{"songId", f.otherSong}, {"name", "Part B"}, {"startBar", 3}}).value.toString();
@@ -138,7 +139,7 @@ TEST_CASE("sections are added, moved and removed, and an arrangement follows the
           == "A crossfade is 1 to 30 seconds.");
     CHECK(run("setlist.setTransition", {{"setlistId", set}, {"entryId", entry}, {"kind", "fade"}}).message
           == "A transition is stop, gap, seamless or crossfade.");
-    CHECK(run("section.remove", {{"songId", f.otherSong}, {"sectionId", f.onlyOne}}).ok == false);
+    CHECK(run("section.remove", {{"songId", f.otherSong}, {"sectionId", f.onlyOne}}).message == "A song needs at least one section.");
 }
 
 TEST_CASE("a song with no stored sections gets a first one from section.add", "[sectioncmd]") {
@@ -206,4 +207,82 @@ TEST_CASE("cues, automation, jump timing, cue lead and section types", "[section
     auto m = f.run("marker.add", {{"songId", f.song}, {"deviceId", f.g1}, {"bar", 2}, {"beat", 1}}).value.toString();
     CHECK(f.run("marker.copyToType", {{"songId", f.song}, {"deviceId", f.g1}, {"markerId", m}}).message
           == "This section has no type, so there is nothing to copy it to.");
+}
+
+TEST_CASE("muting a section silences it whatever points lay inside", "[sectioncmd]") {
+    Fixture f;
+    f.run("section.add", {{"songId", f.song}, {"name", "Intro"}, {"startBar", 1}});
+    auto s = f.run("section.add", {{"songId", f.song}, {"name", "Chorus"}, {"startBar", 9}}).value.toString();
+    f.run("section.add", {{"songId", f.song}, {"name", "Outro"}, {"startBar", 13}});
+    auto point = [](int bar, double db) { return params({{"bar", bar}, {"beat", 1}, {"db", db}}); };
+    juce::Array<juce::var> pts; pts.add(point(3, -3.0)); pts.add(point(10, 0.0));
+    REQUIRE(f.run("automation.set", {{"songId", f.song}, {"target", "click"}, {"points", pts}}).ok);
+    REQUIRE(f.run("automation.muteIn", {{"songId", f.song}, {"target", "click"}, {"sectionId", s}}).ok);
+    const auto& lane = f.doc().automation.at("click");
+    REQUIRE(lane.size() == 5);                                       // bar 3, then the four; the one at bar 10 is gone
+    CHECK(lane[0].bar == 3);
+    CHECK((lane[1].bar == 9 && lane[1].db == 0.0f));  CHECK((lane[2].bar == 9 && lane[2].db == -60.0f));
+    CHECK((lane[3].bar == 13 && lane[3].db == -60.0f));  CHECK((lane[4].bar == 13 && lane[4].db == 0.0f));
+}
+
+TEST_CASE("a section keeps its id only when its start bar and name both match", "[sectioncmd]") {
+    Fixture f;
+    auto a = f.run("section.add", {{"songId", f.song}, {"name", "Intro"}, {"startBar", 1}}).value.toString();
+    auto v = f.run("section.add", {{"songId", f.song}, {"name", "Verse"}, {"startBar", 5}}).value.toString();
+    auto c = f.run("section.add", {{"songId", f.song}, {"name", "Chorus"}, {"startBar", 9}}).value.toString();
+    f.run("arrangement.add", {{"songId", f.song}, {"name", "All"}});
+    REQUIRE(f.run("song.setSections", {{"songId", f.song}, {"sections", sections({{"Intro", 1, 5}, {"Chorus", 5, 9}, {"Verse", 9, 17}})}}).ok);
+    REQUIRE(f.doc().sections.size() == 3);
+    CHECK(f.doc().sections[0].id == a);
+    CHECK(f.doc().sections[1].id != v);  CHECK(f.doc().sections[1].id != c);
+    CHECK(f.doc().sections[2].id != v);  CHECK(f.doc().sections[2].id != c);
+    CHECK(f.doc().sections[1].typeId == f.typeId("Chorus"));  CHECK(f.doc().sections[2].typeId == f.typeId("Verse"));
+    CHECK(f.doc().arrangements[0].steps == std::vector<juce::String>{a});   // the old Verse and Chorus steps are gone
+}
+
+TEST_CASE("importing a MIDI file keeps the ids of sections that match, drops orphaned steps and guesses types", "[sectioncmd]") {
+    Fixture f;
+    auto a = f.run("section.add", {{"songId", f.song}, {"name", "Intro"}, {"startBar", 1}}).value.toString();
+    auto v = f.run("section.add", {{"songId", f.song}, {"name", "Verse"}, {"startBar", 5}}).value.toString();
+    f.run("section.add", {{"songId", f.song}, {"name", "Chorus"}, {"startBar", 9}});
+    auto arr = f.run("arrangement.add", {{"songId", f.song}, {"name", "All"}}).value.toString();
+    f.run("setlist.setArrangement", {{"setlistId", f.set}, {"entryId", f.entry}, {"arrangementId", arr}});
+    MidiFileContent content; content.bars = 16;
+    content.sections = {{"", "Intro", 1, 5}, {"", "Verse", 5, 9}, {"", "Bridge", 9, 17}};
+    content.tempo = {{1, 1.0, 100.0, 4, 4}};
+    MidiImportChoice choice; choice.tempo = false;
+    REQUIRE(f.run("song.importMidi", {{"songId", f.song}, {"content", toVar(content)}, {"choice", toVar(choice)}}).ok);
+    REQUIRE(f.doc().sections.size() == 3);
+    CHECK(f.doc().sections[0].id == a);  CHECK(f.doc().sections[1].id == v);
+    CHECK(f.doc().sections[2].typeId == f.typeId("Bridge"));
+    CHECK(f.doc().arrangements[0].steps == std::vector<juce::String>{a, v});   // the Chorus step is gone
+    content.sections = {{"", "Bridge", 1, 17}};                      // nothing of the arrangement is left
+    REQUIRE(f.run("song.importMidi", {{"songId", f.song}, {"content", toVar(content)}, {"choice", toVar(choice)}}).ok);
+    CHECK(f.doc().arrangements.empty());  CHECK(f.model.setlist(f.set)->entries[0].arrangementId.isEmpty());
+}
+
+TEST_CASE("section types: cue clips, and the colours that mean something", "[sectioncmd]") {
+    Fixture f;
+    auto t = f.run("sectionType.add", {{"name", "Tag"}, {"colour", "123456"}}).value.toString();
+    CHECK(f.run("sectionType.set", {{"typeId", t}, {"cueClip", "cues/tag.wav"}}).ok);
+    CHECK(f.model.band().sectionTypes.back().cueClip == "cues/tag.wav");
+    CHECK_FALSE(f.run("sectionType.set", {{"typeId", t}, {"cueClip", "../outside.wav"}}).ok);
+    CHECK(f.model.band().sectionTypes.back().cueClip == "cues/tag.wav");
+    CHECK(f.run("sectionType.set", {{"typeId", t}, {"cueClip", ""}}).ok);
+    CHECK(f.model.band().sectionTypes.back().cueClip.isEmpty());
+    const auto kept = "That colour is kept for ember, mint, danger and caution. Pick another.";
+    for (const char* hex : {"f29a78", "6ff0c8", "ff6f7d", "ffb547"}) {
+        CHECK(f.run("sectionType.add", {{"name", "Meaning"}, {"colour", hex}}).message == kept);
+        CHECK(f.run("sectionType.set", {{"typeId", t}, {"colour", hex}}).message == kept);
+    }
+    CHECK(f.model.band().sectionTypes.back().colour == juce::Colour(0xff123456));
+}
+
+TEST_CASE("a change can't be copied when its type has no other section", "[sectioncmd]") {
+    Fixture f;
+    f.run("section.add", {{"songId", f.song}, {"name", "Intro"}, {"startBar", 1}});
+    f.run("section.add", {{"songId", f.song}, {"name", "Chorus"}, {"startBar", 9}});
+    auto m = f.run("marker.add", {{"songId", f.song}, {"deviceId", f.g1}, {"bar", 10}, {"beat", 1}}).value.toString();
+    CHECK(f.run("marker.copyToType", {{"songId", f.song}, {"deviceId", f.g1}, {"markerId", m}}).message
+          == "There is no other Chorus to copy it to.");
 }

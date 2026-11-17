@@ -201,7 +201,7 @@ TEST_CASE("a rig that no longer names a device here stops the search for the old
 TEST_CASE("opening a device that fails mid-song stops the gear that follows start and stop at once", "[audiohost]") {
     DemoSession d; app::AudioHost host(*d.session); auto& s = *d.session;
     const auto types = host.deviceTypes();
-    if (types.isEmpty()) return;                                  // a machine with no audio system at all has nothing to try
+    if (types.isEmpty()) SKIP("This computer has no audio system to try an interface on.");
     auto g1 = s.commands().run("device.add", params({{"name", "Drum machine"}})).value.toString();
     s.commands().run("device.set", params({{"deviceId", g1}, {"startStop", true}}));
     d.settle();  s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000);

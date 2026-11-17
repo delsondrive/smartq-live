@@ -138,6 +138,13 @@ void checkTypeName(const BandModel& m, const String& name, const String& exceptI
     for (const auto& t : m.band().sectionTypes)
         if (t.id != exceptId && t.name.equalsIgnoreCase(name)) refuse("There is already a section type called " + name + ".");
 }
+// A section type's colour: any but the four that mean something (ember, mint, danger, caution), which are never a type's.
+juce::Colour typeColour(const Params& p) {
+    const auto colour = parseColour(p.text("colour"));
+    for (const juce::uint32 meaning : {0xfff29a78u, 0xff6ff0c8u, 0xffff6f7du, 0xffffb547u})
+        if (colour == juce::Colour(meaning)) refuse("That colour is kept for ember, mint, danger and caution. Pick another.");
+    return colour;
+}
 String checkedCueClip(const Params& p) {
     if (! p.raw("cueClip").isString()) refuse("cueClip must be text.");
     auto clip = p.raw("cueClip").toString();
@@ -153,7 +160,7 @@ void keepSectionIdentities(const SongDoc& stored, const BandDoc& band, std::vect
     std::set<String> used;
     std::vector<bool> kept(incoming.size(), false);
     for (std::size_t i = 0; i < incoming.size(); ++i) {
-        const auto* old = findIn(stored.sections, [&](const SectionDoc& s) { return s.startBar == incoming[i].startBar; });
+        const auto* old = findIn(stored.sections, [&](const SectionDoc& s) { return s.startBar == incoming[i].startBar && s.name == incoming[i].name; });
         if (old == nullptr) continue;
         incoming[i].id = old->id;
         if (incoming[i].typeId.isEmpty()) incoming[i].typeId = old->typeId;
@@ -387,6 +394,10 @@ void registerSectionCommands(CommandLayer& layer) {
         const auto docs = tiledDocs(song);
         const auto& section = docs[(std::size_t) indexOfSection(docs, p.id("sectionId"))];
         auto& points = song.automation[lane];
+        eraseIf(points, [&](const AutomationPoint& x) {                // what lay strictly inside would un-mute it
+            return std::make_tuple(x.bar, x.beat) > std::make_tuple(section.startBar, 1.0)
+                && std::make_tuple(x.bar, x.beat) < std::make_tuple(section.endBar, 1.0);
+        });
         points.push_back(pointAt(section.startBar, 0.0f));
         points.push_back(pointAt(section.startBar, kMinDb));
         points.push_back(pointAt(section.endBar, kMinDb));
@@ -407,9 +418,10 @@ void registerSectionCommands(CommandLayer& layer) {
         const auto* from = findIn(docs, [&](const SectionDoc& s) { return s.startBar <= source.bar && source.bar < s.endBar; });
         const auto* type = from != nullptr && from->typeId.isNotEmpty() ? typeIn(m, from->typeId) : nullptr;
         if (type == nullptr) refuse("This section has no type, so there is nothing to copy it to.");
-        int copied = 0;
+        int copied = 0, others = 0;
         for (const auto& other : docs) {
             if (other.id == from->id || other.typeId != from->typeId) continue;
+            ++others;
             const int bar = other.startBar + (source.bar - from->startBar);
             if (bar >= other.endBar) continue;                   // beyond a shorter section's end
             const bool there = std::any_of(markers.begin(), markers.end(), [&](const MarkerDoc& x) {
@@ -421,7 +433,7 @@ void registerSectionCommands(CommandLayer& layer) {
             markers.push_back(std::move(copy));
             ++copied;
         }
-        if (copied == 0) return CommandResult::success({}, "Every other " + type->name + " already has a change there.");
+        if (copied == 0) return CommandResult::success({}, others == 0 ? "There is no other " + type->name + " to copy it to." : "Every other " + type->name + " already has a change there.");
         sortLane(markers);
         return CommandResult::success({}, "Copied to " + sectionsText(copied, type->name) + ".");
     });
@@ -431,7 +443,7 @@ void registerSectionCommands(CommandLayer& layer) {
         const auto name = p.text("name");
         checkTypeName(m, name, {});
         SectionTypeDoc type; type.id = newId(); type.name = name;
-        type.colour = p.given("colour") ? parseColour(p.text("colour")) : roleColour((int) m.band().sectionTypes.size());
+        type.colour = p.given("colour") ? typeColour(p) : roleColour((int) m.band().sectionTypes.size());
         const auto id = type.id;
         m.editBand().sectionTypes.push_back(std::move(type));
         return CommandResult::success(id);
@@ -440,7 +452,7 @@ void registerSectionCommands(CommandLayer& layer) {
         const auto id = found(typeIn(m, p.id("typeId")), "section type").id;
         String name, clip; juce::Colour colour;
         if (p.given("name")) { name = p.text("name"); checkTypeName(m, name, id); }
-        if (p.given("colour")) colour = parseColour(p.text("colour"));
+        if (p.given("colour")) colour = typeColour(p);
         if (p.given("cueClip")) clip = checkedCueClip(p);
         auto& type = *findIn(m.editBand().sectionTypes, [&](const SectionTypeDoc& t) { return t.id == id; });
         if (p.given("name")) type.name = name;
