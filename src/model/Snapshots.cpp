@@ -84,6 +84,27 @@ std::vector<SnapshotInfo> SnapshotStore::list() const {
     return all;
 }
 
+juce::Result SnapshotStore::load(const juce::String& id, BandModel& into) const {
+    const auto dir = folderOf(id);
+    if (dir == juce::File()) return juce::Result::fail("That snapshot no longer exists.");
+    Documents documents;
+    if (!readDocuments(dir, documents)) return juce::Result::fail(kUnreadable);
+    for (const auto& [name, text] : documents) {
+        DocKey key;
+        ParseNotes notes;
+        if (!parseKeyName(name, key)) continue;                   // a document this version doesn't know is left out
+        switch (key.kind) {
+        case DocKind::Band:
+            if (!fromJson(text, into.editBand(), notes)) return juce::Result::fail(kUnreadable);
+            break;
+        case DocKind::Song: { SongDoc d; if (!fromJson(text, d, notes)) return juce::Result::fail(kUnreadable); into.putSong(std::move(d)); break; }
+        case DocKind::Setlist: { SetlistDoc d; if (!fromJson(text, d, notes)) return juce::Result::fail(kUnreadable); into.putSetlist(std::move(d)); break; }
+        case DocKind::Rig: { RigDoc d; if (!fromJson(text, d, notes)) return juce::Result::fail(kUnreadable); into.putRig(std::move(d)); break; }
+        }
+    }
+    return juce::Result::ok();
+}
+
 juce::Result SnapshotStore::create(const BandModel& model, const juce::String& name, bool automatic) {
     if (name.trim().isEmpty()) return juce::Result::fail("A snapshot needs a name.");
     const auto documents = documentsOf(model);

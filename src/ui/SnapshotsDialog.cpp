@@ -17,7 +17,7 @@ namespace {
 constexpr float kRadius = 14.0f;
 constexpr int kPadX = 18, kHeaderHeight = 58, kFooterPadY = 12, kButtonHeight = 30, kFooterGap = 10;
 constexpr int kListPadY = 8, kCellPadX = 8, kHeadRowHeight = 29, kRowHeight = 31, kWhenWidth = 140, kMarkWidth = 76;
-constexpr int kRightPadX = 18, kRightPadY = 14;
+constexpr int kRightPadX = 18, kRightPadY = 14, kChangeHeadHeight = 22, kChangeRowHeight = 22, kChangeGap = 12, kDotSize = 6;
 constexpr int kFooterHeight = 2 * kFooterPadY + kButtonHeight;
 
 const juce::String kGoingBack = "Going back replaces every song, setlist and setting with how it was then. Audio files are never changed.";
@@ -158,11 +158,17 @@ void SnapshotsDialog::refresh() {
         return std::any_of(next.rows.begin(), next.rows.end(), [&](const SnapshotsState::Row& r) { return r.id == id; });
     };
     if (!there(selected_)) selected_ = next.rows.empty() ? juce::String() : next.rows.front().id;
+    const auto changesBefore = changes_;
+    const bool readBefore = changesRead_;
     const bool differs = !(next == state_);
     state_ = std::move(next);
+    readChanges();
+    const bool changesDiffer = readBefore != changesRead_ || changesBefore.size() != changes_.size()
+                               || !std::equal(changesBefore.begin(), changesBefore.end(), changes_.begin(),
+                                              [](const model::ChangeLine& a, const model::ChangeLine& b) { return a.where == b.where && a.what == b.what; });
     goBack_.setEnabled(editable() && selected_.isNotEmpty());
     save_.setEnabled(editable());
-    if (differs) {
+    if (differs || changesDiffer) {
         if (auto* parent = getParentComponent()) parent->resized();   // the veil sizes it from idealHeight()
         resized();
     }
@@ -173,7 +179,21 @@ void SnapshotsDialog::select(const juce::String& id) {
     if (id == selected_) return;
     selected_ = id;
     goBack_.setEnabled(editable() && selected_.isNotEmpty());
+    readChanges();
+    if (auto* parent = getParentComponent()) parent->resized();   // the right side's height depends on its lines
+    resized();
     list_->repaint();
+    repaint();
+}
+
+void SnapshotsDialog::readChanges() {
+    changes_.clear();
+    changesRead_ = false;
+    if (selected_.isEmpty()) return;
+    model::BandModel then;
+    if (session_.snapshots().load(selected_, then).failed()) return;
+    changes_ = model::describeChanges(then, session_.model(), kMaxChanges);
+    changesRead_ = true;
 }
 
 void SnapshotsDialog::say(const juce::String& problem) {
@@ -257,11 +277,17 @@ void SnapshotsDialog::showMenu(const juce::String& id) {
         });
 }
 
+int SnapshotsDialog::changesHeight() const {
+    if (selected_.isEmpty()) return 0;
+    const int lines = changesRead_ && !changes_.empty() ? static_cast<int>(changes_.size()) : 1;
+    return kChangeHeadHeight + lines * kChangeRowHeight + kChangeGap;
+}
+
 int SnapshotsDialog::bodyHeight() const {
     const int rows = std::max<int>(1, static_cast<int>(state_.rows.size()));
     const int left = 2 * kListPadY + kHeadRowHeight + rows * kRowHeight;
     const int textWidth = width / 2 - 2 * kRightPadX;
-    const int right = 2 * kRightPadY + static_cast<int>(std::ceil(wrapped(kGoingBack, bodyFont(), theme::mid, textWidth).getHeight()));
+    const int right = 2 * kRightPadY + changesHeight() + static_cast<int>(std::ceil(wrapped(kGoingBack, bodyFont(), theme::mid, textWidth).getHeight()));
     return std::max(left, right);
 }
 
@@ -315,7 +341,41 @@ void SnapshotsDialog::paint(juce::Graphics& g) {
     g.setColour(theme::hairline);
     g.fillRect(columns_.getX(), columns_.getBottom() - 1, listWidth, 1);
 
-    const auto text = right_.reduced(kRightPadX, kRightPadY);
+    auto text = right_.reduced(kRightPadX, kRightPadY);
+    if (selected_.isNotEmpty()) {
+        const auto row = std::find_if(state_.rows.begin(), state_.rows.end(), [&](const SnapshotsState::Row& r) { return r.id == selected_; });
+        const auto name = row == state_.rows.end() ? juce::String() : row->name;
+        g.setColour(theme::dim);
+        g.setFont(headFont());
+        g.drawText(shorten(utf8("CHANGED SINCE \xe2\x80\x9c") + name.toUpperCase() + utf8("\xe2\x80\x9d"), headFont(), static_cast<float>(text.getWidth())),
+                   text.removeFromTop(kChangeHeadHeight), juce::Justification::centredLeft, false);
+        if (!changesRead_ || changes_.empty()) {
+            g.setColour(theme::mid);
+            g.setFont(bodyFont());
+            g.drawText(changesRead_ ? "Nothing has changed since this snapshot." : "This snapshot couldn't be read.",
+                       text.removeFromTop(kChangeRowHeight), juce::Justification::centredLeft, true);
+        }
+        for (const auto& line : changes_) {
+            auto r = text.removeFromTop(kChangeRowHeight);
+            if (line.where.isNotEmpty()) {                          // a cut list's last line has no where, and no dot
+                g.setColour(theme::caution);
+                g.fillEllipse(static_cast<float>(r.getX()), static_cast<float>(r.getCentreY()) - kDotSize / 2.0f, static_cast<float>(kDotSize),
+                              static_cast<float>(kDotSize));
+            }
+            r.removeFromLeft(kDotSize + 8);
+            const auto where = line.where.isNotEmpty() ? line.where : juce::String();
+            const int whereWidth = std::min(r.getWidth() / 2, where.isEmpty() ? 0 : widthInPixels(nameFont(), where));
+            g.setColour(theme::text);
+            g.setFont(nameFont());
+            g.drawText(shorten(where, nameFont(), static_cast<float>(whereWidth)), r.withWidth(whereWidth), juce::Justification::centredLeft, false);
+            r.removeFromLeft(whereWidth);
+            g.setColour(theme::mid);
+            g.setFont(bodyFont());
+            const auto what = where.isEmpty() ? line.what : kDot + line.what;
+            g.drawText(shorten(what, bodyFont(), static_cast<float>(r.getWidth())), r, juce::Justification::centredLeft, false);
+        }
+        text.removeFromTop(kChangeGap);
+    }
     wrapped(kGoingBack, bodyFont(), theme::mid, text.getWidth()).draw(g, text.toFloat());
 
     // The footer's sentence, or what went wrong in its place (in caution: something to try again, not something broken).

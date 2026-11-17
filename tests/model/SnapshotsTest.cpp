@@ -88,6 +88,14 @@ TEST_CASE("the snapshots dialog lists them in the mockup's words, and nothing of
         CHECK(dialog.state().rows[0].name == "Opened the folder");  CHECK(dialog.state().rows[0].automatic);
         CHECK(dialog.state().rows[0].when.startsWith("Today "));
         CHECK(dialog.selected() == dialog.state().rows[0].id);
+        CHECK(dialog.changes().empty());                         // nothing has changed since "Opened the folder" yet
+        s.commands().run("band.setLevel", params({{"which", "pad"}, {"db", -3}}));
+        dialog.refresh();
+        REQUIRE(dialog.changes().size() == 1);
+        CHECK(dialog.changes()[0].where == "Band");
+        s.commands().undo();
+        dialog.refresh();
+        CHECK(dialog.changes().empty());
         dialog.saveNow("Before soundcheck");
         REQUIRE(dialog.state().rows.size() == 2);
         CHECK(dialog.state().rows[0].name == "Before soundcheck");  CHECK(dialog.selected() == dialog.state().rows[0].id);

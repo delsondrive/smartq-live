@@ -25,6 +25,8 @@ public:
     // snapshots beyond the newest kAutomaticKept are deleted. A named one is always made, and never pruned.
     juce::Result create(const BandModel&, const juce::String& name, bool automatic);
     std::vector<SnapshotInfo> list() const;                       // newest first, by sequence
+    // The snapshot's documents as a model (into is expected empty); a failure when it doesn't exist or can't be read.
+    juce::Result load(const juce::String& id, BandModel& into) const;
     // Every document as the snapshot has it, and the ones it hasn't removed, as one undoable "snapshot.apply" step; the
     // present is saved as a snapshot named "Before going back" (not automatic) once that step is taken, so a refusal (Show
     // mode) writes nothing. When the present can't be saved, the step is taken back (and can't be redone): nothing changes.

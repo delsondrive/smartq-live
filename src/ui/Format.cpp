@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "model/Words.h"
+
 namespace sqlive::ui {
 
 namespace {
@@ -33,11 +35,7 @@ juce::String formatStripDb(float db) {
 
 juce::String formatLevelDb(float db) { return db <= kOffDb ? juce::String("off") : formatDb(db) + " dB"; }
 
-juce::String formatDbNumber(float db) {
-    const float r = tenths(db);
-    const auto number = r == std::round(r) ? juce::String(static_cast<int>(std::round(r))) : juce::String(r, 1);
-    return r > 0.0f ? "+" + number : number;
-}
+juce::String formatDbNumber(float db) { return model::formatDbNumber(db); }
 
 std::optional<float> parseDb(const juce::String& typed) {
     auto s = typed.trim();
@@ -51,11 +49,7 @@ std::optional<float> parseDb(const juce::String& typed) {
     return std::isfinite(db) ? std::optional<float>(db) : std::nullopt;
 }
 
-juce::String formatBpm(double bpm) {
-    auto text = juce::String(std::round(bpm * 100.0) / 100.0, 2);
-    if (text.containsChar('.')) text = text.trimCharactersAtEnd("0").trimCharactersAtEnd(".");
-    return text;
-}
+juce::String formatBpm(double bpm) { return model::formatBpm(bpm); }
 
 juce::String formatSeconds(double seconds) {
     auto text = juce::String(std::round(seconds * 10.0) / 10.0, 1);

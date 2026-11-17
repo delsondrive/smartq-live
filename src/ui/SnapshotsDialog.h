@@ -7,6 +7,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
+#include "model/SnapshotChanges.h"
 #include "ui/Widgets.h"
 
 namespace sqlive::ui {
@@ -46,6 +47,9 @@ public:
     const juce::String& selected() const { return selected_; }   // the selected snapshot's id; "" when there is none
     void select(const juce::String& id);
     const juce::String& problem() const { return problem_; }
+    // What differs between the selected snapshot and the band now (at most kMaxChanges lines and a last "and n more changes").
+    const std::vector<model::ChangeLine>& changes() const { return changes_; }
+    static constexpr int kMaxChanges = 12;
 
     // What the buttons and the menu do, once a name is given.
     void saveNow(const juce::String& name);                       // a named snapshot of how things are now, then selected
@@ -69,10 +73,14 @@ private:
     void askName();
     void showMenu(const juce::String& id);
     int bodyHeight() const;
+    int changesHeight() const;                                    // the right side's list of changes, with its heading
+    void readChanges();                                           // changes_ for selected_
 
     app::Session& session_;
     SnapshotsState state_;
     juce::String selected_, problem_;
+    std::vector<model::ChangeLine> changes_;
+    bool changesRead_ = false;                                    // false: the selected snapshot could not be read (or none is)
 
     juce::Viewport view_;
     std::unique_ptr<List> list_;
