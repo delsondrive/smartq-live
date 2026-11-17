@@ -23,8 +23,11 @@ void SetlistsPage::askCrossfade(const juce::String& entryId) {
             [this, entryId](const juce::String& text) { answerCrossfade(entryId, text); });
 }
 
-void SetlistsPage::answerCrossfade(const juce::String& entryId, const juce::String& text) {
-    const bool number = text.containsAnyOf("0123456789") && text.containsOnly("0123456789.");
+void SetlistsPage::answerCrossfade(const juce::String& entryId, const juce::String& answer) {
+    if (!editable()) return;
+    const auto text = answer.trim();
+    const bool oneDot = text.indexOfChar(text.indexOfChar('.') + 1, '.') < 0;      // "1.2.3" is no number
+    const bool number = text.containsAnyOf("0123456789") && text.containsOnly("0123456789.") && oneDot;
     const double value = text.getDoubleValue();
     if (!number || value < 1.0 || value > 30.0) {
         tell("A crossfade is 1 to 30 seconds.");

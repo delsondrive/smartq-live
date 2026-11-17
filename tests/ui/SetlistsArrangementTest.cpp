@@ -5,6 +5,9 @@
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
+#include "ui/ArrangementRow.h"
+#include "ui/Format.h"
+#include "model/Sections.h"
 #include "ui/SetlistEntries.h"
 #include "ui/SetlistsPage.h"
 #include "ui/ShowState.h"
@@ -190,4 +193,54 @@ TEST_CASE("an arrangement removed from the song falls back to In order", "[setli
     CHECK(row.arrangementChoices == juce::StringArray{"In order"});
     CHECK(row.length != longLength);
     CHECK(s.model().setlist(s.setlistId())->entries[0].arrangementId.isEmpty());   // the command cleared the entry's choice
+}
+
+TEST_CASE("In order is the same length on the Setlists row, the Show cards and the arrangement row", "[setlistsarr]") {
+    DemoSession d; auto& s = *d.session;
+    const auto songId = s.model().setlist(s.setlistId())->entries[0].songId;
+    REQUIRE(s.commands().run("song.setAudioStart", params({{"songId", songId}, {"seconds", 2.0}})).ok);
+    const auto* song = s.model().song(songId);
+    const auto arranged = formatTime(model::arrangementSeconds(*song, {}));
+    CHECK(arranged != formatTime(song->lengthSeconds));            // the audio starts late, so the two differ
+    CHECK(makeSetlistsState(s, {}).rows[0].length == arranged);
+    CHECK(makeArrangementRowState(s, songId, {}).length == arranged);
+    d.settle();  s.enterShow();
+    CHECK(makeShowState(s).cards[0].length == arranged);
+    CHECK(makeShowState(s).upLength == arranged);
+}
+
+TEST_CASE("the Crossfade… answer is trimmed, takes one dot, and only counts in Edit mode", "[setlistsarr]") {
+    DemoSession d; auto& s = *d.session;
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    const auto entryId = s.model().setlist(s.setlistId())->entries[0].id;
+    ScopedLook look;
+    SetlistsPage page(s);
+    snapshot(page, 1100, 618);
+    page.answerCrossfade(entryId, "1.2.3");
+    CHECK(thenOf(s, 0) == "Stop");                                 // refused
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    page.answerCrossfade(entryId, " 4 ");
+    CHECK(thenOf(s, 0) == "Crossfade 4 s");                        // trimmed, then taken
+    d.settle();  s.enterShow();
+    page.answerCrossfade(entryId, "9");
+    CHECK(thenOf(s, 0) == "Crossfade 4 s");                        // Show mode: the page changes nothing
+}
+
+TEST_CASE("THEN shows the longest crossfade words without clipping at the smallest size", "[setlistsarr]") {
+    DemoSession d; auto& s = *d.session;
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    const auto entryId = s.model().setlist(s.setlistId())->entries[0].id;
+    ScopedLook look;
+    SetlistsPage page(s);
+    for (const double seconds : {30.0, 2.5}) {
+        s.commands().run("setlist.setTransition",
+                         params({{"setlistId", s.setlistId()}, {"entryId", entryId}, {"kind", "crossfade"}, {"seconds", seconds}}));
+        d.settle();
+        snapshot(page, 1100, 618);
+        auto* then = page.thenChoice(0);
+        REQUIRE(then != nullptr);
+        CHECK(then->items()[then->selected()] == "Crossfade " + formatSeconds(seconds) + " s");
+        CHECK(then->getWidth() >= then->idealWidth());             // the words and the chevron have their room
+        CHECK(childrenInside(page));
+    }
 }

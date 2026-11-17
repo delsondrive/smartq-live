@@ -21,7 +21,7 @@ juce::String arrangementNameOf(const model::SongDoc&, const model::SetlistEntry&
 // "In order", then the song's arrangements by name.
 juce::StringArray arrangementChoicesOf(const model::SongDoc&);
 
-// The entry's length: the chosen arrangement's (model::arrangementSeconds), else the song's own.
+// The entry's length: model::arrangementSeconds of the chosen arrangement, or of the sections in order.
 double arrangedSeconds(const model::SongDoc&, const model::SetlistEntry&);
 
 // Whether the transition plays as a crossfade: one of 1 s or more. A crossfade of 0 s plays as Seamless.

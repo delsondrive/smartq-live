@@ -31,7 +31,7 @@ juce::StringArray arrangementChoicesOf(const model::SongDoc& song) {
 
 double arrangedSeconds(const model::SongDoc& song, const model::SetlistEntry& entry) {
     const auto* chosen = chosenArrangement(song, entry);
-    return chosen != nullptr ? model::arrangementSeconds(song, chosen->id) : song.lengthSeconds;
+    return model::arrangementSeconds(song, chosen != nullptr ? chosen->id : juce::String());   // "": the sections in order
 }
 
 bool playsAsCrossfade(const model::Transition& transition) {
