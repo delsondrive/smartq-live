@@ -276,7 +276,8 @@ void Engine::handle(Command& command) noexcept {
         follow_ = {static_cast<FollowKind>(command.index), command.value};
         break;
     case Type::GoToNext:
-        // While a step plays, with a song cued and nothing else moving on (Engine.h).
+        // While a step plays, with a song cued and nothing else moving on (Engine.h); never during the stop fade.
+        if (state_ == PlayState::Stopping) break;
         if (!cuesLive() || !cueFits() || transition_.busy()) break;
         if (follow_.kind == FollowKind::Crossfade && gapFrames() > 0) transition_.crossfadeNow();
         else transition_.endAt(Transition::nextBarEnd(*playing_.song, song_time_, boundary_));
@@ -721,8 +722,11 @@ std::int64_t Engine::gapFrames() const noexcept {
 
 // ---- Transitions (Transition.h) ----------------------------------------------------------------------------------------
 
-// A crossfade follow-on with a cue to fade into, the playing song playing a step, and no jump's crossfade under way.
+// A crossfade follow-on with a cue to fade into, the playing song playing a step (not stopping), and no jump's crossfade
+// under way.
 SamplePos Engine::crossfadeDue() const noexcept {
+    // Once stopping, the stop wins over everything: no crossfade begins (cuesLive alone would say so too).
+    if (state_ == PlayState::Stopping) return Transition::kNever;
     if (follow_.kind != FollowKind::Crossfade || !cueFits() || !cuesLive() || xfade_left_ > 0) return Transition::kNever;
     return transition_.crossfadeAt(arrangement_, song_time_, gapFrames());
 }

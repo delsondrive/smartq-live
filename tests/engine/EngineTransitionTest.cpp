@@ -323,3 +323,25 @@ TEST_CASE("go to next's next-bar end doesn't depend on the block size", "[transi
         for (int block : {1, 64, 4096}) CHECK(run(block) == reference);
     }
 }
+
+// ---- Fix round 2 ----
+
+TEST_CASE("a stop just before the crossfade's moment wins: the song fades smoothly to silence and the cue never starts", "[transition]") {
+    for (bool pressNext : {false, true}) {
+        INFO(pressNext);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        auto a = e.cue(share(testSong("a", 96000, 1.0f)));  e.start();  e.setFollowOn({FollowKind::Crossfade, 0.5});   // its moment: 72000
+        constexpr int kStop = 72000 - 1440;                                  // 30 ms before it
+        auto out = renderOffline(e, 2, 96000 + 5000, 512, {
+            {10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }},
+            {kStop, [](Engine& en) { en.stop(); }},
+            {kStop + 500, [&](Engine& en) { if (pressNext) en.goToNext(); }}});   // during the stop fade: nothing
+        CHECK(out[0][kStop - 1] == 1.0f);
+        for (int i = kStop + 1; i < kStop + 2400; ++i) REQUIRE(out[0][i] < out[0][i - 1]);   // smoothly down, through the moment
+        for (int i = kStop + 2400; i < 96000 + 5000; ++i) REQUIRE(out[0][i] == 0.0f);         // to exactly 0, and nothing after
+        CHECK(e.status().state == PlayState::Stopped);  CHECK(e.status().cuedSerial != 0);
+        std::vector<std::pair<EngineEvent::Type, std::uint64_t>> seen;
+        for (const auto& ev : drainFull(e)) if (ev.type != EngineEvent::Type::StepChanged) seen.push_back({ev.type, ev.serial});
+        CHECK(seen == std::vector<std::pair<EngineEvent::Type, std::uint64_t>>{{EngineEvent::Type::Started, a}, {EngineEvent::Type::Stopped, a}});
+    }
+}
