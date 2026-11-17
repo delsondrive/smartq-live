@@ -245,6 +245,39 @@ const std::vector<ShowState::Tile>& keptTiles(const model::BandModel& model, con
     return k.tiles;
 }
 
+// The playing step's announcement as the voice has it now: a step chosen to come next replaces what the arrangement would
+// have announced there (named for the chosen step's section, when its type has a clip), and a loop says nothing, as the
+// tiles' "then →" has it. songId: the song playing ("" when the map shows the next one).
+void followLiveChoice(ShowState& st, const app::Session& session, const app::ArrangementView& view, const juce::String& songId,
+                      const juce::String& arrangementId) {
+    const auto* song = session.model().song(songId);
+    const int current = view.current;
+    if (song == nullptr || current < 0 || (view.pending < 0 && !view.looping)) return;
+    if (static_cast<std::size_t>(current) >= st.spans.steps.size() || !(st.spans.total > 0.0)) return;
+    const auto& band = session.model().band();
+    const auto& span = st.spans.steps[static_cast<std::size_t>(current)];
+    const double from = span.at / st.spans.total, to = (span.at + span.songEnd - span.songStart) / st.spans.total;
+    auto cues = std::find_if(st.lanes.begin(), st.lanes.end(), [](const ShowState::Lane& lane) { return lane.name == "Cues"; });
+    if (cues != st.lanes.end())   // what the arrangement would have said in this step
+        std::erase_if(cues->chips, [&](const ShowState::Lane::Chip& c) { return c.automatic && c.position01 >= from && c.position01 < to; });
+    juce::String said;
+    if (!view.looping && view.pending >= 0 && static_cast<std::size_t>(view.pending) < view.steps.size()) {
+        const auto& typeId = view.steps[static_cast<std::size_t>(view.pending)].typeId;
+        for (const auto& type : band.sectionTypes)
+            if (typeId.isNotEmpty() && type.id == typeId && type.cueClip.isNotEmpty()) said = type.name;
+    }
+    if (said.isEmpty()) return;
+    const auto played = model::announcements(*song, band, arrangementId);
+    if (static_cast<std::size_t>(current) >= played.steps.size()) return;
+    const auto place = played.places[static_cast<std::size_t>(played.steps[static_cast<std::size_t>(current)])];
+    const double seconds = model::tempoMapOf(*song).secondsAt(place);
+    const double at = std::clamp((span.at + std::clamp(seconds, span.songStart, span.songEnd) - span.songStart) / st.spans.total, 0.0, 1.0);
+    if (cues == st.lanes.end()) cues = st.lanes.insert(st.lanes.begin(), ShowState::Lane{"Cues", theme::mid, {}});
+    cues->chips.push_back({at, said, true});
+    std::stable_sort(cues->chips.begin(), cues->chips.end(),
+                     [](const ShowState::Lane::Chip& a, const ShowState::Lane::Chip& b) { return a.position01 < b.position01; });
+}
+
 // "<keys> <what they do>"; nothing when the action has no key.
 void addHint(std::vector<KeyHint>& hints, juce::StringArray keys, const juce::String& what) {
     keys.removeEmptyStrings();
@@ -511,6 +544,7 @@ ShowState makeShowState(const app::Session& session) {
                                       ? shownList->entries[static_cast<std::size_t>(shownIndex)].arrangementId
                                       : juce::String();
     st.lanes = keptLanes(session, shownPlaying ? now.playingSongId : now.nextSongId, shownArrangement, st.spans, !steps.empty());
+    followLiveChoice(st, session, arrangement, shownPlaying ? now.playingSongId : juce::String(), shownArrangement);
     return st;
 }
 

@@ -682,3 +682,26 @@ TEST_CASE("the Show map's cues lane says, step by step, what the voice says", "[
         CHECK(places[i] * st.spans.total < st.spans.steps[i + 1].at);
     }
 }
+TEST_CASE("the Show map's cue in the playing step follows a section chosen live, and a loop says nothing", "[cuesauto]") {
+    DemoSession d(true); auto& s = *d.session;
+    auto entry = d.setlist().entries[0];
+    juce::String longEnding;
+    for (const auto& a : s.model().song(entry.songId)->arrangements) if (a.name == "Long ending") longEnding = a.id;
+    REQUIRE(s.commands().run("setlist.setArrangement", params({{"setlistId", s.setlistId()}, {"entryId", entry.id},
+                                                               {"arrangementId", longEnding}})).ok);
+    d.settle();  s.enterShow();
+    s.perform(app::Action::Start);  s.advanceWithoutDevice(int(48000 * (2.4 + 22.0)));   // bar 10: the first Chorus
+    REQUIRE(s.arrangement().current == 2);
+    const auto labels = [&] {
+        juce::StringArray out;
+        const auto st = makeShowState(s);
+        if (!st.lanes.empty()) for (const auto& chip : st.lanes[0].chips) out.add(chip.label);
+        return out;
+    };
+    CHECK(labels() == juce::StringArray{"Verse", "Chorus", "Chorus", "Outro"});
+    s.perform(app::Action::NextSectionLater);  s.advanceWithoutDevice(480);   // the Outro next, as the tiles say
+    REQUIRE(s.arrangement().pending == 4);
+    CHECK(labels() == juce::StringArray{"Verse", "Chorus", "Outro", "Outro"});   // what the voice says now, in this step
+    s.perform(app::Action::LoopSection);  s.advanceWithoutDevice(480);
+    CHECK(labels() == juce::StringArray{"Verse", "Chorus", "Outro"});             // looping: nothing said in this step
+}

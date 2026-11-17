@@ -113,7 +113,8 @@ struct ShowState {
     // one lane per band device that has a change in it, in the band's order, each change a chip with its
     // model::markerLabel, in the lane's order. The automatic cues are the voice's, step by step as the entry's arrangement
     // plays (model::announcements): each in the step it is said in, named for the section that follows that step, none in
-    // the last; the manual ones as the Song editor has them. A chip's place is across the map's span: for a song with a
+    // the last, the playing step's following a step chosen live (or a loop: none) as the tiles' "then →" does; the manual
+    // ones as the Song editor has them. A chip's place is across the map's span: for a song with a
     // single step, from the count-in to the end (mapSpanSeconds); with sections, along its steps laid end to end (a section
     // played twice has its chips twice, and those in a section the arrangement leaves out are left out too).
     struct Lane {
