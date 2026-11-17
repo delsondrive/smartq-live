@@ -18,6 +18,7 @@ namespace sqlive::ui {
 // and channels, the sentence from the state, and "Overall level" with the output's trim (drag up or down to change,
 // Shift for fine steps, double-click for 0 dB; one Session::setLevel gesture per drag). Under it, for the song, the level
 // check's box, "WHAT EACH OUTPUT GETS · LOUDEST MOMENT" (MixerState::outputLines), then the mockup's closing sentence.
+// While it is shown, its song is measured even outside the setlist (LevelChecker::alsoMeasure); hidden, it is forgotten.
 //
 // It changes nothing itself: levels go through Session::setLevel and setMute, which decide (a command in Edit mode,
 // tonight's level in Show mode). Nothing on it takes the keyboard. It refreshes on Session::changes() while visible,

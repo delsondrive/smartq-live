@@ -507,6 +507,7 @@ void Session::pollFolder() {
     if (mode_ == Mode::Show) return;                             // a show goes on with what it started with
     if (outside_->poll()) changed();
     cues_.lookAgain();                                           // a clip a bandmate replaced: the songs saying it are built again
+    if (level_checker_ != nullptr) level_checker_->noteChanges();   // and the part files: one changed on disk is measured again
 }
 
 void Session::flushForClose() {

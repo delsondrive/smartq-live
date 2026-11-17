@@ -103,7 +103,8 @@ void addOutputLines(MixerState& state, const app::Session& session, const juce::
     const auto& checker = session.levelChecker();
     const auto checked = checker.state(songId);
     if (checked == State::CantMeasure) {
-        state.outputLinesNote = "This song has no audio loaded.";
+        state.outputLinesNote = checker.inCloud(songId) ? juce::String("This song's audio is still in the cloud.")
+                                                        : juce::String("This song has no audio loaded.");
         return;
     }
     const auto levels = checked == State::Done ? checker.levels(songId) : std::nullopt;
@@ -117,15 +118,14 @@ void addOutputLines(MixerState& state, const app::Session& session, const juce::
         if (out == rig.outputs.end()) continue;
         MixerState::OutputLine line;
         line.name = out->name + juce::String::fromUTF8(" \xc2\xb7 ") + formatChannels(out->firstChannel, out->stereo);
-        line.used = model::busIndexOf(rig, out->id, engine::kMaxDeviceChannels) >= 0;
+        line.used = model::isMeasured(rig, out->id);               // as measureSong decides it
         if (!line.used) {
             line.value = "not used";
         } else if (peak.clips) {
             line.clips = true;
             line.value = "clips";
             line.fill01 = 1.0f;
-            const float over = std::max(0.1f, std::round(peak.peakDb * 10.0f) / 10.0f);   // as model::describeClip says it
-            line.detail = "Bar " + juce::String(peak.bar) + ": " + juce::String(over, 1) + " dB over. Turn a part down.";
+            line.detail = "Bar " + juce::String(peak.bar) + ": " + juce::String(model::clipOverDb(peak), 1) + " dB over. Turn a part down.";
         } else if (peak.peakDb <= -99.0f) {
             line.value = "silent";
         } else {
@@ -384,7 +384,6 @@ MixerPanel::MixerPanel(app::Session& session) : session_(session), row_(std::mak
 MixerPanel::~MixerPanel() { session_.changes().removeChangeListener(this); }
 
 void MixerPanel::show(const juce::String& songId, const juce::String& outputId) {
-    session_.levelChecker().alsoMeasure(songId);
     songId_ = songId;
     outputId_ = outputId;
     refresh(true);

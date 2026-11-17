@@ -39,7 +39,7 @@ struct MixerState {
     // the rig, "Headphones · 1/2", its meter filled to (peak + 23) / 23 (the mockup's scale), and the peak, "-9 dB"; or
     // "clips" with a red meter and the detail "Bar 97: 1.4 dB over. Turn a part down."; or "silent"; or "not used" with no
     // meter, for an output that has no bus. While the song isn't measured there are no lines and the note says
-    // "Measuring…", or "This song has no audio loaded."; "" with no song.
+    // "Measuring…", "This song has no audio loaded." or "This song's audio is still in the cloud."; "" with no song.
     struct OutputLine {
         juce::String name, value;
         float fill01 = 0.0f;
@@ -74,8 +74,7 @@ public:
     explicit MixerPanel(app::Session&);
     ~MixerPanel() override;
 
-    // And refreshes now. A song outside the setlist is measured too (LevelChecker::alsoMeasure), for its output lines.
-    void show(const juce::String& songId, const juce::String& outputId);
+    void show(const juce::String& songId, const juce::String& outputId);   // and refreshes now
     juce::String songId() const { return songId_; }
     juce::String outputId() const { return outputId_; }
     std::function<void()> onStateChanged;                         // after a refresh that changed state()

@@ -27,6 +27,13 @@ struct SongLevels { juce::String songId; std::vector<OutputPeak> outputs; bool c
 SongLevels measureSong(std::shared_ptr<const engine::PreparedSong>, const BandDoc&, const RigDoc&, double sampleRate,
                        const std::function<bool(double progress)>& keepGoing);
 
+// Whether measureSong measures this output: it has a bus in the mix for the most channels the engine renders, and lies
+// wholly within them. One that isn't reads as silence (-100 dB), and the mixer calls it "not used".
+bool isMeasured(const RigDoc&, const juce::String& outputId) noexcept;
+
+// How far over full scale a peak goes, as it is said: to a tenth of a dB, at least 0.1.
+float clipOverDb(const OutputPeak&);
+
 // "PA clips in Hold The Line at bar 97, by 1.4 dB."
 juce::String describeClip(const OutputPeak&, const juce::String& outputName, const juce::String& songTitle);
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "app/LevelChecker.h"
 #include "model/Units.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
@@ -124,7 +125,10 @@ MixerPage::MixerPage(app::Session& session)
     session_.changes().addChangeListener(this);
 }
 
-MixerPage::~MixerPage() { session_.changes().removeChangeListener(this); }
+MixerPage::~MixerPage() {
+    session_.changes().removeChangeListener(this);
+    session_.levelChecker().alsoMeasure({});
+}
 
 void MixerPage::openSong(const juce::String& songId) {
     songId_ = songId;
@@ -139,7 +143,9 @@ void MixerPage::chooseOutput(const juce::String& outputId) {
 void MixerPage::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(); }
 
 void MixerPage::visibilityChanged() {
-    if (isVisible() && !fresh_) refresh();
+    if (!isVisible()) session_.levelChecker().alsoMeasure({});   // closed: its song needn't be measured any more
+    else if (!fresh_) refresh();
+    else session_.levelChecker().alsoMeasure(songId_);
 }
 
 void MixerPage::refresh(bool force) {
@@ -166,6 +172,8 @@ void MixerPage::refresh(bool force) {
                   : !ids.isEmpty()                         ? ids[0]
                                                            : juce::String();
     }
+    // The song shown is measured too when it isn't in the setlist; a hidden page asks for nothing.
+    if (isVisible()) session_.levelChecker().alsoMeasure(songId_);
 
     bool layOut = false;
     if (ids != songIds_ || titles != songTitles_) {

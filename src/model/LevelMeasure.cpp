@@ -53,7 +53,7 @@ SongLevels measureSong(std::shared_ptr<const engine::PreparedSong> song, const B
     for (const auto& o : rig.outputs) {
         Watch w;
         const int channels = o.stereo ? 2 : 1;
-        if (busIndexOf(rig, o.id, engine::kMaxDeviceChannels) >= 0 && o.firstChannel - 1 + channels <= engine::kMaxDeviceChannels) {
+        if (isMeasured(rig, o.id)) {
             w.firstChannel = o.firstChannel - 1;
             w.channels = channels;
             deviceChannels = std::max(deviceChannels, w.firstChannel + w.channels);
@@ -134,9 +134,17 @@ SongLevels measureSong(std::shared_ptr<const engine::PreparedSong> song, const B
     return levels;
 }
 
+bool isMeasured(const RigDoc& rig, const juce::String& outputId) noexcept {
+    if (busIndexOf(rig, outputId, engine::kMaxDeviceChannels) < 0) return false;
+    for (const auto& o : rig.outputs)
+        if (o.id == outputId) return o.firstChannel - 1 + (o.stereo ? 2 : 1) <= engine::kMaxDeviceChannels;
+    return false;
+}
+
+float clipOverDb(const OutputPeak& peak) { return std::max(0.1f, std::round(peak.peakDb * 10.0f) / 10.0f); }
+
 juce::String describeClip(const OutputPeak& peak, const juce::String& outputName, const juce::String& songTitle) {
-    const float over = std::max(0.1f, std::round(peak.peakDb * 10.0f) / 10.0f);
-    return outputName + " clips in " + songTitle + " at bar " + juce::String(peak.bar) + ", by " + juce::String(over, 1) + " dB.";
+    return outputName + " clips in " + songTitle + " at bar " + juce::String(peak.bar) + ", by " + juce::String(clipOverDb(peak), 1) + " dB.";
 }
 
 }  // namespace sqlive::model

@@ -46,15 +46,21 @@ void addRouting(std::vector<CheckItem>& items, const Session& session, const Che
 }
 
 // The level check (LevelChecker): a warning naming the first output that would clip, once any does; else how far it has
-// got, or that nothing clips. Songs whose audio can't be read are left out of the count, and said. Nothing for a setlist
-// with no songs.
+// got, or that nothing clips. Songs whose audio can't be read, or is still in the cloud, are left out of the count, and
+// said. Nothing for a setlist with no songs.
 void addLevels(std::vector<CheckItem>& items, const Session& session) {
     const auto& checker = session.levelChecker();
     const int total = checker.total(), measured = checker.measured(), cant = checker.cantMeasure();
     if (total == 0 && cant == 0) return;
-    const juce::String unchecked = cant > 0 ? plural(cant, "song", "songs") + " couldn't be checked: no audio" : juce::String();
+    // "1 song couldn't be checked: no audio", "2 songs couldn't be checked: still in the cloud", or both.
+    const int inCloud = checker.stillInCloud(), noAudio = cant - inCloud;
+    juce::StringArray unchecked;
+    if (noAudio > 0) unchecked.add(plural(noAudio, "song", "songs") + " couldn't be checked: no audio");
+    if (inCloud > 0) unchecked.add(plural(inCloud, "song", "songs") + " couldn't be checked: still in the cloud");
     const auto withUnchecked = [&](const juce::String& detail) {
-        return unchecked.isEmpty() ? detail : detail.isEmpty() ? unchecked : detail + juce::String::fromUTF8(" \xc2\xb7 ") + unchecked;
+        auto parts = unchecked;
+        if (detail.isNotEmpty()) parts.insert(0, detail);
+        return parts.joinIntoString(juce::String::fromUTF8(" \xc2\xb7 "));
     };
     if (const auto sentences = checker.clipSentences(); !sentences.empty()) {
         auto detail = sentences.front();
