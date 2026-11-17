@@ -20,6 +20,7 @@ constexpr int kHeldBackPollMs = 200;
 }  // namespace
 
 LevelChecker::LevelChecker(Session& session) : juce::Thread("Smart Q Live level check"), session_(session) {
+    if (session_.mode() != Mode::Show) lookAtFiles(wanted());     // the band as it opens; a show goes on without looking
     startThread(juce::Thread::Priority::low);
 }
 
@@ -53,6 +54,7 @@ std::vector<LevelChecker::Wanted> LevelChecker::wanted() const {
 }
 
 void LevelChecker::lookAtFiles(const std::vector<Wanted>& songs) {
+    ++looks_;
     std::map<juce::String, std::vector<FileStamp>> stamps;
     for (const auto& w : songs) {
         if (stamps.count(w.songId) > 0) continue;
@@ -180,7 +182,7 @@ void LevelChecker::checkSetlist() {
     stopTimer();
     const auto& model = session_.model();
     const auto all = wanted();
-    lookAtFiles(all);
+    if (session_.mode() != Mode::Show) lookAtFiles(all);         // a show goes on with the stamps it has
     const auto band = session_.bandAsHeard();
     const auto rig = session_.rigAsHeard();
     std::deque<Job> jobs;
@@ -215,9 +217,14 @@ void LevelChecker::checkSetlist() {
     triggerAsyncUpdate();
 }
 
+void LevelChecker::lookAtPartFiles() {
+    if (session_.mode() == Mode::Show) return;
+    lookAtFiles(wanted());
+    noteChanges();
+}
+
 void LevelChecker::noteChanges() {
-    const auto all = wanted();
-    lookAtFiles(all);
+    const auto all = wanted();                                     // never the disk: the stamps as last looked at
     std::vector<std::pair<Fingerprint, bool>> now;
     for (const auto& w : all) {
         Clips clips;
@@ -315,7 +322,9 @@ std::vector<juce::String> LevelChecker::clipSentences() const {
         model::SongLevels levels;
         {
             const juce::ScopedLock sl(lock_);
-            levels = results_.at({w.songId, w.arrangementId}).levels;
+            const auto found = results_.find({w.songId, w.arrangementId});
+            if (found == results_.end()) continue;
+            levels = found->second.levels;
         }
         const auto title = session_.model().song(w.songId)->title;
         for (const auto& peak : levels.outputs) {
@@ -334,7 +343,9 @@ int LevelChecker::clippingOutputs() const {
     for (const auto& w : wanted()) {
         if (!w.counted || stateOf(w) != State::Done) continue;
         const juce::ScopedLock sl(lock_);
-        for (const auto& peak : results_.at({w.songId, w.arrangementId}).levels.outputs)
+        const auto found = results_.find({w.songId, w.arrangementId});
+        if (found == results_.end()) continue;
+        for (const auto& peak : found->second.levels.outputs)
             if (peak.clips) outputs.insert(peak.outputId);
     }
     return static_cast<int>(outputs.size());

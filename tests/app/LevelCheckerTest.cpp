@@ -99,7 +99,7 @@ TEST_CASE("the pre-show check and the mixer report the levels", "[levelcheck]") 
         const auto file = s.folder().audioFile(*s.model().song(second), part);
         REQUIRE(backup.getChildFile(file.getFileName()).copyFileTo(file));
     }
-    s.levelChecker().noteChanges();                                 // as the session's look at the band folder does
+    s.advanceWithoutDevice(0);                                      // the session's look at the band folder
     CHECK(s.levelChecker().state(second) == LevelChecker::State::Unknown);
     s.levelChecker().checkSetlist();  REQUIRE(s.levelChecker().waitUntilIdle(30000));
     CHECK(s.levelChecker().state(second) == LevelChecker::State::Done);
@@ -123,6 +123,37 @@ TEST_CASE("a part file changed on disk is measured again", "[levelcheck]") {
     sqlive::test::writeSine(file, 48000.0, 2, 3.0, 440.0, 0.99f);
     s.advanceWithoutDevice(0);                                      // the session's look at the band folder
     CHECK(s.levelChecker().state(song) == LevelChecker::State::Unknown);
+}
+
+TEST_CASE("a refresh never looks at the part files: only the folder's look and checkSetlist do", "[levelcheck]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    measureAll(s);
+    const int looks = s.levelChecker().filesLookedAt();
+    const auto& doc = *s.model().song(song);
+    sqlive::test::writeSine(s.folder().audioFile(doc, doc.parts[0]), 48000.0, 2, 3.0, 440.0, 0.99f);
+    s.levelChecker().noteChanges();
+    s.chooseNext(1);  s.chooseNext(0);                              // two refreshes that change no level
+    CHECK(s.levelChecker().filesLookedAt() == looks);
+    CHECK(s.levelChecker().state(song) == LevelChecker::State::Done);   // the change isn't seen yet
+    s.advanceWithoutDevice(0);                                      // the session's look at the band folder
+    CHECK(s.levelChecker().filesLookedAt() == looks + 1);
+    CHECK(s.levelChecker().state(song) == LevelChecker::State::Unknown);
+}
+
+TEST_CASE("in Show mode the part files are never looked at", "[levelcheck]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    measureAll(s);
+    s.enterShow();
+    const int looks = s.levelChecker().filesLookedAt();
+    const auto& doc = *s.model().song(song);
+    s.setLevel({LevelTarget::Kind::Part, song, doc.parts[0].id, {}, {}}, 2.0f, "g");
+    s.advanceWithoutDevice(512);
+    pump(2500);                                                     // the 2 s timer's checkSetlist too
+    REQUIRE(s.levelChecker().waitUntilIdle(30000));
+    s.levelChecker().checkSetlist();
+    REQUIRE(s.levelChecker().waitUntilIdle(30000));
+    CHECK(s.levelChecker().filesLookedAt() == looks);
+    CHECK(s.levelChecker().state(song) == LevelChecker::State::Done);   // measured with the stamps it had
 }
 
 TEST_CASE("a song with a part still in the cloud isn't read, and says so", "[levelcheck]") {

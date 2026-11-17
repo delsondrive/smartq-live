@@ -31,10 +31,12 @@ class Session;
 //
 // A measurement is tied to a fingerprint: the song's, the band's and the rig's revisions (BandModel::revision) and which
 // rig, tonight's changes (Session::tonightRevision), the arrangement, the sample rate, and each part's audio file as it
-// stands on disk (its path, size, modification time, and whether it is on this computer), looked at by noteChanges and
-// checkSetlist, never by state(). The cue and click clips it was built with count too: a clip that arrives or changes
-// since makes it out of date. When the fingerprint no longer matches, the song is Unknown again, at once. Where the audio
-// is read from doesn't count: the cache taking or dropping a song changes nothing.
+// stands on disk (its path, size, modification time, and whether it is on this computer). The disk is looked at only by
+// lookAtPartFiles (the session's look at the band folder), checkSetlist and the opening, never in Show mode (which goes
+// on with what was last seen), and never by noteChanges or state(), so a refresh never waits on a slow or sleeping drive.
+// The cue and click clips it was built with count too: a clip that arrives or changes since makes it out of date. When
+// the fingerprint no longer matches, the song is Unknown again, at once. Where the audio is read from doesn't count: the
+// cache taking or dropping a song changes nothing.
 //
 // How: the song as heard (Session::songAsHeard), built (model::buildPreparedSong) with the band and rig as heard at the
 // session's sample rate, with the cache's audio when the cache still holds the song at that rate as the thread begins it
@@ -44,9 +46,9 @@ class Session;
 // can be read. Either is left out of total().
 //
 // Nothing is measured until asked: checkSetlist measures at once; noteChanges, which the session calls after every change
-// and on each look at the band folder, asks for it 2 s after the last change that alters a fingerprint. A newer list
-// replaces what is waiting, and stops the song being measured unless the new list still wants it as it is. While holdBack
-// is on (a show's song playing) no new song is begun.
+// (and lookAtPartFiles after its look at the files), asks for it 2 s after the last change that alters a fingerprint. A
+// newer list replaces what is waiting, and stops the song being measured unless the new list still wants it as it is.
+// While holdBack is on (a show's song playing) no new song is begun.
 class LevelChecker : private juce::Thread, private juce::AsyncUpdater, private juce::Timer {
 public:
     enum class State { Unknown, Measuring, Done, CantMeasure };    // CantMeasure: its audio can't be read, or is in the cloud
@@ -58,6 +60,9 @@ public:
     // for the mix as it is now, in setlist order. Never waits.
     void checkSetlist();
     void noteChanges();                                            // restarts the 2 s wait when a fingerprint has changed
+    // Edit mode: the part files' stamps from the disk (the session's look at the band folder), then noteChanges. Nothing in
+    // Show mode.
+    void lookAtPartFiles();
     // The song open in the mixer: measured too when it isn't in the setlist, never counted. "" forgets it.
     void alsoMeasure(const juce::String& songId);
     void holdBack(bool);                                           // true: no new song is begun until it is false again
@@ -79,6 +84,7 @@ public:
     int measurementsMade() const;                                  // for tests: results the thread has published
     int measurementsCancelled() const;                             // for tests: songs stopped part way by a newer list
     bool measuringNow() const;                                     // for tests: the thread is on a song
+    int filesLookedAt() const { return looks_; }                  // for tests: how many times the part files were looked at
 
 private:
     struct FileStamp {
@@ -142,6 +148,7 @@ private:
     bool busy_ = false;
     std::map<Key, Result> results_;
     int made_ = 0, cancelled_ = 0;
+    int looks_ = 0;                                                // filesLookedAt(); message thread
     std::atomic<bool> cancel_{false}, held_back_{false};
     juce::WaitableEvent idle_changed_;
 };
