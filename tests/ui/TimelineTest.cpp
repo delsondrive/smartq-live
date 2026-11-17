@@ -260,3 +260,36 @@ TEST_CASE("the tempo lane snaps a new point unless Alt is down, as every lane do
     const double freeBeat = s.model().song(song)->tempo[2].beat;
     CHECK(freeBeat != std::floor(freeBeat));                      // where it was pressed, between beats
 }
+
+TEST_CASE("dragging a tempo plate is one undo step, however far the drag goes on the way", "[timeline]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(song);
+    snapshot(page, 1280, 698);
+    auto* tempo = dynamic_cast<ui::TempoLane*>(page.timeline().lanes().front().get());
+    REQUIRE(tempo != nullptr);
+    tempo->addAt({5, 1.0});
+    d.settle();
+    REQUIRE(s.model().song(song)->tempo.size() == 2);
+    const auto& doc = *s.model().song(song);
+    const auto map = model::tempoMapOf(doc);
+    const auto [start, end] = model::songExtentSeconds(doc, map);
+    const ui::BarScale scale(map, start, end, static_cast<float>(tempo->getWidth()));
+    const juce::Point<float> from{scale.xAtBar(5) + 4.0f, 14.0f};
+    const auto drag = [&](float x) {                              // a drag event, pressed at `from`
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), {x, 14.0f},
+                                juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), juce::MouseInputSource::defaultPressure,
+                                0.0f, 0.0f, 0.0f, 0.0f, tempo, tempo, now, from, now, 1, true);
+    };
+    tempo->mouseDown(eventOn(*tempo, from));
+    for (float x = from.x; x < scale.xAtBar(11); x += 7.0f) tempo->mouseDrag(drag(x));   // through bars 6 to 10
+    tempo->mouseDrag(drag(scale.xAtBar(11) + 1.0f));
+    CHECK(s.model().song(song)->tempo[1].bar == 5);               // nothing changes until it is let go
+    tempo->mouseUp(drag(scale.xAtBar(11) + 1.0f));
+    CHECK(s.model().song(song)->tempo[1].bar == 11);
+    s.commands().undo();
+    CHECK(s.model().song(song)->tempo[1].bar == 5);               // one undo: back where the drag began
+    s.commands().undo();
+    CHECK(s.model().song(song)->tempo.size() == 1);               // and the next undoes the point itself
+}
