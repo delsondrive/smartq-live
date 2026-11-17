@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <memory>
+#include <vector>
 
 #include "app/RemoteAccess.h"
 #include "app/RemoteActions.h"
@@ -79,14 +81,18 @@ TEST_CASE("the remote page lists phones and who is waiting", "[remotesetup]") {
     CHECK(makeRemoteSetupState(s, access, server).rows[0].status == "connected");
     top = makeTopBarState(s, nullptr, nullptr, Page::Setup, false, app::remoteStatusOf(access, server));
     REQUIRE(remotePill(top) != nullptr);
+    CHECK(remotePill(top)->text == "Remote 1");
     CHECK(remotePill(top)->level == StatusPill::Level::Ok);  CHECK_FALSE(remotePill(top)->editToo);
     CHECK(remotePill(top)->tooltip.isEmpty());
 
-    access.join("Bass phone", access.pin(), "10.0.0.3", 0.0);
+    // A waiting phone with its stream open follows nothing, so it isn't counted.
+    const auto bass = access.join("Bass phone", access.pin(), "10.0.0.3", 0.0);
+    access.setConnected(access.phoneIdFor(bass.token), true);
+    CHECK(app::remoteStatusOf(access, server).connected == 1);
     s.enterShow();
     CHECK(makeRemoteSetupState(s, access, server).note == "New phones can be let in when the show is over.");
     top = makeTopBarState(s, nullptr, nullptr, Page::Setup, false, app::remoteStatusOf(access, server));
-    CHECK(std::any_of(top.pills.begin(), top.pills.end(), [](auto& p) { return p.text == "Remote 0"; }));
+    CHECK(std::any_of(top.pills.begin(), top.pills.end(), [](auto& p) { return p.text == "Remote 1"; }));
     server.stop();
     CHECK_FALSE(makeRemoteSetupState(s, access, server).on);
     CHECK(remotePill(makeTopBarState(s, nullptr, nullptr, Page::Setup, false, app::remoteStatusOf(access, server))) == nullptr);
@@ -135,6 +141,39 @@ TEST_CASE("the remote page turns the remote on and off and lets phones in", "[re
 
     page.setOn(false);
     CHECK_FALSE(server.isRunning());  CHECK_FALSE(access.enabled());  CHECK_FALSE(page.state().on);
+    CHECK(page.state().problem.isEmpty());
+
+    // Off, the phones are still listed, so a lost one can be forgotten without listening for phones.
+    s.leaveShow();
+    REQUIRE(access.decide(access.phones()[0].id, PhoneAccess::ViewOnly, true));
+    page.refreshNow();
+    int choices = 0;
+    for (auto* child : page.getChildren())
+        if (dynamic_cast<Choice*>(child) != nullptr && child->isVisible()) ++choices;
+    CHECK(choices == 1);
+    page.forget(0);
+    CHECK(access.phones().empty());
+    CHECK_FALSE(server.isRunning());
+}
+
+TEST_CASE("the remote page says why it couldn't start", "[remotesetup]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    REQUIRE(access.setPort(18120));
+    app::RemoteServer server(s, access, stateOf(s));
+    std::vector<std::unique_ptr<juce::StreamingSocket>> held;       // its port and the nine after it, taken
+    for (int port = 18120; port < 18120 + app::RemoteServer::portsTried; ++port) {
+        held.push_back(std::make_unique<juce::StreamingSocket>());
+        REQUIRE(held.back()->createListener(port, "127.0.0.1"));
+    }
+    RemoteSetupPage page(s, access, server, "127.0.0.1");
+    page.setBounds(0, 0, 900, 600);  page.setVisible(true);
+    page.setOn(true);
+    CHECK_FALSE(server.isRunning());  CHECK_FALSE(page.state().on);  CHECK_FALSE(access.enabled());
+    CHECK(page.state().problem.isNotEmpty());
+    CHECK(page.state().problem == server.lastError());
+    held.clear();                                                    // freed: it starts, and there is nothing to say
+    page.setOn(true);
+    CHECK(server.isRunning());  CHECK(page.state().problem.isEmpty());
 }
 
 TEST_CASE("the remote page draws a state it is given, with no server", "[remotesetup]") {

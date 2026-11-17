@@ -529,6 +529,12 @@ RemoteServer::~RemoteServer() {
 
 juce::Result RemoteServer::start(int preferredPort, const juce::String& bindAddress) {
     JUCE_ASSERT_MESSAGE_THREAD
+    auto result = listen(preferredPort, bindAddress);
+    lastError_ = result.failed() ? result.getErrorMessage() : juce::String();
+    return result;
+}
+
+juce::Result RemoteServer::listen(int preferredPort, const juce::String& bindAddress) {
     stop();
     if (preferredPort < 1 || preferredPort > 65535) return juce::Result::fail("The remote's port must be 1 to 65535.");
 
@@ -569,6 +575,7 @@ juce::Result RemoteServer::start(int preferredPort, const juce::String& bindAddr
 
 void RemoteServer::stop() {
     JUCE_ASSERT_MESSAGE_THREAD
+    lastError_.clear();
     stopTimer();
     timerHz_ = 0;
     if (hub_) {
@@ -633,9 +640,11 @@ void RemoteServer::changeListenerCallback(juce::ChangeBroadcaster*) {
 RemoteStatus remoteStatusOf(const RemoteAccess& access, const RemoteServer& server) {
     RemoteStatus status;
     status.running = server.isRunning();
-    status.connected = server.connectedPhones();
-    for (const auto& phone : access.phones())
+    status.leftOn = access.enabled();
+    for (const auto& phone : access.phones()) {
         if (phone.access == PhoneAccess::Waiting) status.waiting = true;
+        else if (status.running && phone.connected) ++status.connected;   // a waiting phone's stream follows nothing
+    }
     return status;
 }
 

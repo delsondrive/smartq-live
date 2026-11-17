@@ -591,9 +591,7 @@ void MidiSetupPage::layoutControls() {
             const auto text = c.learning ? pressAPedal() : kLearn;
             row.learn = {left, centreY - kLearnHeight / 2, learnPillWidth(text), kLearnHeight};
         } else {
-            int end = left + static_cast<int>(std::ceil(textWidth(tdFont(), c.midi)));
-            if (c.hint.isNotEmpty()) end += static_cast<int>(std::ceil(textWidth(hintFont(), kDot + c.hint)));
-            row.clear = {end + 8, centreY - kClearSize / 2, kClearSize, kClearSize};
+            row.clear = {learnedClearX(left, row.pedal.getRight(), c.midi, c.hint), centreY - kClearSize / 2, kClearSize, kClearSize};
         }
         if (!controls_box_.contains(row.key)) row = {};                 // no room for it: nothing there to click
         control_rows_.push_back(row);
@@ -735,26 +733,12 @@ void MidiSetupPage::paintControls(juce::Graphics& g) {
                            juce::Justification::centredLeft, false);
             }
         } else {
-            const float w = textWidth(tdFont(), c.midi);
-            g.setColour(theme::mid);
-            g.setFont(tdFont());
-            g.drawText(c.midi, juce::Rectangle<float>(left, centreY - 10.0f, w + 1.0f, 20.0f), juce::Justification::centredLeft, false);
-            if (c.hint.isNotEmpty()) {
-                g.setColour(theme::dim);
-                g.setFont(hintFont());
-                g.drawText(kDot + c.hint, juce::Rectangle<float>(left + w, centreY - 10.0f, textWidth(hintFont(), kDot + c.hint) + 1.0f, 20.0f),
-                           juce::Justification::centredLeft, false);
-            }
+            drawLearned(g, left, static_cast<float>(r.clear.getX() - kClearGap), centreY, c.midi, c.hint);
             g.setColour(theme::dim.withMultipliedAlpha(editable() ? 1.0f : 0.4f));
             g.setFont(hintFont());
             g.drawText(kClear, r.clear.toFloat(), juce::Justification::centred, false);
         }
-
-        // PHONE.
-        g.setColour(c.phone == kPhoneNo ? theme::dim : theme::mint);
-        g.setFont(tdFont());
-        g.drawText(c.phone, juce::Rectangle<int>(rowArea.getRight() - kPhoneWidth + kCellPad, rowArea.getY(), kPhoneWidth - 2 * kCellPad, control_row_),
-                   juce::Justification::centredLeft, false);
+        drawPhoneCell(g, rowArea.withLeft(rowArea.getRight() - kPhoneWidth), c.phone);
     }
 }
 

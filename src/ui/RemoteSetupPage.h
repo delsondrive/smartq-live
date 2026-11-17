@@ -24,6 +24,7 @@ struct RemoteSetupState {
     };
     std::vector<Row> rows;                                        // RemoteAccess::phones(), in the order they joined
     juce::String note;                                            // why a waiting phone can't be let in right now, or ""
+    juce::String problem;                                         // off: why it couldn't start (RemoteServer::lastError)
     bool operator==(const RemoteSetupState&) const = default;
 };
 
@@ -33,12 +34,13 @@ RemoteSetupState makeRemoteSetupState(const app::Session&, const app::RemoteAcce
 // Setup's "Remote" page (the top of the mockup's screen 14; its backup laptop and timecode panels are stage 5's). One
 // panel: "Phone remote" and its switch (on starts the server on the remembered port, then remembers that it is on and the
 // port it got; off stops it and remembers that). While it is on: the QR code of the address (150 px, on white), "Address"
-// and "PIN", with a small "New PIN" link; then the phones: PHONE / CAN / (action). A waiting phone's row is tinted ember
+// and "PIN", with a small "New PIN" link. Then the phones, whenever it is on or knows any (so a lost phone can be
+// forgotten with the remote off): PHONE / CAN / (action). A waiting phone's row is tinted ember
 // and offers "Full control" (primary) and "View only", which let it in (only in Edit mode: the note above the table says
 // so otherwise, in caution), and "Refuse", which forgets it. A phone already let in has a choice of the two and "Forget".
 // A connected phone has a mint dot before its name. With no phones: "No phones yet. Scan the code with a phone on the same
-// Wi-Fi." Under the panel: "No internet is needed." Why the switch couldn't start the server is said in caution, above the
-// table's place.
+// Wi-Fi." Under the panel: "No internet is needed." Why the server couldn't start (from the switch, or when the band
+// opened with the remote left on) is said in caution under the title.
 //
 // bindAddress is where the switch starts the server: "0.0.0.0" (every local address) in the app; tests give "127.0.0.1".
 // Nothing here writes the band folder (RemoteAccess keeps this computer's settings), so it works in either mode. It
@@ -52,7 +54,6 @@ public:
     void refreshNow() { refresh(true); }                          // the Setup page, when it shows this page
     // For screenshots: draws this state, with no server running, until the page next refreshes.
     void showState(const RemoteSetupState&);
-    const juce::String& problem() const { return problem_; }      // why the remote couldn't start; "" when it could
 
     // The gestures, by row (an index into state().rows).
     void setOn(bool);
@@ -82,7 +83,6 @@ private:
     const juce::String bindAddress_;
     RemoteSetupState state_;
     app::Mode mode_;
-    juce::String problem_;
     juce::String qrFor_;                                          // the address qr_image_ was made for
     juce::Image qrImage_;
 

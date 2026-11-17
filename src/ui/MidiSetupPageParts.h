@@ -123,6 +123,35 @@ juce::String phoneText(const juce::String& action) {
     return utf8("\xe2\x9c\x93") + (hold.isNotEmpty() && offered.contains(hold) ? juce::String(" hold") : juce::String());
 }
 
+// The PHONE cell: its words in mint, "—" in dim.
+void drawPhoneCell(juce::Graphics& g, juce::Rectangle<int> cell, const juce::String& phone) {
+    g.setColour(phone == kPhoneNo ? theme::dim : theme::mint);
+    g.setFont(tdFont());
+    g.drawText(phone, cell.reduced(kCellPad, 0), juce::Justification::centredLeft, false);
+}
+
+// A learned pedal in PEDAL OR PAD: its control ("CC 64, ch 10"), the hint after it (" · tap twice"), then ✕, kClearGap
+// after them; all of it within the cell (left to cellRight, its padding kept), the words cut with "…" when they don't fit.
+constexpr int kClearGap = 8;
+int learnedClearX(int left, int cellRight, const juce::String& midi, const juce::String& hint) {
+    int end = left + static_cast<int>(std::ceil(textWidth(tdFont(), midi)));
+    if (hint.isNotEmpty()) end += static_cast<int>(std::ceil(textWidth(hintFont(), kDot + hint)));
+    return std::max(left, std::min(end + kClearGap, cellRight - kCellPad - kClearSize));
+}
+void drawLearned(juce::Graphics& g, float left, float right, float centreY, const juce::String& midi, const juce::String& hint) {
+    const float room = std::max(0.0f, right - left);
+    const auto shown = shorten(midi, tdFont(), room);
+    const float w = std::min(room, textWidth(tdFont(), shown));
+    g.setColour(theme::mid);
+    g.setFont(tdFont());
+    g.drawText(shown, juce::Rectangle<float>(left, centreY - 10.0f, w + 1.0f, 20.0f), juce::Justification::centredLeft, false);
+    if (hint.isEmpty() || room - w <= 0.0f) return;
+    const auto after = shorten(kDot + hint, hintFont(), room - w);
+    g.setColour(theme::dim);
+    g.setFont(hintFont());
+    g.drawText(after, juce::Rectangle<float>(left + w, centreY - 10.0f, room - w + 1.0f, 20.0f), juce::Justification::centredLeft, false);
+}
+
 // "1–9, 0" while the ten have their default keys; otherwise each one's key, in order ("" for none).
 juce::String sectionKeys(const app::ControlMap& map) {
     bool defaults = true;

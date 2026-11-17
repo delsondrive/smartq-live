@@ -6,7 +6,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include "app/RemoteServer.h"
+#include "app/RemoteStatus.h"
 #include "app/Session.h"
 #include "ui/Widgets.h"
 
@@ -38,8 +38,9 @@ struct TopBarState {
 
 // The top bar's state from the session. AudioHost and ShowController may be nullptr (tests): no device, no hold.
 // Runs 30 times a second: it reads only what the session already keeps. remote (app::remoteStatusOf; none in tests): while
-// the phone remote runs, "Remote <n>" (n phones following), Ok; a Warning shown in Edit mode too, with the tooltip "A phone
-// is waiting to be let in.", while one waits.
+// the phone remote runs, "Remote <n>" (n phones let in and following), Ok; a Warning shown in Edit mode too, with the
+// tooltip "A phone is waiting to be let in.", while one waits. Left on in Setup but not running (it couldn't start):
+// "Remote off", a Warning shown in Edit mode too, whose tooltip sends the user to Setup's Remote page for the reason.
 TopBarState makeTopBarState(const app::Session&, const app::AudioHost*, const app::ShowController*, Page,
                             bool keyboardElsewhere = false, const app::RemoteStatus& remote = {});
 

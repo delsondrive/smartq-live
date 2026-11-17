@@ -147,6 +147,10 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
         const auto text = "Remote " + juce::String(remote.connected);
         if (remote.waiting) t.pills.push_back({text, Level::Warning, true, {}, "A phone is waiting to be let in."});
         else t.pills.push_back({text, Level::Ok});
+    } else if (remote.leftOn) {
+        // Left on, yet not listening: phones can't follow the show, and that is never silent.
+        t.pills.push_back({"Remote off", Level::Warning, true, {},
+                           "The phone remote couldn't start. Setup, then Remote, says why."});
     }
     // The conflict copies are the list the session keeps from its last look at the band folder: nothing here scans.
     if (!session.loadReport().notes.isEmpty() || !session.conflictCopies().empty()) t.pills.push_back({kCheckFiles, Level::Warning});

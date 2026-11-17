@@ -7,6 +7,7 @@
 
 #include "app/RemoteAccess.h"
 #include "app/RemoteActions.h"
+#include "app/RemoteStatus.h"
 #include "app/Session.h"
 
 namespace sqlive::app {
@@ -81,6 +82,8 @@ public:
     // runs.
     juce::Result start(int preferredPort, const juce::String& bindAddress = "0.0.0.0");
     void stop();                                       // ends the streams and joins the web threads
+    // Why the last start() failed, for Setup's Remote page; "" once one succeeds or stop() is called. Message thread.
+    const juce::String& lastError() const { return lastError_; }
 
     bool isRunning() const;
     int port() const;                                  // 0 when not running
@@ -93,6 +96,7 @@ private:
     void timerCallback() override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void publishState();                               // message thread
+    juce::Result listen(int preferredPort, const juce::String& bindAddress);   // start(), but for lastError_
 
     Session& session_;
     RemoteAccess& access_;
@@ -105,14 +109,9 @@ private:
     int port_ = 0;
     int timerHz_ = 0;
     juce::String published_;                           // the last state handed to the hub
+    juce::String lastError_;
 };
 
-// What the top bar says about the remote: whether it runs, how many phones follow it, and whether one waits to be let in.
-struct RemoteStatus {
-    bool running = false;
-    int connected = 0;
-    bool waiting = false;
-};
 RemoteStatus remoteStatusOf(const RemoteAccess&, const RemoteServer&);   // message thread
 
 }  // namespace sqlive::app

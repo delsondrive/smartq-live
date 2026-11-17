@@ -71,6 +71,8 @@ RemoteSetupState makeRemoteSetupState(const app::Session& session, const app::Re
     if (state.on) {
         state.address = server.address();
         state.pin = access.pin();
+    } else {
+        state.problem = server.lastError();
     }
     bool anyWaiting = false;
     for (const auto& phone : access.phones()) {
@@ -149,15 +151,12 @@ const RemoteSetupState::Row* RemoteSetupPage::rowAt(int row) const {
 
 void RemoteSetupPage::setOn(bool on) {
     if (on) {
-        const auto started = server_.start(access_.port(), bindAddress_);
-        problem_ = started.failed() ? started.getErrorMessage() : juce::String();
-        if (started.wasOk()) {
+        if (server_.start(access_.port(), bindAddress_).wasOk()) {   // a failure is said from server_.lastError()
             access_.setEnabled(true);
             access_.setPort(server_.port());                      // the address stays the same next time, if it is free
         }
     } else {
         server_.stop();
-        problem_.clear();
         access_.setEnabled(false);
     }
     refresh(true);
@@ -219,13 +218,14 @@ void RemoteSetupPage::resized() {
     auto area = getLocalBounds();
     const bool on = state_.on;
     const int rowCount = static_cast<int>(state_.rows.size());
+    const bool table = on || rowCount > 0;                        // off, the phones still listed so one can be forgotten
 
     // The panel as high as its column, or the QR code when that is higher.
     int column = kTitleRow;
     if (on) column += 2 * kValueRow;
-    if (problem_.isNotEmpty()) column += kLineHeight;
-    if (on && state_.note.isNotEmpty()) column += kLineHeight;
-    if (on) column += kTableGap + kHeadRow + std::max(1, rowCount) * kRow;
+    if (state_.problem.isNotEmpty()) column += kLineHeight;
+    if (table && state_.note.isNotEmpty()) column += kLineHeight;
+    if (table) column += kTableGap + kHeadRow + std::max(1, rowCount) * kRow;
     box_ = area.removeFromTop(std::min(area.getHeight(), std::max(on ? kQrSize : 0, column) + 2 * kBoxPadY));
     area.removeFromTop(std::min(kBelowGap, area.getHeight()));
     internet_ = area.removeFromTop(std::min(kLineHeight, area.getHeight()));
@@ -252,12 +252,12 @@ void RemoteSetupPage::resized() {
         pin_.removeFromRight(kLinkGap);
         newPin_ = pin_.removeFromRight(widthInPixels(linkFont(), kNewPin)).withSizeKeepingCentre(widthInPixels(linkFont(), kNewPin), kLineHeight);
     }
-    problemLine_ = problem_.isNotEmpty() ? content.removeFromTop(kLineHeight) : juce::Rectangle<int>();
-    if (on && state_.note.isNotEmpty()) noteLine_ = content.removeFromTop(kLineHeight);
+    problemLine_ = state_.problem.isNotEmpty() ? content.removeFromTop(kLineHeight) : juce::Rectangle<int>();
+    if (table && state_.note.isNotEmpty()) noteLine_ = content.removeFromTop(kLineHeight);
 
     rows_.clear();
     links_.clear();
-    if (on) {
+    if (table) {
         content.removeFromTop(kTableGap);
         head_ = content.removeFromTop(kHeadRow);
         actionX_ = head_.getRight() - std::min(kActionWidth, head_.getWidth());
@@ -335,7 +335,7 @@ void RemoteSetupPage::paint(juce::Graphics& g) {
     g.setFont(rowFont());
     g.setColour(theme::caution);
     if (!problemLine_.isEmpty())
-        g.drawText(shorten(problem_, rowFont(), static_cast<float>(problemLine_.getWidth())), problemLine_, juce::Justification::centredLeft, false);
+        g.drawText(shorten(state_.problem, rowFont(), static_cast<float>(problemLine_.getWidth())), problemLine_, juce::Justification::centredLeft, false);
     if (!noteLine_.isEmpty())
         g.drawText(shorten(state_.note, rowFont(), static_cast<float>(noteLine_.getWidth())), noteLine_, juce::Justification::centredLeft, false);
 
