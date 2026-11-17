@@ -1,29 +1,29 @@
-# Smart Q Live acceptance checklist, stages 1 to 3
+# Smart Q Live acceptance checklist, stages 1 to 4
 
 This is for you, on the laptop you play shows from, with your real audio interface. Tick each line. Each line is one thing to do and what should happen. If something sounds, looks or feels wrong, write it down with the screen's name, what you did and what you saw. A note like "Setlists page, dragged song 3 above song 1, the list jumped back" is exactly what is needed.
 
 Use the Release build (`build\SmartQLive_artefacts\Release\Smart Q Live.exe`). Use a real song of yours with real stems, not only the demo band. Use headphones or in-ears you trust.
 
-Every section here is needed. Stage 1 (sections 1 to 10), stage 2 (sections 11 to 17) and stage 3 (sections 18 to 25) are each accepted when every line in their sections is ticked, or when what is left is written down.
+Every section here is needed. Stage 1 (sections 1 to 10), stage 2 (sections 11 to 17), stage 3 (sections 18 to 25) and stage 4 (sections 26 to 30) are each accepted when every line in their sections is ticked, or when what is left is written down.
 
-Lines that need your ears are marked **(by ear)**. Lines that need a second computer are marked **(two computers)**. Stage 2 needs at least one MIDI pedalboard (or other MIDI gear that changes patch on a program change) on a USB MIDI port, and one MIDI footswitch. Stage 3 needs a real song of yours with markers for its sections in its MIDI file.
+Lines that need your ears are marked **(by ear)**. Lines that need a second computer are marked **(two computers)**. Stage 2 needs at least one MIDI pedalboard (or other MIDI gear that changes patch on a program change) on a USB MIDI port, and one MIDI footswitch. Stage 3 needs a real song of yours with markers for its sections in its MIDI file. Stage 4 needs a phone or two on the same Wi-Fi as the laptop (an iPhone with Safari and an Android phone with Chrome, if you have both).
 
 ## What Smart Q Live is at this stage
 
-Smart Q Live plays your backing tracks for a show. It keeps your songs and setlists in a band folder, a normal folder that is best kept in OneDrive. It makes its own click. It has one mix for each output of your audio interface, so each person can have their own mix in their own in-ears. It changes your pedalboards' patches at set points in each song, and can send them MIDI clock. It knows each song's sections, and in Show mode you can choose the next section, loop one, or go on to the next song early; a spoken cue in the in-ears says which section comes next. Songs can follow one another with a gap, a crossfade or no gap at all, and a part or the click can be faded or muted over a section. In Show mode you run it from the keyboard or from MIDI footswitches.
+Smart Q Live plays your backing tracks for a show. It keeps your songs and setlists in a band folder, a normal folder that is best kept in OneDrive. It makes its own click. It has one mix for each output of your audio interface, so each person can have their own mix in their own in-ears. It changes your pedalboards' patches at set points in each song, and can send them MIDI clock. It knows each song's sections, and in Show mode you can choose the next section, loop one, or go on to the next song early; a spoken cue in the in-ears says which section comes next. Songs can follow one another with a gap, a crossfade or no gap at all, and a part or the click can be faded or muted over a section. A level check works out each output's loudest moment in every song without playing it, and says so before the show if one would clip. A phone on the same Wi-Fi can follow the show or run it. In Show mode you run it from the keyboard or from MIDI footswitches.
 
 These are the screens:
 
 - **Song editor**: one song, with its arrangements, its tempo, its count-in, its sections, its cues, a lane of pedal changes for each MIDI device, and its parts with their automation.
 - **Mixer**: the levels of one song, or the mix of one output.
 - **Setlists**: the running order of a show.
-- **Setup**: your audio interface, your outputs and your roles on its **Audio & routing** page; your MIDI devices and what each action is triggered by on its **MIDI & controls** page; the section types and their spoken cues on its **Cue voice** page.
-- **Snapshots**: the button at the top in Edit mode. A copy of every song, setlist and setting, to go back to.
+- **Setup**: your audio interface, your outputs and your roles on its **Audio & routing** page; your MIDI devices and what each action is triggered by on its **MIDI & controls** page; the section types and their spoken cues on its **Cue voice** page; the phone remote on its **Remote** page.
+- **Snapshots**: the button at the top in Edit mode. A copy of every song, setlist and setting, to go back to; it lists what has changed since each one.
 - **Show mode**: the same screens, locked, with only the faders live. **Tab** switches to the stage view, made for the drum throne.
 
 The **EDIT** and **SHOW** switch at the top changes between Edit mode and Show mode.
 
-Not built yet, so do not look for them: the pad, the phone remote and the backup laptop.
+Not built yet, so do not look for them: the pad, timecode output and the backup laptop.
 
 ## 1. Starting up
 
@@ -335,6 +335,35 @@ Set a latching footswitch to momentary on the footswitch itself before you learn
 ## 25. Starting from a section
 
 - [ ] **Starting from a section:** stopped, press a number, hear one bar of click, then that section, with the right patch.
+
+## 26. Levels before the show
+
+- [ ] **Levels before the show:** in the Mixer, raise a few parts until an output clips. Its panel turns red, says "clips" and names the bar and by how many dB. Open the pre-show check (click **SHOW**): its Levels line warns and says how many outputs would clip. Lower the parts and the warning goes by itself, without pressing anything.
+
+## 27. Snapshot changes
+
+- [ ] **Snapshot changes:** click **Snapshots** and save one. Then change a pedal change's bar, a level and a cue, and open Snapshots again: each change is listed in plain words under the snapshot, with the song's name. Make more than 12 changes: the list stops at 12 and says "and n more changes".
+
+## 28. Phone remote, getting in
+
+- [ ] **Turn it on:** on Setup's **Remote** page, switch **Phone remote** on. A QR code, an address and a four-digit PIN appear. Windows may ask whether to allow Smart Q Live on the network the first time: allow it on private networks. The top bar shows "Remote 0".
+- [ ] **Scan and join (a real phone):** scan the code with a phone on the same Wi-Fi, or type the address. Type a wrong PIN: the phone says so. Type the right PIN: the phone says it is waiting, and the laptop lists it as "waiting".
+- [ ] **Let it in:** let the phone in as **View only**: it shows the show but has no buttons that change anything. Change it to **Full control**: its buttons appear without reloading.
+- [ ] **More phones:** join a second phone. **Refuse** one, **Forget** another, and join again with the PIN. Try **New PIN**: phones already let in carry on.
+- [ ] **Edit mode only:** in Show mode, a new phone still joins and waits, but the laptop says it can be let in when the show is over.
+
+## 29. Phone remote, in a show
+
+- [ ] **Following:** on a view-only phone, play a song: the phone shows the song, the section playing and the bar, and keeps up.
+- [ ] **Controlling:** from a full-control phone choose the next song, start, choose a section, loop it, and hold the stop button to stop. A single tap on the stop button must do nothing. Check it on an iPhone (Safari) and an Android phone (Chrome): a long press must not select text or open a menu.
+- [ ] **Real touch:** the buttons are big enough to hit on a dark stage with a thumb, and nothing moves under your finger.
+- [ ] **A new phone in a show:** try to join with a new phone during the show: it waits and cannot do anything until it is let in after the show.
+
+## 30. Phone remote, things going wrong
+
+- [ ] **Wi-Fi off and on:** turn the phone's Wi-Fi off and on mid-song. The music does not change. The phone dims and says "Reconnecting…", then catches up on its own.
+- [ ] **Lock and unlock:** lock the phone and unlock it: the page comes back with the right song, without joining again.
+- [ ] **Turning it off:** switch the remote off on the laptop while a phone is connected. The phone dims and says "Reconnecting…"; the music does not change. Turn it on again and the phone comes back.
 
 ## What to write down
 

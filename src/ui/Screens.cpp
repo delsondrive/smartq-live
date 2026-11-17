@@ -10,6 +10,9 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "app/AudioHost.h"
+#include "app/LevelChecker.h"
+#include "app/RemoteAccess.h"
+#include "app/RemoteServer.h"
 #include "app/ControlInput.h"
 #include "app/MidiPorts.h"
 #include "app/Session.h"
@@ -24,6 +27,7 @@
 #include "ui/MixerPage.h"
 #include "ui/NewComputerPage.h"
 #include "ui/Pages.h"
+#include "ui/RemoteSetupPage.h"
 #include "ui/SetlistsPage.h"
 #include "ui/SetupPage.h"
 #include "ui/SongEditorPage.h"
@@ -101,14 +105,18 @@ public:
         input_ = std::make_unique<app::ControlInput>(
             *session_, *controller_, [] { return juce::StringArray(); },
             [](const juce::String&, juce::MidiInputCallback*) -> std::unique_ptr<juce::MidiInput> { return nullptr; });
+        access_ = std::make_unique<app::RemoteAccess>(*settings_, root);
+        server_ = std::make_unique<app::RemoteServer>(*session_, *access_, [] { return juce::String("{}"); });   // never started
         shell_ = std::make_unique<AppShell>(*session_, host_.get());
         shell_->setShowController(controller_.get());
-        plugInPages(*shell_, *session_, host_.get(), controller_.get(), input_.get());
+        plugInPages(*shell_, *session_, host_.get(), controller_.get(), input_.get(), access_.get(), server_.get());
         settle();
     }
 
     ~Scene() {
         shell_.reset();
+        server_.reset();
+        access_.reset();
         input_.reset();
         controller_.reset();
         host_.reset();
@@ -123,6 +131,8 @@ public:
     bool ok() const { return shell_ != nullptr; }
     app::Session& session() { return *session_; }
     app::Settings& settings() { return *settings_; }
+    app::RemoteAccess& remoteAccess() { return *access_; }
+    app::RemoteServer& remoteServer() { return *server_; }
     app::AudioHost& host() { return *host_; }
     AppShell& shell() { return *shell_; }
     const juce::File& folder() const { return folder_; }
@@ -161,6 +171,25 @@ public:
         return dynamic_cast<PageType*>(shell_->currentContent());
     }
 
+    // The level check run to its end on the setlist as it is mixed now.
+    void measureLevels() {
+        session_->levelChecker().checkSetlist();
+        session_->levelChecker().waitUntilIdle(30000);
+        pump();
+    }
+
+    // Every part and the PA's output lifted until that output clips somewhere, then measured again.
+    void makeOneOutputClip() {
+        const auto* rig = session_->model().rig(session_->rigId());
+        if (rig != nullptr && !rig->outputs.empty())
+            session_->commands().run("output.set", model::jsonObject({{"rigId", rig->id}, {"outputId", rig->outputs[0].id}, {"trimDb", 6}}));
+        for (int i = 0; i < 3; ++i)
+            if (const auto* song = session_->model().song(songIdAt(i)))
+                for (const auto& part : song->parts)
+                    session_->commands().run("part.set", model::jsonObject({{"songId", song->id}, {"partId", part.id}, {"gainDb", 6}}));
+        measureLevels();
+    }
+
 private:
     // Each of the band's devices on a port of its own on this computer, in the current rig.
     bool bindPorts() {
@@ -192,6 +221,8 @@ private:
     std::unique_ptr<app::AudioHost> host_;
     std::unique_ptr<app::ShowController> controller_;
     std::unique_ptr<app::ControlInput> input_;
+    std::unique_ptr<app::RemoteAccess> access_;                  // for Setup's Remote page; its server is never started
+    std::unique_ptr<app::RemoteServer> server_;
     std::unique_ptr<AppShell> shell_;
 };
 
@@ -336,6 +367,7 @@ juce::Image render(const juce::String& name, int width, int height) {
             return image;
         }
     } else if (name == "preshow-check") {
+        scene.measureLevels();                                    // the Levels line: "no output clips in any of the 3 songs"
         shell.requestMode(Mode::Show);
     } else if (name == "interrupted") {
         session.enterShow();
@@ -384,13 +416,51 @@ juce::Image render(const juce::String& name, int width, int height) {
         if (auto* setup = scene.page<SetupPage>(Page::Setup)) setup->showSubTab(SetupPage::SubTab::Midi);
     } else if (name == "snapshots") {
         session.snapshots().create(session.model(), "Before soundcheck", false);
+        // Then a pedal change moved a bar, a cue added, the click turned up and every part of all three songs lifted: more lines
+        // than the dialog lists, so its last line says how many more.
+        juce::String deviceId;
+        if (const auto markerId = changeAt(session, scene.songIdAt(0), "Guitar 1", 9, deviceId); markerId.isNotEmpty())
+            session.commands().run("marker.set", model::jsonObject({{"songId", scene.songIdAt(0)}, {"deviceId", deviceId},
+                                                                    {"markerId", markerId}, {"bar", 10}}));
+        addWatchMe(session, scene.songIdAt(0));
+        addWatchMe(session, scene.songIdAt(1));
+        addWatchMe(session, scene.songIdAt(2));
+        session.commands().run("band.setLevel", model::jsonObject({{"which", "click"}, {"db", session.model().band().clickDb + 2.0f}}));
+        for (int i = 0; i < 3; ++i)
+            if (const auto* song = session.model().song(scene.songIdAt(i)))
+                for (const auto& part : song->parts)
+                    session.commands().run("part.set", model::jsonObject({{"songId", song->id}, {"partId", part.id}, {"gainDb", 2}}));
         shell.openSnapshotsDialog();
     } else if (name == "mixer-song" || name == "mixer-output") {
+        if (name == "mixer-song") scene.makeOneOutputClip();      // the loudest moments, with the PA over
         if (auto* mixer = scene.page<MixerPage>(Page::Mixer)) {
             mixer->openSong(scene.songIdAt(0));
             const auto* rig = session.model().rig(session.rigId());
             if (name == "mixer-output" && rig != nullptr && !rig->outputs.empty()) mixer->chooseOutput(rig->outputs[0].id);
         }
+    } else if (name == "remote-setup") {
+        // The server on, one phone waiting and two let in, as the mockup's screen 14 has it. Nothing is started: the page
+        // draws a state it is given, on an address that is not this computer's.
+        auto& access = scene.remoteAccess();
+        const auto pin = access.pin();
+        for (const auto* phone : {"Sam's iPhone", "Drummer's iPhone", "Guitarist's Pixel"})
+            access.join(phone, pin, juce::String("10.0.0.") + juce::String(access.phones().size() + 2), 0.0);
+        const auto phones = access.phones();
+        if (phones.size() == 3) {
+            access.decide(phones[1].id, app::PhoneAccess::FullControl, true);
+            access.decide(phones[2].id, app::PhoneAccess::ViewOnly, true);
+            access.setConnected(phones[1].id, true);
+        }
+        scene.settle();
+        if (auto* setup = scene.page<SetupPage>(Page::Setup)) {
+            setup->showSubTab(SetupPage::SubTab::Remote);
+            if (auto* remote = setup->remote()) {
+                auto state = makeRemoteSetupState(session, access, scene.remoteServer());
+                state.on = true;  state.address = "http://192.168.1.20:8080";  state.pin = "4719";  state.problem = {};
+                remote->showState(state);
+            }
+        }
+        return snapshot(shell, width, height);
     } else if (name == "routing") {
         scene.page<juce::Component>(Page::Setup);
     } else if (name == "cue-voice") {
@@ -416,7 +486,7 @@ juce::Image render(const juce::String& name, int width, int height) {
 juce::StringArray screenNames() {
     return {"main-view", "stage-playing", "stage-looping", "stage-between", "stage-loading", "preshow-check", "interrupted",
             "welcome", "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing",
-            "midi-setup", "cue-voice", "snapshots"};
+            "midi-setup", "cue-voice", "snapshots", "remote-setup"};
 }
 
 juce::Image renderScreen(const juce::String& name, int width, int height) {

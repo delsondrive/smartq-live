@@ -13,7 +13,7 @@ The first runs the tests with that Catch2 filter; the second builds `build\Smart
 
 ## Status
 
-Stage 3 done: sections, live arrangement, the cue voice, crossfades and automation.
+Stage 4 done: phone remote, a level check before the show, and snapshots that say what changed.
 
 ## Using it
 
@@ -37,5 +37,11 @@ In Show mode:
 - **L** loops the section playing. **Backspace** cancels the chosen section or the loop.
 - Hold **→** (1 s), or tap a pedal learned for **Go to the next song now** twice, to go to the next song now.
 - **Tab** switches between the main view and the stage view.
+
+The phone remote (Setup, **Remote**) turns the same controls into buttons on a phone: join it with the QR code and the PIN, then let it in from the laptop in Edit mode, as **View only** or **Full control**. Stop on the phone needs a hold, as on the keyboard.
+
+## What comes next
+
+The pad player, timecode output and a backup laptop are designed but not built, and each will be confirmed with you first.
 
 The things to try by hand with your real interface are listed in `docs/acceptance.md`.
