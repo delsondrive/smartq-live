@@ -266,6 +266,7 @@ TEST_CASE("the CUE card changes what a cue says, one undo step, and hears it onl
     REQUIRE(songOf(s, song).cues.size() == 1);
     CHECK(songOf(s, song).cues[0].clip == "cues/built-in/Last time.wav");  CHECK(songOf(s, song).cues[0].text == "Last time");
     CHECK(says->selected() == 1);
+    CHECK(card.state().visible);  CHECK(card.state().cueId == cue);   // still the same cue, shown again from a copy of its id
     REQUIRE(s.commands().undo().ok);                              // one undo step
     CHECK(songOf(s, song).cues[0].clip == kWatchMe);  CHECK(songOf(s, song).cues[0].text == "Watch me");
     card.show(song, cue);
@@ -339,6 +340,8 @@ TEST_CASE("the quick actions copy a change to every section of its type, saying 
     const auto& faded = songOf(s, song).automation.at(bass);
     REQUIRE(faded.size() == 2);
     CHECK(faded[0].bar == 5);  CHECK(faded[0].db == -60.0f);  CHECK(faded[1].bar == 9);  CHECK(faded[1].db == 0.0f);
+    REQUIRE(s.commands().undo().ok);                              // the fade was one undo step
+    CHECK(songOf(s, song).automation.count(bass) == 0);
     mute->triggerClick();
     juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
     REQUIRE(songOf(s, song).automation.count("click") == 1);
@@ -570,4 +573,43 @@ TEST_CASE("with the other tools the line shows, thinner, and takes no edit; the 
     const int loud = 350 + static_cast<int>(scale.xAtBar(8));
     CHECK_FALSE(hasColour(image.getClippedImage({left, lane + 4, silentEnd - left, 36}), keysColour));
     CHECK(hasColour(image.getClippedImage({loud, lane + 4, 200, 36}), keysColour));
+}
+
+TEST_CASE("a double-click on empty space with the Automation tool adds one point, as one undo step", "[cuesauto]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    const auto part = songOf(s, song).parts[0].id;
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(song);
+    snapshot(page, 1280, 698);
+    auto* keys = dynamic_cast<ui::PartLane*>(page.timeline().lanes()[3].get());
+    REQUIRE(keys != nullptr);
+    auto& overlay = keys->automation();
+    page.timeline().setTool(EditTool::Automation);
+    const auto undoName = s.commands().undoName();
+    const auto scale = scaleOf(s, song);
+    const auto place = juce::Point<float>(scale.xAtBar(7) + 3.0f, AutomationOverlay::yForDb(-12.0f, 36.0f));
+    const juce::ModifierKeys left(juce::ModifierKeys::leftButtonModifier);
+    overlay.mouseDown(eventOn(overlay, place));                   // the first press adds the point
+    overlay.mouseUp(eventOn(overlay, place));
+    overlay.mouseDown(eventOn(overlay, place, place, left, 2));   // the second presses it
+    overlay.mouseDoubleClick(eventOn(overlay, place, place, left, 2));
+    overlay.mouseUp(eventOn(overlay, place, place, left, 2));
+    REQUIRE(songOf(s, song).automation.count(part) == 1);
+    CHECK(songOf(s, song).automation.at(part).size() == 1);       // kept: not added, then taken away again
+    CHECK(page.timeline().selection() == EditorSelection{EditorSelection::Kind::Automation, {}, part, 0});
+    d.settle();
+    REQUIRE(s.commands().undo().ok);
+    CHECK(songOf(s, song).automation.count(part) == 0);           // one undo step
+    CHECK(s.commands().undoName() == undoName);
+    // A double-click on a point that was already there still removes it.
+    d.settle();
+    overlay.mouseDown(eventOn(overlay, place));
+    overlay.mouseUp(eventOn(overlay, place));
+    REQUIRE(songOf(s, song).automation.count(part) == 1);
+    for (int clicks : {1, 2}) {
+        overlay.mouseDown(eventOn(overlay, place, place, left, clicks));
+        if (clicks == 2) overlay.mouseDoubleClick(eventOn(overlay, place, place, left, 2));
+        overlay.mouseUp(eventOn(overlay, place, place, left, clicks));
+    }
+    CHECK(songOf(s, song).automation.count(part) == 0);
 }

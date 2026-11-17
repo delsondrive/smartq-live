@@ -58,7 +58,7 @@ public:
     bool hasPoints() const { return !state_.points.empty(); }
     std::function<void(EditorSelection)> onSelect;
 
-    void addPoint(engine::BarBeat, float db);                     // the new point is selected
+    int addPoint(engine::BarBeat, float db);                      // the new point is selected; its index in the song's list, -1 if none
     void movePoint(int index, engine::BarBeat, float db);         // index into the song's list; kept between its neighbours
     void removePoint(int index);                                  // the last one's removal removes the lane's automation
     bool removeSelected();                                        // Delete: the selected point, when it is this lane's
@@ -90,7 +90,8 @@ private:
     SnapTo snap_ = SnapTo::Beat;
     const EditorSelection* selection_ = nullptr;
 
-    int pressed_ = -1;                                            // the point pressed for a drag: an index into state_.points
+    int pressed_ = -1;                                            // the point pressed for a drag: its index in the song's list
+    int added_ = -1;                                              // the point the first press of a click added: likewise
     juce::Point<float> pressedAt_;                                // where it was drawn at the press
     struct Drag {
         engine::BarBeat at;

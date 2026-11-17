@@ -254,7 +254,8 @@ void CueCard::setClip(int index) {
                                                                                {"clip", state_.clips[index]},
                                                                                {"text", state_.says[index]}}));
     if (!result.ok) tellUser(message_, *this, result.message);
-    show(songId_, state_.cueId);
+    const auto cueId = state_.cueId;                              // a copy: show() makes state_ again
+    show(songId_, cueId);
 }
 
 bool CueCard::hear() {

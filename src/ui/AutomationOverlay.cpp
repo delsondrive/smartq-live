@@ -109,9 +109,9 @@ bool AutomationOverlay::setPoints(const std::vector<model::AutomationPoint>& poi
     return result.ok;
 }
 
-void AutomationOverlay::addPoint(engine::BarBeat at, float db) {
+int AutomationOverlay::addPoint(engine::BarBeat at, float db) {
     const auto* song = session_.model().song(songId_);
-    if (song == nullptr || !editable()) return;
+    if (song == nullptr || !editable()) return -1;
     if (at.bar < 1) at = {1, 1.0};                                // never in the count-in
     const auto found = song->automation.find(target_);
     auto points = found != song->automation.end() ? found->second : std::vector<model::AutomationPoint>();
@@ -120,16 +120,18 @@ void AutomationOverlay::addPoint(engine::BarBeat at, float db) {
     point.beat = at.beat;
     point.db = juce::jlimit(bottomDb, topDb, db);
     points.push_back(point);
-    if (!setPoints(points)) return;
+    if (!setPoints(points)) return -1;
     // Stored in time order: the new point is the last at its place with its level.
-    const auto& stored = session_.model().song(songId_)->automation.at(target_);
-    for (int i = static_cast<int>(stored.size()) - 1; i >= 0; --i) {
-        const auto& p = stored[static_cast<std::size_t>(i)];
-        if (p.bar == point.bar && p.beat == point.beat && p.db == point.db) {
-            if (onSelect) onSelect({EditorSelection::Kind::Automation, {}, target_, i});
-            break;
+    int added = -1;
+    {
+        const auto& stored = session_.model().song(songId_)->automation.at(target_);
+        for (int i = static_cast<int>(stored.size()) - 1; i >= 0 && added < 0; --i) {
+            const auto& p = stored[static_cast<std::size_t>(i)];
+            if (p.bar == point.bar && p.beat == point.beat && p.db == point.db) added = i;
         }
     }
+    if (added >= 0 && onSelect) onSelect({EditorSelection::Kind::Automation, {}, target_, added});
+    return added;
 }
 
 engine::BarBeat AutomationOverlay::between(int shown, engine::BarBeat at) const {
@@ -256,6 +258,7 @@ void AutomationOverlay::paint(juce::Graphics& g) {
 void AutomationOverlay::mouseDown(const juce::MouseEvent& e) {
     pressed_ = -1;
     dragTo_.reset();
+    if (e.getNumberOfClicks() <= 1) added_ = -1;                  // a click's first press: nothing it added yet
     if (e.mods.isPopupMenu() || !editing() || scale_ == nullptr) return;
     if (const auto hit = pointAt(e.position)) {
         // Copied first: selecting rebuilds state_ (the timeline gives every lane its context again).
@@ -265,7 +268,7 @@ void AutomationOverlay::mouseDown(const juce::MouseEvent& e) {
         pressed_ = p.index;
         return;
     }
-    addPoint(placeAt(e.position.x, e.mods), toTenth(dbAtY(e.position.y, static_cast<float>(getHeight()))));
+    added_ = addPoint(placeAt(e.position.x, e.mods), toTenth(dbAtY(e.position.y, static_cast<float>(getHeight()))));
 }
 
 void AutomationOverlay::mouseDrag(const juce::MouseEvent& e) {
@@ -287,9 +290,11 @@ void AutomationOverlay::mouseUp(const juce::MouseEvent&) {
 }
 
 void AutomationOverlay::mouseDoubleClick(const juce::MouseEvent& e) {
+    const int added = std::exchange(added_, -1);
     if (e.mods.isPopupMenu() || !editing()) return;
     if (const auto hit = pointAt(e.position)) {
         const int index = state_.points[static_cast<std::size_t>(*hit)].index;
+        if (index == added) return;                               // a double-click on empty space adds one point, no more
         pressed_ = -1;
         dragTo_.reset();
         removePoint(index);

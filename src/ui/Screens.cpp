@@ -251,10 +251,10 @@ std::pair<juce::String, juce::String> addMockupSections(app::Session& session, c
     return made.ok ? std::pair{made.value.toString(), ids[4]} : std::pair<juce::String, juce::String>{};
 }
 
-// As the mockup's screen 9 has them: "Watch me" said in the Bridge, between the automatic cues, and the second part faded
+// As the mockup's screen 9 has them: "Watch me" said in the second Chorus, between the automatic cues, and the second part faded
 // in over the first Chorus (the mockup's Gtr FX lane).
 void addMockupCuesAndAutomation(app::Session& session, const juce::String& songId) {
-    session.commands().run("cue.add", model::jsonObject({{"songId", songId}, {"bar", 11}, {"beat", 2.0},
+    session.commands().run("cue.add", model::jsonObject({{"songId", songId}, {"bar", 10}, {"beat", 1.0},
                                                          {"clip", "cues/built-in/Watch me.wav"}, {"text", "Watch me"}}));
     const auto* song = session.model().song(songId);
     if (song == nullptr || song->parts.size() < 2) return;
