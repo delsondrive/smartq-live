@@ -9,6 +9,7 @@
 #include "model/Defaults.h"
 #include "model/DocumentsJson.h"
 #include "model/FileNames.h"
+#include "model/MeaningColours.h"
 #include "model/MidiCommands.h"
 #include "model/Sections.h"
 #include "model/Units.h"
@@ -138,11 +139,11 @@ void checkTypeName(const BandModel& m, const String& name, const String& exceptI
     for (const auto& t : m.band().sectionTypes)
         if (t.id != exceptId && t.name.equalsIgnoreCase(name)) refuse("There is already a section type called " + name + ".");
 }
-// A section type's colour: any but the four that mean something (ember, mint, danger, caution), which are never a type's.
+// A section type's colour: any but the four that mean something (meaning::all), which are never a type's.
 juce::Colour typeColour(const Params& p) {
     const auto colour = parseColour(p.text("colour"));
-    for (const juce::uint32 meaning : {0xfff29a78u, 0xff6ff0c8u, 0xffff6f7du, 0xffffb547u})
-        if (colour == juce::Colour(meaning)) refuse("That colour is kept for ember, mint, danger and caution. Pick another.");
+    for (const auto& kept : meaning::all)
+        if (colour == kept) refuse("That colour is kept for playing now, next, needs a look and broken. Pick another.");
     return colour;
 }
 String checkedCueClip(const Params& p) {

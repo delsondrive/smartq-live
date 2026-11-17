@@ -1,6 +1,7 @@
 #include "model/Defaults.h"
 
 #include "model/DocumentsJson.h"
+#include "model/MeaningColours.h"
 
 namespace sqlive::model {
 
@@ -13,7 +14,7 @@ juce::Colour roleColour(int index) {
 
 std::vector<Role> defaultRoles() {
     std::vector<Role> roles;
-    roles.push_back({newId(), "Click", RoleKind::Click, juce::Colour(0xfff29a78), {}});
+    roles.push_back({newId(), "Click", RoleKind::Click, meaning::ember, {}});
     roles.push_back({newId(), "Cues", RoleKind::Cues, juce::Colour(0xffc9c2cf), {}});
     roles.push_back({newId(), "Pad", RoleKind::Pad, juce::Colour(0xff86b7a8), {}});
     const char* parts[] = {"Keys", "Synth", "Guitars", "Bass", "Drums", "Perc", "BVs", "Strings", "FX"};

@@ -18,8 +18,9 @@ void registerSectionCommands(CommandLayer&);
 // What song.setSections, song.importMidi and the section commands share.
 //
 // The incoming sections (already in bar order, no two at one bar) take the id of the stored section that starts at the same
-// bar and has the same name (a section renamed or swapped for another is a new one), and its type unless they name another; one still without a type gets guessSectionTypeId(name). An incoming id that
-// would now be used twice is replaced by a new one.
+// bar and has the same name (a section renamed or swapped for another is a new one), and its type unless they name another;
+// one still without a type gets guessSectionTypeId(name). An incoming id that would now be used twice is replaced by a new
+// one.
 void keepSectionIdentities(const SongDoc& stored, const BandDoc&, std::vector<SectionDoc>& incoming);
 
 // Takes out of the song's arrangements every step whose section the song no longer stores. An arrangement left with no steps

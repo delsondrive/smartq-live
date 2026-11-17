@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "model/MeaningColours.h"
+
 namespace sqlive::theme {
 
 // Smart Q Live's palette: the mockup's :root variables (docs/mockups/smart-q-live-mockups.html), which are Smart Q's.
@@ -10,7 +12,9 @@ namespace sqlive::theme {
 inline const juce::Colour bg1{0xff0e0c11}, bg2{0xff17131b}, glow{0xff241b2c}, panel{0xff121016}, popup{0xff211b27};
 inline const juce::Colour field{0x12ffffff}, hairline{0x1cffffff};
 inline const juce::Colour text{0xfff5f2f6}, mid{0xffc9c2cf}, dim{0xff9a90a2};
-inline const juce::Colour ember{0xfff29a78}, mint{0xff6ff0c8}, danger{0xffff6f7d}, caution{0xffffb547};
+// The accents are the model's meaning colours, aliased here.
+inline const juce::Colour &ember = model::meaning::ember, &mint = model::meaning::mint, &danger = model::meaning::danger,
+                          &caution = model::meaning::caution;
 inline const juce::Colour onAccent{0xff0e0c11};                  // text on a mint or ember fill
 
 // A field under the mouse (Smart Q's), and the faint line between table rows (the mockup's td border).

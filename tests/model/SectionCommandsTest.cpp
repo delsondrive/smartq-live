@@ -270,7 +270,7 @@ TEST_CASE("section types: cue clips, and the colours that mean something", "[sec
     CHECK(f.model.band().sectionTypes.back().cueClip == "cues/tag.wav");
     CHECK(f.run("sectionType.set", {{"typeId", t}, {"cueClip", ""}}).ok);
     CHECK(f.model.band().sectionTypes.back().cueClip.isEmpty());
-    const auto kept = "That colour is kept for ember, mint, danger and caution. Pick another.";
+    const auto kept = "That colour is kept for playing now, next, needs a look and broken. Pick another.";
     for (const char* hex : {"f29a78", "6ff0c8", "ff6f7d", "ffb547"}) {
         CHECK(f.run("sectionType.add", {{"name", "Meaning"}, {"colour", hex}}).message == kept);
         CHECK(f.run("sectionType.set", {{"typeId", t}, {"colour", hex}}).message == kept);
