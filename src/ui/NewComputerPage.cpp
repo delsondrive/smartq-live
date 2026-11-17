@@ -338,7 +338,8 @@ void NewComputerPage::resized() {
     const int midiTop = kBoxTop + kBoxHeight + kBoxGap + (problem_.isNotEmpty() ? kProblemHeight : 0);
     const int rows = static_cast<int>(state_.midi.size());
     const int room = std::max(kMidiRow, buttonsY - kBoxGap - midiTop - kHeadRow);
-    midiBox_ = {x, midiTop, w, kHeadRow + std::max(kMidiRow, std::min(rows * kMidiRow, room))};
+    // + 1: the box's bottom border, below the rows, so rows that fit don't scroll by that pixel.
+    midiBox_ = {x, midiTop, w, kHeadRow + std::max(kMidiRow, std::min(rows * kMidiRow, room)) + 1};
     midiColumns_ = midiBox_.withHeight(kHeadRow);
     midiView_.setBounds(midiBox_.withTrimmedTop(kHeadRow).withTrimmedBottom(1).reduced(1, 0));
     midiView_.setVisible(rows > 0);

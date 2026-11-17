@@ -63,8 +63,8 @@ MidiSetupState makeMidiSetupState(const app::Session&, const app::ControlInput*)
 //
 // CONTROLS: one row per action: ACTION, KEY (a click waits for the next key, as "Press a key…"; Esc cancels) and PEDAL
 // OR PAD (the learned control with ✕ to forget it, or "Learn", which waits for the next pedal or pad through the window's
-// ControlInput as "Press a pedal…", pulsing in ember; Esc or a second click cancels). Without a ControlInput (tests,
-// screenshots) nothing can be learned and no row pulses.
+// ControlInput as "Press a pedal…", pulsing in ember; Esc or a second click cancels). Without a ControlInput (tests)
+// nothing can be learned and no row pulses.
 //
 // Every change is a command, in Edit mode only; a refusal, or what a command says it did, is said in the box's header for
 // 4 s. Waiting for a key or a pedal is cancelled when the page hides (cancelGestures) or the mode changes. The page takes

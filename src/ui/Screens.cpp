@@ -1,17 +1,25 @@
 #include "ui/Screens.h"
 
+#include <cstdint>
+#include <iterator>
 #include <memory>
 
 #include "app/AudioHost.h"
+#include "app/ControlInput.h"
+#include "app/MidiPorts.h"
 #include "app/Session.h"
 #include "app/Settings.h"
 #include "app/ShowController.h"
+#include "model/ActionNames.h"
 #include "model/DemoBand.h"
+#include "model/DocumentsJson.h"
+#include "model/Snapshots.h"
 #include "ui/AppShell.h"
 #include "ui/MixerPage.h"
 #include "ui/NewComputerPage.h"
 #include "ui/Pages.h"
 #include "ui/SetlistsPage.h"
+#include "ui/SetupPage.h"
 #include "ui/SongEditorPage.h"
 #include "ui/WelcomePage.h"
 
@@ -27,9 +35,18 @@ constexpr int kRate = 48000;
 // Runs the message thread's pending work: change messages, async updates and timers the views wait on.
 void pump() { juce::MessageManager::getInstance()->runDispatchLoopUntil(30); }
 
+// The pedalboards' ports in the pictures: two outputs that are always there and send nowhere.
+class SilentOutput : public app::MidiPorts::Output {
+public:
+    void send(const std::uint8_t*, int) override {}
+};
+const char* const kPorts[] = {"USB MIDI Port A", "USB MIDI Port B"};
+
 // A demo band in a temp folder of its own, with its own settings file there, a session on it with no real device, and the
-// shell wired as MainWindow wires it. An AudioHost only when asked for, and then driven only through its test hooks.
-// Everything goes, the temp folder last, when this does.
+// shell wired as MainWindow wires it. The band has its MIDI as the app makes it, each device bound on this computer to a
+// port of its own that MidiPorts finds but that sends nowhere, and the pedals are learned through a ControlInput that
+// opens no input. An AudioHost only when asked for, and then driven only through its test hooks. Everything goes, the
+// temp folder last, when this does.
 class Scene {
 public:
     explicit Scene(bool withHost)
@@ -42,18 +59,33 @@ public:
         settings_->noteOpened(root);
         session_ = std::make_unique<app::Session>(*settings_, root);
         session_->setDevice(kRate, 2);
+        // As the app makes the demo band: with its pedalboards and their changes, which Undo can't take away.
+        if (model::addDemoMidi(session_->commands()).failed() || !bindPorts()) return;
+        session_->commands().clearHistory();
+        session_->flushNow();                                     // saved, as a band opened a moment ago is
+        midi_ = std::make_unique<app::MidiPorts>(
+            *session_, [] { return juce::StringArray(kPorts, (int) std::size(kPorts)); },
+            [](const juce::String&) -> std::unique_ptr<app::MidiPorts::Output> { return std::make_unique<SilentOutput>(); });
+        session_->attachMidi(midi_.get());
+        midi_->refresh();
         if (withHost) host_ = std::make_unique<app::AudioHost>(*session_);
         controller_ = std::make_unique<app::ShowController>(*session_);
+        input_ = std::make_unique<app::ControlInput>(
+            *session_, *controller_, [] { return juce::StringArray(); },
+            [](const juce::String&, juce::MidiInputCallback*) -> std::unique_ptr<juce::MidiInput> { return nullptr; });
         shell_ = std::make_unique<AppShell>(*session_, host_.get());
         shell_->setShowController(controller_.get());
-        plugInPages(*shell_, *session_, host_.get(), controller_.get());
+        plugInPages(*shell_, *session_, host_.get(), controller_.get(), input_.get());
         settle();
     }
 
     ~Scene() {
         shell_.reset();
+        input_.reset();
         controller_.reset();
         host_.reset();
+        if (session_ != nullptr) session_->attachMidi(nullptr);
+        midi_.reset();
         session_.reset();                                         // flushes into the temp folder
         settings_.reset();
         pump();
@@ -102,11 +134,27 @@ public:
     }
 
 private:
+    // Each of the band's devices on a port of its own on this computer, in the current rig.
+    bool bindPorts() {
+        const auto& devices = session_->model().band().midiDevices;
+        for (size_t i = 0; i < devices.size() && i < std::size(kPorts); ++i) {
+            auto* params = new juce::DynamicObject();
+            params->setProperty("rigId", session_->rigId());
+            params->setProperty("deviceId", devices[i].id);
+            params->setProperty("computerId", settings_->computerName());
+            params->setProperty("port", kPorts[i]);
+            if (!session_->commands().run("rig.setMidi", juce::var(params)).ok) return false;
+        }
+        return true;
+    }
+
     juce::File folder_;
     std::unique_ptr<app::Settings> settings_;
     std::unique_ptr<app::Session> session_;
+    std::unique_ptr<app::MidiPorts> midi_;
     std::unique_ptr<app::AudioHost> host_;
     std::unique_ptr<app::ShowController> controller_;
+    std::unique_ptr<app::ControlInput> input_;
     std::unique_ptr<AppShell> shell_;
 };
 
@@ -116,7 +164,38 @@ juce::Image snapshot(juce::Component& component, int width, int height) {
     return component.createComponentSnapshot(component.getLocalBounds());
 }
 
-// The stems a band would drop for a new song: three the app recognises, one it can't place, and a click it leaves out.
+// A MIDI file exported from the DAW with the stems: a tempo change, markers, and a track of program changes per pedalboard,
+// named so the app suggests the demo band's devices for them.
+juce::File midiFileFor(const juce::File& folder) {
+    constexpr int ppq = 480, bar = ppq * 4;
+    const auto at = [](juce::MidiMessage m, int ticks) { m.setTimeStamp(ticks); return m; };
+    const auto marker = [&](const char* text, int barNumber) {
+        return at(juce::MidiMessage::textMetaEvent(6, text), (barNumber - 1) * bar);
+    };
+    const auto trackName = [&](const char* text) { return at(juce::MidiMessage::textMetaEvent(3, text), 0); };
+    const std::vector<std::vector<juce::MidiMessage>> tracks = {
+        {at(juce::MidiMessage::timeSignatureMetaEvent(4, 4), 0), at(juce::MidiMessage::tempoMetaEvent(60000000 / 112), 0),
+         at(juce::MidiMessage::tempoMetaEvent(60000000 / 120), 16 * bar), marker("Intro", 1), marker("Verse 1", 5),
+         marker("Chorus", 13), marker("Outro", 21), at(juce::MidiMessage::endOfTrack(), 24 * bar)},
+        {trackName("Gtr 1 FX"), at(juce::MidiMessage::programChange(1, 4), 0),
+         at(juce::MidiMessage::programChange(1, 12), 12 * bar), at(juce::MidiMessage::programChange(1, 20), 20 * bar)},
+        {trackName("Gtr 2 FX"), at(juce::MidiMessage::programChange(2, 2), 0), at(juce::MidiMessage::programChange(2, 9), 20 * bar)},
+    };
+    juce::MidiFile midi;
+    midi.setTicksPerQuarterNote(ppq);
+    for (const auto& track : tracks) {
+        juce::MidiMessageSequence sequence;
+        for (const auto& message : track) sequence.addEvent(message);
+        midi.addTrack(sequence);
+    }
+    const auto file = folder.getChildFile("Night Drive.mid");
+    file.deleteFile();
+    if (auto out = file.createOutputStream(); out == nullptr || !midi.writeTo(*out, 1)) return {};
+    return file;
+}
+
+// The stems a band would drop for a new song: three the app recognises, one it can't place, and a click it leaves out;
+// and the song's MIDI file.
 juce::Array<juce::File> stemsFor(Scene& scene) {
     const auto stems = scene.folder().getChildFile("Night Drive");
     stems.createDirectory();
@@ -130,7 +209,23 @@ juce::Array<juce::File> stemsFor(Scene& scene) {
         const auto target = stems.getChildFile(name);
         if (scene.session().folder().audioFile(*song, song->parts[(size_t) part]).copyFileTo(target)) files.add(target);
     }
+    if (const auto midi = midiFileFor(stems); midi.existsAsFile()) files.add(midi);
     return files;
+}
+
+// The id of the song's change on that device's lane at that bar; "" when there is none.
+juce::String changeAt(const app::Session& session, const juce::String& songId, const juce::String& deviceName, int bar,
+                      juce::String& deviceId) {
+    const auto* song = session.model().song(songId);
+    if (song == nullptr) return {};
+    for (const auto& device : session.model().band().midiDevices) {
+        if (device.name != deviceName) continue;
+        deviceId = device.id;
+        if (const auto lane = song->midiLanes.find(device.id); lane != song->midiLanes.end())
+            for (const auto& marker : lane->second)
+                if (marker.bar == bar) return marker.id;
+    }
+    return {};
 }
 
 juce::Image render(const juce::String& name, int width, int height) {
@@ -181,7 +276,28 @@ juce::Image render(const juce::String& name, int width, int height) {
     } else if (name == "song-editor") {
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onOpenSong)
             setlists->onOpenSong(scene.songIdAt(0));              // as a double-click does: the editor, and the Mixer's song
-        if (auto* editor = scene.page<SongEditorPage>(Page::SongEditor)) editor->setCursorSeconds(12.0);
+        if (auto* editor = scene.page<SongEditorPage>(Page::SongEditor)) {
+            editor->setCursorSeconds(12.0);
+            juce::String deviceId;                                // Guitar 1's Crunch selected, so the inspector shows
+            const auto markerId = changeAt(session, scene.songIdAt(0), "Guitar 1", 9, deviceId);
+            if (markerId.isNotEmpty()) editor->timeline().select({EditorSelection::Kind::Marker, deviceId, markerId});
+        }
+    } else if (name == "midi-setup") {
+        // A footswitch learned for Start and one for Stop, as the mockup has them: CC 64 and CC 65 on channel 10.
+        for (const auto& [action, controller] : {std::pair{"start", 64}, std::pair{"stop", 65}}) {
+            const auto* info = model::actionInfo(action);
+            if (info == nullptr) continue;
+            auto binding = info->defaultBinding;
+            binding.midiKind = 1;  binding.midiChannel = 10;  binding.midiNumber = controller;
+            auto* params = new juce::DynamicObject();
+            params->setProperty("action", action);
+            params->setProperty("binding", model::toVar(binding));
+            session.commands().run("controls.set", juce::var(params));
+        }
+        if (auto* setup = scene.page<SetupPage>(Page::Setup)) setup->showSubTab(SetupPage::SubTab::Midi);
+    } else if (name == "snapshots") {
+        session.snapshots().create(session.model(), "Before soundcheck", false);
+        shell.openSnapshotsDialog();
     } else if (name == "mixer-song" || name == "mixer-output") {
         if (auto* mixer = scene.page<MixerPage>(Page::Mixer)) {
             mixer->openSong(scene.songIdAt(0));
@@ -201,7 +317,8 @@ juce::Image render(const juce::String& name, int width, int height) {
 
 juce::StringArray screenNames() {
     return {"main-view", "stage-playing", "stage-between", "stage-loading", "preshow-check", "interrupted", "welcome",
-            "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing"};
+            "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing", "midi-setup",
+            "snapshots"};
 }
 
 juce::Image renderScreen(const juce::String& name, int width, int height) {

@@ -2,6 +2,8 @@
 
 #include <memory>
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
@@ -20,12 +22,17 @@ struct DemoSession {
     std::unique_ptr<app::Settings> settings;
     std::unique_ptr<app::Session> session;
 
-    DemoSession() {
+    // full: the demo band with its MIDI too (model::addDemoMidi), as the app and the screenshots make it.
+    explicit DemoSession(bool full = false) {
         const auto root = dir.dir().getChildFile("Demo band");
         model::createDemoBand(root);
         settings = std::make_unique<app::Settings>(dir.dir().getChildFile("settings.json"));
         session = std::make_unique<app::Session>(*settings, root);
         session->setDevice(48000.0, 2);
+        if (full) {
+            REQUIRE(model::addDemoMidi(session->commands()).wasOk());
+            session->commands().clearHistory();
+        }
         settle();
     }
 

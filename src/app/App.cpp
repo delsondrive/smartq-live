@@ -165,7 +165,8 @@ void App::showNewComputer() {
 
 void App::openDemoBand() {
     const auto root = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Smart Q Live demo");
-    if (!model::BandFolder::looksLikeBandFolder(root)) {
+    const bool fresh = !model::BandFolder::looksLikeBandFolder(root);
+    if (fresh) {
         const auto made = model::createDemoBand(root);
         if (made.failed()) {
             message_ = juce::AlertWindow::showScopedAsync(juce::MessageBoxOptions()
@@ -178,6 +179,11 @@ void App::openDemoBand() {
         }
     }
     openBand(root);
+    if (fresh && session_ != nullptr) {
+        // Its pedalboards and their changes, which Undo can't take away. An existing demo folder already has them.
+        model::addDemoMidi(session_->commands());
+        session_->commands().clearHistory();
+    }
 }
 
 }  // namespace sqlive::app

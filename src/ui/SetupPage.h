@@ -26,8 +26,8 @@ namespace sqlive::ui {
 // header plays a tone there instead of opening its menu. Under the panel the rig's problems (model::checkRig), in danger
 // for those that block a show and caution for the others; then the RoutingGrid.
 //
-// MIDI & controls: the MidiSetupPage, which learns pedals through the window's ControlInput (nullptr in tests and
-// screenshots: nothing is learned). Leaving the sub-tab, or the page hiding, stops it waiting for a key or a pedal.
+// MIDI & controls: the MidiSetupPage, which learns pedals through the window's ControlInput (nullptr in tests:
+// nothing is learned). Leaving the sub-tab, or the page hiding, stops it waiting for a key or a pedal.
 //
 // With no AudioHost (tests, screenshots) nothing is opened and the interface is the one the rig names, if any. Every change
 // to the band is a command, in Edit mode only; nothing here takes the keyboard (but the MIDI page while it waits for a key

@@ -36,9 +36,10 @@ MidiSummary makeMidiSummary(const app::Session&, const juce::File& midiFile, con
                             const model::MidiImportChoice*);
 
 // The mockup's .box "FROM “<FILE>”": the rows Tempo, Bar 1 starts at, Length and Sections (with the section names as pills),
-// "Pedal changes" with how many tracks, then a row per track, "“<track>” (ch <n>) →" and a Choice of the band's devices
-// and "Leave out". A track with no device is in caution with "Choose a device, or it is left out" under it. The file's
-// notes follow in dim. With no MIDI file it says "No MIDI file? …"; with one that couldn't be read, why, in danger.
+// "Pedal changes" with how many tracks, then a row per track, "“<track>” (ch <n>) →" and a Choice of the band's devices,
+// each with its dot, and "Leave out". A track with no device is in caution with "Choose a device, or it is left out" under
+// it. The file's notes follow in dim. With no MIDI file it says "No MIDI file? …"; with one that couldn't be read, why,
+// in danger.
 // A view: it reads the session's band for the device names and reports a changed track through onChoiceChanged.
 class MidiImportPanel : public juce::Component {
 public:

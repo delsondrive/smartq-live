@@ -215,12 +215,15 @@ void MidiImportPanel::update() {
     summary_ = makeMidiSummary(session_, file_, content_ ? &*content_ : nullptr, &choice_);
 
     juce::StringArray names;
+    std::vector<juce::Colour> dots;                               // each device's dot, as the mockup's .dd i
     deviceIds_.clear();
     for (const auto& d : session_.model().band().midiDevices) {
         names.add(d.name);
+        dots.push_back(d.colour);
         deviceIds_.push_back(d.id);
     }
     names.add(kLeaveOut);
+    dots.push_back(juce::Colours::transparentBlack);
 
     const auto& tracks = summary_.tracks;
     while (choices_.size() > tracks.size()) choices_.pop_back();
@@ -238,6 +241,7 @@ void MidiImportPanel::update() {
             for (std::size_t d = 0; d < deviceIds_.size(); ++d)
                 if (deviceIds_[d] == it->second) selected = static_cast<int>(d);
         choices_[i]->setItems(names, selected);
+        choices_[i]->setDots(dots);
         choices_[i]->setNeedsAttention(tracks[i].needsDevice);
         choices_[i]->setEnabled(choicesEnabled_);
     }

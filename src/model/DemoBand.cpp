@@ -170,4 +170,63 @@ juce::Result createDemoBand(const juce::File& root) {
     return result;
 }
 
+namespace {
+
+struct DemoChange { int bar, program; };
+struct DemoLanes { const char* title; std::vector<DemoChange> guitar1, guitar2; };
+
+// Guitar 1: 4 Clean, 12 Crunch, 20 Lead. Guitar 2: 2 Rhythm, 9 Ambient.
+const DemoLanes kLanes[] = {
+    {"First Light", {{1, 4}, {9, 12}, {13, 4}}, {{1, 2}, {13, 9}}},
+    {"Low Tide", {{1, 4}, {5, 20}, {9, 4}}, {{1, 9}, {9, 2}}},
+    {"Run", {{1, 12}, {9, 20}, {17, 12}}, {{1, 2}, {17, 9}}},
+};
+
+}  // namespace
+
+juce::Result addDemoMidi(CommandLayer& commands) {
+    const auto run = [&commands](const char* name, const juce::var& params, juce::var* value = nullptr) {
+        auto done = commands.run(name, params);
+        if (value != nullptr) *value = done.value;
+        return done.ok ? juce::Result::ok() : juce::Result::fail(done.message);
+    };
+    const auto& model = commands.model();
+    const auto rigId = model.rigIds().empty() ? juce::String() : model.rigIds()[0];
+
+    const auto addDevice = [&](const char* name, int channel, std::initializer_list<std::pair<int, const char*>> patches,
+                               juce::String& id) {
+        juce::var made;
+        if (auto r = run("device.add", object({{"name", name}}), &made); r.failed()) return r;
+        id = made.toString();
+        juce::Array<juce::var> list;
+        for (const auto& [program, patchName] : patches) {
+            Patch patch; patch.program = program; patch.name = patchName;
+            list.add(toVar(patch));
+        }
+        if (auto r = run("device.setPatches", object({{"deviceId", id}, {"patches", list}})); r.failed()) return r;
+        if (rigId.isEmpty()) return juce::Result::ok();
+        return run("rig.setMidi", object({{"rigId", rigId}, {"deviceId", id}, {"channel", channel}}));
+    };
+    juce::String guitar1, guitar2;
+    if (auto r = addDevice("Guitar 1", 1, {{4, "Clean"}, {12, "Crunch"}, {20, "Lead"}}, guitar1); r.failed()) return r;
+    if (auto r = addDevice("Guitar 2", 2, {{2, "Rhythm"}, {9, "Ambient"}}, guitar2); r.failed()) return r;
+
+    for (const auto& lanes : kLanes) {
+        juce::String songId;
+        for (const auto& id : model.songIds())
+            if (model.song(id)->title == lanes.title) songId = id;
+        if (songId.isEmpty()) return juce::Result::fail(juce::String("The demo band has no song called ") + lanes.title + ".");
+        for (const auto& [deviceId, changes] : {std::pair{guitar1, &lanes.guitar1}, std::pair{guitar2, &lanes.guitar2}}) {
+            for (const auto& change : *changes) {
+                MidiMessageDoc message; message.program = change.program;
+                juce::Array<juce::var> messages; messages.add(toVar(message));
+                const auto params = object({{"songId", songId}, {"deviceId", deviceId}, {"bar", change.bar}, {"beat", 1.0},
+                                            {"messages", messages}});
+                if (auto r = run("marker.add", params); r.failed()) return r;
+            }
+        }
+    }
+    return juce::Result::ok();
+}
+
 }  // namespace sqlive::model

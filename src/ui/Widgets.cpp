@@ -215,6 +215,7 @@ void CapsLabel::paint(juce::Graphics& g) {
 namespace {
 
 constexpr float kChoicePadLeft = 8.0f, kChoiceChevronSpace = 22.0f;
+constexpr float kChoiceDot = 8.0f, kChoiceDotGap = 6.0f;          // .dd i, and the .dd gap after it
 
 }  // namespace
 
@@ -245,10 +246,21 @@ void Choice::setPlaceholder(const juce::String& text) {
     repaint();
 }
 
+void Choice::setDots(std::vector<juce::Colour> dots) {
+    if (dots == dots_) return;
+    dots_ = std::move(dots);
+    repaint();
+}
+
 int Choice::idealWidth() const {
     float widest = widthOf(choiceFont(), placeholder_);
-    for (const auto& item : items_) widest = std::max(widest, widthOf(choiceFont(), item));
+    for (int i = 0; i < items_.size(); ++i) widest = std::max(widest, dotRoom(i) + widthOf(choiceFont(), items_[i]));
     return ceilToInt(widest + kChoicePadLeft + kChoiceChevronSpace);
+}
+
+float Choice::dotRoom(int item) const {
+    const bool dot = juce::isPositiveAndBelow(item, (int) dots_.size()) && !dots_[(size_t) item].isTransparent();
+    return dot ? kChoiceDot + kChoiceDotGap : 0.0f;
 }
 
 void Choice::paint(juce::Graphics& g) {
@@ -261,8 +273,13 @@ void Choice::paint(juce::Graphics& g) {
     g.setColour(needsAttention_ ? theme::caution : theme::hairline);
     g.drawRoundedRectangle(area.reduced(0.5f), theme::radiusField, 1.0f);
 
-    const auto textArea = area.withTrimmedLeft(kChoicePadLeft).withTrimmedRight(kChoiceChevronSpace);
+    auto textArea = area.withTrimmedLeft(kChoicePadLeft).withTrimmedRight(kChoiceChevronSpace);
     if (selected_ >= 0) {
+        if (const float room = dotRoom(selected_); room > 0.0f) {
+            g.setColour(dots_[(size_t) selected_]);
+            g.fillEllipse(textArea.getX(), area.getCentreY() - kChoiceDot / 2.0f, kChoiceDot, kChoiceDot);
+            textArea.removeFromLeft(room);
+        }
         g.setColour(needsAttention_ ? theme::caution : theme::text);
         g.setFont(choiceFont());
         g.drawText(shorten(items_[selected_], choiceFont(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);

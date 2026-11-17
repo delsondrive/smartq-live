@@ -81,7 +81,8 @@ private:
 // The mockup's dropdown (.dd): the chosen item on a field with a hairline border, 6 px corners and a chevron; a click
 // opens a popup menu of the items with the chosen one ticked. selected() is -1 when nothing is chosen.
 // setNeedsAttention is .dd.need: the border and the words in caution, for a choice still to be made. With nothing chosen
-// it shows its placeholder ("Choose a port…"), in dim, or in caution when it needs attention.
+// it shows its placeholder ("Choose a port…"), in dim, or in caution when it needs attention. setDots gives items the
+// mockup's .dd i: an 8 px dot in that colour before the chosen item's words (a transparent colour, or none given: no dot).
 class Choice : public juce::Component {
 public:
     Choice();
@@ -91,6 +92,7 @@ public:
     const juce::StringArray& items() const { return items_; }
     void setNeedsAttention(bool);
     void setPlaceholder(const juce::String&);
+    void setDots(std::vector<juce::Colour>);                      // one per item, in the items' order
     const juce::String& placeholder() const { return placeholder_; }
     std::function<void(int)> onChange;
 
@@ -102,11 +104,13 @@ public:
 
 private:
     void choose(int);
+    float dotRoom(int item) const;                                // the dot and its gap; 0 when the item has none
 
     juce::StringArray items_;
     int selected_ = -1;
     bool needsAttention_ = false;
     juce::String placeholder_;
+    std::vector<juce::Colour> dots_;
 };
 
 // The mockup's .tools switch: segments on a field, the chosen one raised on the popup colour in bright text. The

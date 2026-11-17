@@ -16,7 +16,9 @@
 #include "model/DocumentsJson.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
+#include "model/SongMidi.h"
 #include "model/Units.h"
+#include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
 #include "tests/support/TempDir.h"
 
@@ -105,4 +107,46 @@ TEST_CASE("no click reaches the PA through an in-ear output that shares its chan
     e.cue(song); e.start();
     auto out = engine::renderOffline(e, 2, 96000 * 2, 512);
     CHECK(std::all_of(out[1].begin(), out[1].end(), [](float x) { return x == 0.0f; }));   // channel 2 is the PA's
+}
+
+TEST_CASE("the demo band's MIDI is two pedalboards with changes in every song, and Undo can't take it away", "[e2e]") {
+    sqlive::test::DemoSession plain;
+    CHECK(plain.session->model().band().midiDevices.empty());      // createDemoBand alone stays as it was
+    sqlive::test::DemoSession d(true);
+    const auto& m = d.session->model();
+    const auto& devices = m.band().midiDevices;
+    REQUIRE(devices.size() == 2);
+    CHECK(devices[0].name == "Guitar 1");  CHECK(devices[1].name == "Guitar 2");
+    const auto patchNames = [](const MidiDeviceDoc& device) {
+        juce::StringArray names;
+        for (const auto& p : device.patches) names.add(juce::String(p.program) + " " + p.name);
+        return names.joinIntoString(", ");
+    };
+    CHECK(patchNames(devices[0]) == "4 Clean, 12 Crunch, 20 Lead");
+    CHECK(patchNames(devices[1]) == "2 Rhythm, 9 Ambient");
+    const auto& rig = *m.rig(m.rigIds()[0]);
+    CHECK(rig.midiChannels.at(devices[0].id) == 1);  CHECK(rig.midiChannels.at(devices[1].id) == 2);
+    const auto lane = [&](const SongDoc& song, const MidiDeviceDoc& device) {
+        juce::StringArray changes;
+        for (const auto& marker : song.midiLanes.at(device.id))
+            changes.add(markerLabel(marker, &device) + " at " + juce::String(marker.bar) + "." + juce::String((int) marker.beat));
+        return changes.joinIntoString(", ");
+    };
+    const auto& first = *m.song(d.setlist().entries[0].songId);
+    REQUIRE(first.title == "First Light");
+    CHECK(lane(first, devices[0]) == "Clean at 1.1, Crunch at 9.1, Clean at 13.1");
+    CHECK(lane(first, devices[1]) == "Rhythm at 1.1, Ambient at 13.1");
+    for (const auto& entry : d.setlist().entries) {
+        const auto& song = *m.song(entry.songId);
+        INFO(song.title);
+        size_t later = 0;
+        for (const auto& device : devices) {
+            const auto& changes = song.midiLanes.at(device.id);
+            REQUIRE_FALSE(changes.empty());
+            CHECK(changes.front().bar == 1);
+            later += changes.size() - 1;
+        }
+        CHECK(later >= 2);  CHECK(later <= 3);
+    }
+    CHECK_FALSE(d.session->commands().canUndo());
 }

@@ -71,3 +71,17 @@ TEST_CASE("a dropdown with nothing chosen shows its placeholder", "[widgets]") {
     CHECK(hasColour(snapshot(choice, 240, 28).getClippedImage(words), theme::caution, 40));   // .dd.need's words
     CHECK(choice.selected() == -1);                               // still nothing chosen
 }
+TEST_CASE("a choice's item can have a dot before its words, as the mockup's .dd i", "[widgets]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    sqlive::test::ScopedLook look;
+    const auto mint = juce::Colour(0xff4fcabd);
+    Choice choice;  choice.setItems({"Guitar 1", "Out"}, 0);
+    const int bare = choice.idealWidth();
+    const juce::Rectangle<int> dot{4, 6, 18, 16};                 // where the dot goes, left of the words
+    CHECK_FALSE(hasColour(snapshot(choice, 200, 28).getClippedImage(dot), mint, 30));
+    choice.setDots({mint, juce::Colours::transparentBlack});
+    CHECK(choice.idealWidth() == bare + 14);                      // 8 px and the 6 px gap
+    CHECK(hasColour(snapshot(choice, 200, 28).getClippedImage(dot), mint, 30));
+    choice.setSelected(1);                                        // "Out" has none
+    CHECK_FALSE(hasColour(snapshot(choice, 200, 28).getClippedImage(dot), mint, 30));
+}
