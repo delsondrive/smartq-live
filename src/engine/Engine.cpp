@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -13,6 +14,8 @@ constexpr std::size_t kGarbageCapacity = 1024;
 constexpr std::size_t kEventCapacity = 256;
 constexpr double kStopFadeSeconds = 0.050;
 constexpr double kJumpFadeAt48k = 240.0;   // samples at 48 kHz, scaled to the engine's rate
+const std::shared_ptr<const PartAudio> kNoClip;   // what sectionClip gives for a section with none
+constexpr SamplePos kNever = std::numeric_limits<SamplePos>::max();
 
 } // namespace
 
@@ -24,6 +27,8 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     envelope_.assign(static_cast<std::size_t>(max_block_), 0.0f);
     channels_.assign(static_cast<std::size_t>(kMaxDeviceChannels), nullptr);
     renderer_.prepare(sampleRate, max_block_);
+    cue_buffer_.assign(static_cast<std::size_t>(max_block_), 0.0f);
+    cue_player_.prepare(sampleRate, max_block_);   // what it was saying stops; with process not running it is freed here
     fade_length_ = std::llround(kStopFadeSeconds * sampleRate);
     jump_fade_ = std::llround(kJumpFadeAt48k * sampleRate / 48000.0);
 
@@ -54,6 +59,11 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     tail_time_ = 0;
     ending_ = false;
     tail_left_ = 0;
+    retired_ = 0;
+    announce_at_ = kNever;
+    announced_ = false;
+    announced_section_ = -1;
+    manual_next_ = 0;
     publishStatus();
 }
 
@@ -111,6 +121,14 @@ void Engine::setPartOverride(std::uint64_t serial, int part, bool overridden) {
 
 void Engine::setClickGain(std::uint64_t serial, float linear) {
     push({.type = Command::Type::SetClickGain, .serial = serial, .value = linear});
+}
+
+void Engine::setCueGain(std::uint64_t serial, float linear) {
+    push({.type = Command::Type::SetCueGain, .serial = serial, .value = linear});
+}
+
+void Engine::previewCue(std::shared_ptr<const PartAudio> clip, float linear) {
+    push({.type = Command::Type::PreviewCue, .value = linear, .object = std::move(clip)});
 }
 
 void Engine::setSolo(std::uint64_t serial, int part) { push({.type = Command::Type::SetSolo, .serial = serial, .index = part}); }
@@ -176,9 +194,17 @@ void Engine::process(float* const* out, int numChannels, int frames) noexcept {
         if (out[c] != nullptr) std::fill_n(out[c], frames, 0.0f);
     if (max_block_ <= 0) return;
 
+    retired_ = 0;
     const int channelCount = std::min(numChannels, kMaxDeviceChannels);   // any beyond: silence
     for (int offset = 0; offset < frames; offset += max_block_)
         renderChunk(out, channelCount, offset, std::min(max_block_, frames - offset));
+    // The clips the voice has finished with, within what is left of the render's budget after the songs it retired.
+    cue_player_.collect(
+        [this](std::shared_ptr<const PartAudio>&& clip) noexcept {
+            std::shared_ptr<const void> object = std::move(clip);
+            retire(object);
+        },
+        kRetiresPerRender - retired_);
     publishStatus();
 }
 
@@ -215,12 +241,18 @@ void Engine::handle(Command& command) noexcept {
         if (command.serial == 0 || command.serial != playing_.serial || state_ != PlayState::Playing || ending_) break;
         if (command.type == Type::ChooseStep) {
             if (command.index >= -1 && command.index <= 0xFFFF) arrangement_.choose(static_cast<int>(command.index));
+            // With NextBar the choice may take effect before the announcement moment, so it is said at once.
+            if (command.index >= 0 && arrangement_.pending() == command.index && arrangement_.step() >= 0 &&
+                playing_.song->jumpTiming == JumpTiming::NextBar)
+                announced_ = true;
         } else {
             arrangement_.setLoop(command.value != 0.0);
         }
         boundary_ = arrangement_.boundary(song_time_);
+        if (announced_ && cuesLive()) reannounce();
         break;
     case Type::Stop:
+        cue_player_.silence();   // a stop silences the voice, a preview too
         if (state_ != PlayState::Playing) break;
         arrangement_.choose(-1);   // stop clears the choice and the loop at once
         boundary_ = arrangement_.boundary(song_time_);
@@ -243,7 +275,7 @@ void Engine::handle(Command& command) noexcept {
         std::shared_ptr<const void> old = std::move(mix_hold_);
         mix_hold_ = std::move(command.object);
         mix_ = static_cast<const MixSetup*>(mix_hold_.get());
-        if (state_ != PlayState::Stopped) renderer_.setMix(mix_);   // glides while a song plays; a start snaps it
+        renderer_.setMix(mix_);   // glides while a song plays or a preview speaks; a start or a preview out of silence snaps it
         retire(old);
         break;
     }
@@ -261,6 +293,19 @@ void Engine::handle(Command& command) noexcept {
         break;
     case Type::SetClickGain:
         if (command.serial != 0 && command.serial == playing_.serial) renderer_.setClickGain(static_cast<float>(command.value));
+        break;
+    case Type::SetCueGain:
+        if (command.serial != 0 && command.serial == playing_.serial) renderer_.setCueGain(static_cast<float>(command.value));
+        break;
+    case Type::PreviewCue:
+        if (state_ != PlayState::Stopped) break;   // a song plays, its stop fade, or a gap
+        if (!cue_player_.active()) {   // out of silence: heard at the current mix from its first sample, not gliding to it
+            renderer_.setMix(nullptr);
+            renderer_.setMix(mix_);
+        }
+        renderer_.setPreviewGain(static_cast<float>(command.value));
+        // The command still holds the clip, so a say the voice refuses frees nothing here.
+        cue_player_.say(std::static_pointer_cast<const PartAudio>(command.object));
         break;
     case Type::SetSolo:
         if (command.serial != 0 && command.serial == playing_.serial) renderer_.setSolo(static_cast<int>(command.index));
@@ -346,6 +391,11 @@ void Engine::takeCue() noexcept {
     tail_left_ = 0;
     count_off_ = false;
     count_off_from_ = count_off_to_ = 0;
+    cue_player_.silence();   // a start silences a preview
+    announce_at_ = kNever;
+    announced_ = false;
+    announced_section_ = -1;
+    manual_next_ = 0;
     // setSong resets the song's own levels; any live level for this song comes after it.
     renderer_.setSong(playing_.song);
 }
@@ -366,28 +416,122 @@ void Engine::beginPlaying(SamplePos songTime, std::int64_t streamTime, bool snap
 }
 
 // The playing song is in `step` from streamTime on, song_time_ being its first sample, and says so: every step entered is
-// reported, the first included.
+// reported, the first included. Its announcement moment is still to come, unless the step was entered past it (startAt):
+// then it counts as passed, with nothing said, so a change of what follows is said at once.
 void Engine::enterStep(int step, std::int64_t streamTime) noexcept {
     arrangement_.enter(step);
     count_off_ = false;
     boundary_ = arrangement_.boundary(song_time_);
+    const int section = sectionIndex(arrangement_.step());
+    const auto& announceAt = playing_.song->announceAt;
+    announce_at_ = section >= 0 && static_cast<std::size_t>(section) < announceAt.size()
+                       ? announceAt[static_cast<std::size_t>(section)] : kNever;
+    announced_ = song_time_ > announce_at_;
+    announced_section_ = announced_ ? sectionToAnnounce() : -1;
     report(EngineEvent::Type::StepChanged, playing_.serial, streamTime, false, step);
+}
+
+// ---- The cue voice -----------------------------------------------------------------------------------------------------
+
+bool Engine::cuesLive() const noexcept {
+    return state_ == PlayState::Playing && !in_gap_ && !ending_ && playing_.song != nullptr && arrangement_.step() >= 0;
+}
+
+int Engine::sectionIndex(int step) const noexcept {
+    const PreparedSong& song = *playing_.song;
+    if (step < 0 || song.sections.empty() || static_cast<std::size_t>(step) >= song.arrangement.size()) return -1;
+    const std::uint16_t index = song.arrangement[static_cast<std::size_t>(step)];
+    return index < song.sections.size() ? static_cast<int>(index) : -1;
+}
+
+int Engine::sectionToAnnounce() const noexcept {
+    if (arrangement_.looping()) return -1;   // nothing new will play
+    const int next = arrangement_.nextStep();
+    return next >= 0 ? sectionIndex(next) : -1;
+}
+
+const std::shared_ptr<const PartAudio>& Engine::sectionClip(int section) const noexcept {
+    const auto& clips = playing_.song->sectionCue;
+    return section >= 0 && static_cast<std::size_t>(section) < clips.size() ? clips[static_cast<std::size_t>(section)] : kNoClip;
+}
+
+void Engine::announce() noexcept {
+    announced_ = true;
+    announced_section_ = sectionToAnnounce();
+    if (const auto& clip = sectionClip(announced_section_)) cue_player_.say(clip);
+}
+
+void Engine::reannounce() noexcept {
+    const int wanted = sectionToAnnounce();
+    if (wanted == announced_section_) return;
+    const PartAudio* said = sectionClip(announced_section_).get();
+    announced_section_ = wanted;
+    if (const auto& clip = sectionClip(wanted)) cue_player_.say(clip);
+    else if (said != nullptr && cue_player_.speaking() == said) cue_player_.silence();   // a manual cue speaking is left be
+}
+
+// The manual cues at song_time_ (the cursor found again by bisection when song time moved other than straight on, as a
+// jump does: those jumped over are skipped), then the announcement, if this is its moment.
+void Engine::fireCues() noexcept {
+    const auto& cues = playing_.song->cues;
+    const std::size_t count = cues.size();
+    if (manual_next_ > count || (manual_next_ > 0 && cues[manual_next_ - 1].at >= song_time_) ||
+        (manual_next_ < count && cues[manual_next_].at < song_time_)) {
+        const auto it = std::lower_bound(cues.begin(), cues.end(), song_time_,
+                                         [](const CueEvent& c, SamplePos t) { return c.at < t; });
+        manual_next_ = static_cast<std::size_t>(it - cues.begin());
+    }
+    for (; manual_next_ < count && cues[manual_next_].at == song_time_; ++manual_next_)
+        if (cues[manual_next_].clip) cue_player_.say(cues[manual_next_].clip);
+    if (!announced_ && song_time_ == announce_at_) announce();
+}
+
+std::int64_t Engine::untilNextCue() const noexcept {
+    SamplePos next = kNever;
+    if (!announced_ && announce_at_ > song_time_) next = announce_at_;
+    const auto& cues = playing_.song->cues;
+    if (manual_next_ < cues.size()) next = std::min(next, cues[manual_next_].at);
+    return next - song_time_;   // song_time_ is at least 0 while a step plays
+}
+
+const float* Engine::renderCue(std::int64_t frames, std::int64_t* sounding) noexcept {
+    if (sounding != nullptr) *sounding = 0;
+    if (!cue_player_.active() || frames <= 0) return nullptr;
+    std::fill_n(cue_buffer_.data(), frames, 0.0f);
+    const int n = cue_player_.render(static_cast<int>(frames), cue_buffer_.data());
+    if (sounding != nullptr) *sounding = n;
+    return cue_buffer_.data();
+}
+
+// Only over the samples the voice sounds in, so the mix levels glide on for exactly those whatever the block.
+void Engine::renderCueAlone(int numChannels, int frames) noexcept {
+    std::int64_t sounding = 0;
+    if (const float* cue = renderCue(frames, &sounding); cue != nullptr && sounding > 0)
+        renderer_.render(0, static_cast<int>(sounding), channels_.data(), numChannels, nullptr,
+                         {.parts = false, .click = false, .cue = cue});
 }
 
 // Renders out[offset, offset + frames), at most max_block_ frames, which already hold silence. The song can end, the stop
 // fade finish, or a gap run out partway through, and what follows renders from the very next sample: everything is worked
 // out from song time, fade position and gap length, never from where a block begins.
 void Engine::renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept {
+    const auto aim = [&](int pos) {
+        for (int c = 0; c < numChannels; ++c) channels_[c] = out[c] != nullptr ? out[c] + offset + pos : nullptr;
+    };
     int pos = 0;
     while (pos < frames && state_ != PlayState::Stopped) {
-        if (in_gap_) {   // silence, already in out
+        if (in_gap_) {   // silence, already in out, but for a voice still fading out from the song before
             const std::int64_t n = std::min<std::int64_t>(frames - pos, gap_left_);
+            if (cue_player_.active()) {
+                aim(pos);
+                renderCueAlone(numChannels, static_cast<int>(n));
+            }
             pos += static_cast<int>(n);
             gap_left_ -= n;
             if (gap_left_ <= 0) endGap(stream_time_ + pos);
             continue;
         }
-        for (int c = 0; c < numChannels; ++c) channels_[c] = out[c] != nullptr ? out[c] + offset + pos : nullptr;
+        aim(pos);
         std::int64_t n = frames - pos;
         if (state_ == PlayState::Stopping) n = std::min(n, fade_length_ - fade_pos_);
         const std::int64_t now = stream_time_ + pos;
@@ -398,13 +542,22 @@ void Engine::renderChunk(float* const* out, int numChannels, int offset, int fra
         if (state_ == PlayState::Stopping) fade_pos_ += n;
         settle(stream_time_ + pos);
     }
+    if (pos < frames && state_ == PlayState::Stopped && cue_player_.active()) {   // a preview, or a voice fading out
+        aim(pos);
+        renderCueAlone(numChannels, frames - pos);
+    }
     stream_time_ += frames;
 }
 
-// The playing step (or the lead-in) up to its boundary, at most `frames`; returns how many were rendered.
+// The playing step (or the lead-in) up to its boundary, or to the next cue to say, at most `frames`; returns how many
+// were rendered.
 std::int64_t Engine::renderStraight(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept {
-    const std::int64_t n = std::min(frames, std::max<std::int64_t>(0, boundary_ - song_time_));
+    std::int64_t n = std::min(frames, std::max<std::int64_t>(0, boundary_ - song_time_));
     if (n <= 0) return 0;
+    if (cuesLive()) {
+        fireCues();
+        n = std::min(n, untilNextCue());
+    }
     const float* envelope = nullptr;
     if (state_ == PlayState::Stopping) {
         for (std::int64_t k = 0; k < n; ++k) envelope_[static_cast<std::size_t>(k)] = static_cast<float>(stopGain(k));
@@ -412,6 +565,7 @@ std::int64_t Engine::renderStraight(int numChannels, std::int64_t frames, std::i
     }
     RenderParts what;
     if (count_off_) what = {.parts = false, .forcedClickFrom = count_off_from_, .forcedClickTo = count_off_to_};
+    what.cue = renderCue(n);
     renderer_.render(song_time_, static_cast<int>(n), channels_.data(), numChannels, envelope, what);
     midi_.play(song_time_, n, streamTime);
     song_time_ += n;
@@ -420,9 +574,11 @@ std::int64_t Engine::renderStraight(int numChannels, std::int64_t frames, std::i
 
 // One sample of a jump's crossfade: the audio running on past the line (parts only, its levels read as they stand) at
 // 1 - k / jump_fade_, then the incoming audio, rendered as ever, at k / jump_fade_. One at a time, so every level glides
-// once per sample whatever the block. Past the song's end the outgoing audio is silent.
+// once per sample whatever the block. Past the song's end the outgoing audio is silent. The cue voice goes with the
+// incoming audio only, so it is mixed once per sample.
 std::int64_t Engine::renderCrossfade(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept {
     if (frames <= 0) return 0;
+    if (cuesLive()) fireCues();
     const double stop = state_ == PlayState::Stopping ? stopGain(0) : 1.0;
     const std::int64_t k = jump_fade_ - xfade_left_;
     const double length = static_cast<double>(jump_fade_);
@@ -431,7 +587,7 @@ std::int64_t Engine::renderCrossfade(int numChannels, std::int64_t frames, std::
     if (tail_time_ < playing_.song->end)
         renderer_.render(tail_time_, 1, channels_.data(), numChannels, &outgoing, {.click = false, .advance = false});
     ++tail_time_;
-    renderer_.render(song_time_, 1, channels_.data(), numChannels, &incoming);
+    renderer_.render(song_time_, 1, channels_.data(), numChannels, &incoming, {.cue = renderCue(1)});
     midi_.play(song_time_, 1, streamTime);
     ++song_time_;
     --xfade_left_;
@@ -439,7 +595,8 @@ std::int64_t Engine::renderCrossfade(int numChannels, std::int64_t frames, std::
 }
 
 // After the last step, when that is not where the audio ends: the audio running on fades out in a straight line over
-// jump_fade_ samples, parts only, with no MIDI. Past the song's end it is silent.
+// jump_fade_ samples, parts only, with no MIDI. Past the song's end it is silent. The cue voice, silenced as the last step
+// ended, fades out beside it.
 std::int64_t Engine::renderTail(int numChannels, std::int64_t frames) noexcept {
     const std::int64_t n = std::min(frames, tail_left_);
     if (n <= 0) return 0;
@@ -450,9 +607,19 @@ std::int64_t Engine::renderTail(int numChannels, std::int64_t frames) noexcept {
         envelope_[static_cast<std::size_t>(k)] = static_cast<float>(static_cast<double>(jump_fade_ - at) / length * stop);
     }
     const std::int64_t audible = std::clamp<std::int64_t>(playing_.song->end - song_time_, 0, n);
+    std::int64_t sounding = 0;
+    const float* cue = renderCue(n, &sounding);
     if (audible > 0)
         renderer_.render(song_time_, static_cast<int>(audible), channels_.data(), numChannels, envelope_.data(),
-                         {.click = false});
+                         {.click = false, .cue = cue});
+    if (cue != nullptr && sounding > audible) {   // past the song's end: the voice alone, while it sounds
+        for (int c = 0; c < numChannels; ++c)
+            if (channels_[c] != nullptr) channels_[c] += audible;
+        renderer_.render(song_time_ + audible, static_cast<int>(sounding - audible), channels_.data(), numChannels, nullptr,
+                         {.parts = false, .click = false, .cue = cue + audible});
+        for (int c = 0; c < numChannels; ++c)
+            if (channels_[c] != nullptr) channels_[c] -= audible;
+    }
     song_time_ += n;
     tail_left_ -= n;
     return n;
@@ -491,6 +658,7 @@ bool Engine::handOver(std::int64_t streamTime) noexcept {
     if (next < 0) {
         arrangement_.enter(-1);
         xfade_left_ = 0;
+        cue_player_.silence();   // the song's end
         if (song_time_ >= playing_.song->end || jump_fade_ <= 0) {   // a song ending during the stop fade ends it early
             finishSong(state_ == PlayState::Stopping ? EngineEvent::Type::Stopped : EngineEvent::Type::Ended, streamTime);
         } else {
@@ -519,6 +687,7 @@ bool Engine::handOver(std::int64_t streamTime) noexcept {
 void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcept {
     const std::uint64_t ended = playing_.serial;
     report(type, ended, streamTime);
+    cue_player_.silence();        // what still fades out carries on at the level the song's cue last had
     renderer_.setSong(nullptr);   // before the song can be freed
     arrangement_.reset(nullptr);  // the choice and the loop with it
     boundary_ = 0;
@@ -575,6 +744,7 @@ void Engine::report(EngineEvent::Type type, std::uint64_t serial, std::int64_t s
 
 void Engine::retire(std::shared_ptr<const void>& object) noexcept {
     if (!object) return;
+    ++retired_;
     if (garbage_.push(std::move(object))) return;
     // The garbage queue is full: keep it for the next block. process takes commands only while there is room for what
     // they and the render may retire, so held_ always has a free slot here.

@@ -25,6 +25,9 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     part_auto_.assign(kMaxParts, {});
     cells_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, {});
     click_gain_ = {};
+    cue_gain_ = {1.0, 1.0};
+    preview_gain_ = 1.0f;
+    last_cue_level_ = 1.0f;
     song_ = nullptr;
     part_count_ = 0;
     solo_ = -1;
@@ -36,6 +39,7 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     bus_count_ = 0;
     role_rows_ = 0;
     click_role_ = -1;
+    cues_role_ = -1;
     cells_moving_ = false;
 }
 
@@ -75,6 +79,12 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
 
     const float clickGain = song != nullptr ? song->click.gain : 1.0f;
     click_gain_ = {clickGain, clickGain};
+    if (song != nullptr) {
+        cue_gain_ = {song->cueGain, song->cueGain};
+        last_cue_level_ = song->cueGain;
+    } else {
+        preview_gain_ = last_cue_level_;   // a voice fading out as the song ends carries on at the level it had
+    }
     count_in_first_ = count_in_end_ = playable_first_ = 0;
     if (song != nullptr) {
         count_in_first_ = firstTickAt(std::min<SamplePos>(song->countInStart, 0));
@@ -95,6 +105,7 @@ void SongRenderer::setMix(const MixSetup* mix) noexcept {
         has_mix_ = false;
         bus_count_ = 0;
         click_role_ = -1;
+        cues_role_ = -1;
         return;
     }
     const int busCount = std::min(static_cast<int>(mix->buses.size()), kMaxBuses);
@@ -119,6 +130,7 @@ void SongRenderer::setMix(const MixSetup* mix) noexcept {
     cells_moving_ = sameLayout;
     bus_count_ = busCount;
     click_role_ = mix->clickRole;
+    cues_role_ = mix->cuesRole;
     has_mix_ = true;
 }
 
@@ -193,6 +205,8 @@ void SongRenderer::followAutomation(SamplePos at, bool snap) noexcept {
 }
 
 void SongRenderer::setClickGain(float linear) noexcept { click_gain_.target = linear; }
+void SongRenderer::setCueGain(float linear) noexcept { cue_gain_.target = linear; }
+void SongRenderer::setPreviewGain(float linear) noexcept { preview_gain_ = linear; }
 
 void SongRenderer::setSolo(int part) noexcept {
     solo_ = part >= 0 && part < part_count_ ? part : -1;   // a part the song doesn't have is no solo
@@ -201,7 +215,7 @@ void SongRenderer::setSolo(int part) noexcept {
 
 void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
                           RenderParts what) noexcept {
-    if (song_ == nullptr || !has_mix_ || frames <= 0 || click_.empty()) return;
+    if ((song_ == nullptr && what.cue == nullptr) || !has_mix_ || frames <= 0 || click_.empty()) return;
     for (int b = 0; b < bus_count_; ++b) {   // each side of a stereo bus on its own: a channel the device lacks is skipped
         const int first = bus_first_[b];
         bus_left_[b] = first >= 0 && first < numChannels ? out[first] : nullptr;
@@ -213,7 +227,12 @@ void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int
 
 void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const float* envelope,
                                RenderParts what) noexcept {
+    if (song_ == nullptr) {
+        renderCueAlone(frames, offset, what.cue);
+        return;
+    }
     const PreparedSong& song = *song_;
+    const bool cueRouted = what.cue != nullptr && cues_role_ >= 0 && cues_role_ < role_rows_;
 
     // The count-in always clicks; pre-roll before it and the body only when the song's click is on; and a forced range
     // whatever the click. Rendered at unity: the click gain glides below.
@@ -264,17 +283,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
     for (int i = 0; i < frames; ++i) {
         // Every smoothed value advances once per sample, before it is used, whatever the block (unless this call reads them
         // as they stand).
-        if (what.advance && cells_moving_) {
-            bool moving = false;
-            for (int r = 0; r < role_rows_; ++r) {
-                Smoothed* row = &cells_[static_cast<std::size_t>(r) * kMaxBuses];
-                for (int b = 0; b < bus_count_; ++b) {
-                    step(row[b]);
-                    moving = moving || row[b].value != row[b].target;
-                }
-            }
-            cells_moving_ = moving;
-        }
+        if (what.advance && cells_moving_) stepCells();
         if (what.advance && automated_ > 0) followAutomation(songTime + i, snap_pending_);
         if (what.advance) snap_pending_ = false;
         if (what.advance && (parts_moving_ || automated_ > 0)) {
@@ -285,7 +294,10 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             }
             parts_moving_ = moving;
         }
-        if (what.advance) step(click_gain_);
+        if (what.advance) {
+            step(click_gain_);
+            step(cue_gain_);
+        }
 
         const int at = offset + i;
         const float env = envelope != nullptr ? envelope[at] : 1.0f;
@@ -327,6 +339,48 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
                 }
             }
         }
+
+        if (cueRouted) {   // not through the envelope: the voice fades by itself
+            const float cue = what.cue[at];
+            if (cue != 0.0f) {
+                float level = static_cast<float>(cue_gain_.value);
+                if (!song.cuesAutomation.empty()) level *= automationGain(song.cuesAutomation, songTime + i);
+                if (what.advance) last_cue_level_ = level;
+                mixCue(cue * level, at);
+            }
+        }
+    }
+}
+
+void SongRenderer::renderCueAlone(int frames, int offset, const float* cue) noexcept {
+    const bool routed = cue != nullptr && cues_role_ >= 0 && cues_role_ < role_rows_;
+    for (int i = 0; i < frames; ++i) {
+        if (cells_moving_) stepCells();
+        const int at = offset + i;
+        if (routed && cue[at] != 0.0f) mixCue(cue[at] * preview_gain_, at);
+    }
+}
+
+void SongRenderer::stepCells() noexcept {
+    bool moving = false;
+    for (int r = 0; r < role_rows_; ++r) {
+        Smoothed* row = &cells_[static_cast<std::size_t>(r) * kMaxBuses];
+        for (int b = 0; b < bus_count_; ++b) {
+            step(row[b]);
+            moving = moving || row[b].value != row[b].target;
+        }
+    }
+    cells_moving_ = moving;
+}
+
+void SongRenderer::mixCue(float value, int at) noexcept {
+    const Smoothed* row = &cells_[static_cast<std::size_t>(cues_role_) * kMaxBuses];
+    for (int b = 0; b < bus_count_; ++b) {
+        const float cell = static_cast<float>(row[b].value);
+        if (cell == 0.0f) continue;
+        const float v = value * cell;
+        if (bus_left_[b] != nullptr) bus_left_[b][at] += v;
+        if (bus_right_[b] != nullptr) bus_right_[b][at] += v;
     }
 }
 

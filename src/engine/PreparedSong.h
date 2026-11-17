@@ -60,6 +60,8 @@ struct ClickSetup {
 
 struct Section { SamplePos start = 0, end = 0; };                 // song time; end is one past the last sample
 
+struct CueEvent { SamplePos at = 0; std::shared_ptr<const PartAudio> clip; };   // a manual cue, spoken at `at`
+
 // When a chosen step (or a loop turned on) takes effect: at the end of the playing section, or at the next bar line.
 enum class JumpTiming : std::uint8_t { EndOfSection, NextBar };
 
@@ -78,7 +80,7 @@ struct PreparedSong {
     std::vector<ClickTick> ticks;      // every tick in [start, end), from the bar before bar 1 if that is earlier (for a
                                        // count-off only); those in [countInStart, 0) sound even with the click off
     ClickSound clickSound;
-    std::vector<AutoPoint> clickAutomation, cuesAutomation;   // the click's level and the cue voice's (not played yet), on top of theirs
+    std::vector<AutoPoint> clickAutomation, cuesAutomation;   // the click's level and the cue voice's, on top of theirs
     // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
     std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order
     std::vector<std::uint16_t> clockDevices, startStopDevices;
@@ -90,6 +92,12 @@ struct PreparedSong {
     std::vector<std::uint16_t> arrangement;  // indices into sections; never empty once finishSections has run
     JumpTiming jumpTiming = JumpTiming::EndOfSection;
     std::vector<SamplePos> barStarts;        // every bar start in [0, end)
+    // The cue voice. While a step plays and song time reaches announceAt of its section, the section of the step that
+    // will play next is announced with its sectionCue; manual cues are said where they are placed. Empty: no cues.
+    std::vector<std::shared_ptr<const PartAudio>> sectionCue;     // one per section: the clip that announces it; nullptr = none
+    std::vector<SamplePos> announceAt;                            // one per section: when, during that section, to announce what follows
+    std::vector<CueEvent> cues;                                   // sorted by `at`
+    float cueGain = 1.0f;                                         // the band's cue level when the song was prepared
 };
 
 // Where a count-off may begin: the start, or the bar before bar 1 when that is earlier. Click ticks and MIDI clock ticks are
@@ -102,8 +110,9 @@ PreparedSong prepareSong(std::string id, TempoMap, int countInBars, SamplePos au
                          std::vector<PreparedPart>, ClickSetup, double sampleRate, SamplePos explicitEnd = -1);
 
 // Fills in whatever is missing: one section for the whole song, [0, end), when there are none; every section in order
-// when the arrangement is empty (or names no section the song has: steps out of range are removed first); and the bar
-// starts, from the tempo map.
+// when the arrangement is empty (or names no section the song has: steps out of range are removed first); the bar
+// starts, from the tempo map; and, unless they have one entry per section, sectionCue (all nullptr) and announceAt (each
+// section's end, which a step never reaches), so a song without cues announces nothing.
 void finishSections(PreparedSong&);
 
 } // namespace sqlive::engine

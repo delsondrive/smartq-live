@@ -81,6 +81,11 @@ void finishSections(PreparedSong& s) {
     std::erase_if(s.arrangement, [&](std::uint16_t step) { return step >= count; });
     if (s.arrangement.empty())
         for (std::size_t i = 0; i < count && i <= 0xFFFF; ++i) s.arrangement.push_back(static_cast<std::uint16_t>(i));
+    if (s.sectionCue.size() != count) s.sectionCue.assign(count, nullptr);
+    if (s.announceAt.size() != count) {
+        s.announceAt.clear();
+        for (const Section& section : s.sections) s.announceAt.push_back(section.end);
+    }
 
     s.barStarts.clear();
     if (!(s.sampleRate > 0.0)) return;

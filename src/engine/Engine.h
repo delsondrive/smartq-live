@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "engine/Arrangement.h"
+#include "engine/CuePlayer.h"
 #include "engine/Midi.h"
 #include "engine/MidiOut.h"
 #include "engine/MixSetup.h"
@@ -63,6 +64,16 @@ inline constexpr int kMaxDeviceChannels = 256;
 // not where its audio ends, the audio running on fades out over the same 240 samples before Ended. Each step entered is
 // reported (StepChanged), the first included, a song without sections too (its one step, 0, is the whole song). stop and
 // a song's end clear the choice and the loop.
+//
+// The cue voice (CuePlayer), out through the mix's cuesRole. While a step plays (not in a lead-in, a count-off, the stop
+// fade or the tail after the last step), when song time reaches announceAt of the step's section, the section of
+// Arrangement::nextStep() is announced with its sectionCue; nothing while looping or when no step follows. A step entered
+// past that moment (startAt) says nothing then, but counts it as passed. Once it has passed, a change of what plays next (a
+// choice, a cancel, a loop turned on or off) says the new section's cue at once, or, when that is nothing, silences the
+// announcement if it is still speaking; with the song's jump timing NextBar a choice is said at once, before that moment
+// too. A manual cue is said when song time reaches it; a jump skips those it jumps over. A new clip cuts the one speaking
+// with a 5 ms fade. The song's last step ending, a stop, and a start all silence the voice with that fade. Cues sound at
+// the band's cue level (setCueGain) × the song's cuesAutomation at each sample.
 class Engine {
 public:
     Engine();
@@ -112,6 +123,10 @@ public:
     // is set; false lets it follow the automation again. For the playing song only.
     void setPartOverride(std::uint64_t serial, int part, bool overridden);
     void setClickGain(std::uint64_t serial, float linear);
+    void setCueGain(std::uint64_t serial, float linear);          // the band's cue level, changed while the song plays
+    // Stopped (a song cued or not): says the clip through the cues' outputs at that level, cutting any clip speaking; null
+    // silences it. Ignored while a song plays (its stop fade included) or in a gap; a start silences it.
+    void previewCue(std::shared_ptr<const PartAudio> clip, float linear);
     void setSolo(std::uint64_t serial, int part);
     bool popEvent(EngineEvent&);
     // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
@@ -146,13 +161,13 @@ private:
     struct Command {
         enum class Type : std::uint8_t {
             None, Cue, ClearCue, Start, StartAt, StartAtStep, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute,
-            SetPartOverride, SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop
+            SetPartOverride, SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop, SetCueGain, PreviewCue
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
         std::int64_t index = 0;               // a part, a song time, a step, a follow-on kind or a MIDI device
         double value = 0.0;                   // a gain, a mute or a loop (non-zero: on), or a gap in seconds
-        std::shared_ptr<const void> object;   // a song or a mix
+        std::shared_ptr<const void> object;   // a song, a mix or a cue clip
     };
 
     // A song the audio thread holds: the playing one or the cued one. `hold` keeps it alive; `song` is the same object.
@@ -164,13 +179,15 @@ private:
 
     // Objects that could not go onto a full garbage queue wait here, in place, for the next block. A block retires at most
     // one object per command and kRetiresPerRender while rendering, so commands wait while this is nearly full.
-    // Rendering retires only songs that end, and only the playing song and the cue can: commands, which alone fill the
-    // cue, are taken at the start of a block. So a block's render retires at most kSongSlots objects, even when the
-    // playing song ends and its follow-on (seamless, or after a gap) ends in the same block.
+    // Rendering retires songs that end, and only the playing song and the cue can: commands, which alone fill the cue, are
+    // taken at the start of a block. So a block's render retires at most kSongSlots songs, even when the playing song ends
+    // and its follow-on (seamless, or after a gap) ends in the same block. Then it retires the clips the cue voice has
+    // finished with, as many as are left of kRetiresPerRender.
     static constexpr int kHeldCapacity = 16;
     static constexpr int kRetiresPerRender = 4;
     static constexpr int kSongSlots = 2;   // playing_ and cued_
-    static_assert(kRetiresPerRender >= kSongSlots, "a block's render can retire the playing song and the cue");
+    static_assert(kRetiresPerRender >= kSongSlots + CuePlayer::kVoices,
+                  "a block's render can retire the playing song, the cue and a clip per cue voice");
     static_assert(1 + kRetiresPerRender <= kHeldCapacity, "room for one command and a render");
 
     bool push(Command&&);                 // false: the queue was full, and the command was dropped
@@ -186,6 +203,17 @@ private:
     std::int64_t renderStraight(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept;
     std::int64_t renderCrossfade(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept;
     std::int64_t renderTail(int numChannels, std::int64_t frames) noexcept;
+    void renderCueAlone(int numChannels, int frames) noexcept;   // no song set (stopped, a gap): the voice at the preview gain
+    // The voice's next frames into cue_buffer_ (null when silent); sounding, if given: how many of the first it sounded in.
+    const float* renderCue(std::int64_t frames, std::int64_t* sounding = nullptr) noexcept;
+    bool cuesLive() const noexcept;                              // a step plays, so cues are said
+    void fireCues() noexcept;                                    // says what falls at song_time_
+    std::int64_t untilNextCue() const noexcept;                  // samples from song_time_ to the next thing to say
+    void announce() noexcept;                                    // the announcement moment: says what plays next
+    void reannounce() noexcept;                                  // after the moment, what plays next may have changed
+    int sectionIndex(int step) const noexcept;                   // the playing song's section a step plays; -1: none
+    int sectionToAnnounce() const noexcept;                      // the section of what plays next; -1: nothing to say
+    const std::shared_ptr<const PartAudio>& sectionClip(int section) const noexcept;   // null: none
     double stopGain(std::int64_t k) const noexcept;   // the stop fade's gain k samples on from where it stands
     void settle(std::int64_t streamTime) noexcept;
     bool handOver(std::int64_t streamTime) noexcept;
@@ -252,6 +280,13 @@ private:
     std::int64_t tail_left_ = 0;             // samples of that fade still to come
     std::array<std::shared_ptr<const void>, kHeldCapacity> held_;
     int held_count_ = 0;
+    int retired_ = 0;                        // objects retired since this block's commands were taken
+    CuePlayer cue_player_;
+    std::vector<float> cue_buffer_;          // max_block_: the voice's mono audio for one render
+    SamplePos announce_at_ = 0;              // when the playing step announces what plays next
+    bool announced_ = false;                 // that moment has passed (or, with NextBar, a choice was said)
+    int announced_section_ = -1;             // the section announced for the coming boundary; -1: nothing
+    std::size_t manual_next_ = 0;            // the first of the playing song's cues not yet said, as of song_time_
 };
 
 } // namespace sqlive::engine
