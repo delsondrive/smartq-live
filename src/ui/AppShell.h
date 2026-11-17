@@ -55,6 +55,7 @@ public:
     bool showingPreShowDialog() const;
     bool showingInterruptedBanner() const;
     bool showingComesBackBox() const;                             // the "WHEN IT COMES BACK" box: a show song was cut off
+    const ComesBackBox& comesBackBox() const { return comesBack_; }   // for tests
     bool showingTonightQuestion() const;
     void answerTonightQuestion(bool keep);                        // "Keep them" or "Drop them"; ignored when it isn't asked
     // Edit mode: the "Check files" pill opens the FilesDialog (one dialog at a time). It closes when Show mode starts.

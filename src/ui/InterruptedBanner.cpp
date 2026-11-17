@@ -51,7 +51,13 @@ void InterruptedBanner::refresh() {
                                    : juce::String("No song was playing. Waiting for it to come back.");
     } else if (now.interrupted) {
         heading = "The audio interface is back.";
-        sentence = "Press " + showKeysOf(session_.model().band()).startWords() + " to start the song again from the top.";
+        const auto& controls = session_.model().band().controls;
+        if (!startWordsRead_ || controls != startWordsFor_) {        // only when the band's keys changed: this runs every tick
+            startWords_ = showKeysOf(session_.model().band()).startWords();
+            startWordsFor_ = controls;
+            startWordsRead_ = true;
+        }
+        sentence = "Press " + startWords_ + " to start the song again from the top.";
     }
     const bool wanted = heading.isNotEmpty();
     if (wanted == wanted_ && heading == heading_ && sentence == sentence_) return;
@@ -102,6 +108,12 @@ juce::String ComesBackBox::title() const { return "WHEN IT COMES BACK"; }
 
 void ComesBackBox::refresh() {
     const auto& band = session_.model().band();
+    const bool devices = !band.midiDevices.empty();
+    if (built_ && band.controls == builtFor_ && devices == builtWithDevices_) return;   // nothing its words come from changed
+    built_ = true;
+    builtFor_ = band.controls;
+    builtWithDevices_ = devices;
+    ++wordsBuilt_;
     const auto keys = showKeysOf(band);
     std::vector<Piece> pieces;
     if (keys.startKey.isNotEmpty())
@@ -115,7 +127,7 @@ void ComesBackBox::refresh() {
         rest = "choose another song";
     }
     rest << ". Nothing starts by itself.";
-    if (!band.midiDevices.empty()) rest << " The pedalboards are sent their patches again.";   // a restart sends them first
+    if (devices) rest << " The pedalboards are sent their patches again.";   // a restart sends them first
     pieces.push_back({rest, false});
     if (pieces == pieces_) return;
     pieces_ = std::move(pieces);

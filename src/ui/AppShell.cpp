@@ -276,7 +276,7 @@ void AppShell::refreshBanners() {
     interrupted_.refresh();
     // The box goes with the banner while the song it was playing waits to start again from the top.
     const bool box = interrupted_.wanted() && session_.now().interrupted;
-    comesBack_.refresh();
+    if (box) comesBack_.refresh();                                // its words, only while it shows (cheap when they hold)
     if (box != comesBack_.isVisible()) comesBack_.setVisible(box);
     outside_.refresh();
     if (outside_.wanted() != outside_.isVisible()) outside_.setVisible(outside_.wanted());

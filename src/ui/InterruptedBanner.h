@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -39,6 +40,11 @@ private:
     const app::AudioHost* host_;
     bool wanted_ = false;
     juce::String heading_, sentence_;
+    // Start's words for the "back" sentence, worked out again only when the band's controls change (refresh runs 30 times
+    // a second while the shell watches the device).
+    juce::String startWords_;
+    std::map<juce::String, model::ControlBinding> startWordsFor_;
+    bool startWordsRead_ = false;
 };
 
 // Mockup screen 5's "WHEN IT COMES BACK" box, near the bottom of the content while a song cut off in Show mode waits:
@@ -46,7 +52,8 @@ private:
 // their patches again." in the band's keys (ShowKeys: Start's key, else "The Start pedal", else "▶"; the Next song keys,
 // or no "choose another song" without them); the pedalboards sentence only when the band has MIDI devices. The mockup's
 // .box and h4, the sentence 13 px in mid with its keys drawn as keys. The shell places it 28 px from either side and 24 px
-// from the bottom, and calls refresh() when the session changes.
+// from the bottom, and calls refresh() while it shows or is about to; the words are worked out again only when the
+// band's controls or its MIDI devices change.
 class ComesBackBox : public juce::Component {
 public:
     static constexpr int height = 62;                             // 10 px padding, an 11 px caption, 6 px, a 20 px line, 10 px
@@ -55,6 +62,7 @@ public:
     void refresh();                                               // works the words out again; repaints when they changed
     juce::String title() const;
     juce::String hint() const;                                    // the sentence, as one line
+    int wordsBuilt() const { return wordsBuilt_; }                // for tests: how many times the words were worked out
     void paint(juce::Graphics&) override;
 
 private:
@@ -65,6 +73,11 @@ private:
     };
     app::Session& session_;
     std::vector<Piece> pieces_;
+    // What the words were built from: they are built again only when the band's controls, or whether it has MIDI devices,
+    // change.
+    std::map<juce::String, model::ControlBinding> builtFor_;
+    bool builtWithDevices_ = false, built_ = false;
+    int wordsBuilt_ = 0;
 };
 
 }  // namespace sqlive::ui

@@ -8,6 +8,7 @@
 #include "tests/support/MidiParams.h"
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
+#include "ui/AppShell.h"
 #include "ui/Helpers.h"
 #include "ui/InterruptedBanner.h"
 #include "ui/MainView.h"
@@ -223,4 +224,27 @@ TEST_CASE("after a cut-off, the banner and the box name the band's keys and the 
     CHECK(banner.sentence() == "Press the Start pedal to start the song again from the top.");
     CHECK(box.hint() == "The Start pedal restarts the song from the top. Nothing starts by itself. The pedalboards are sent their patches again.");
     CHECK(fractionNotBackground(snapshot(box, 1224, ui::ComesBackBox::height)) > 0.0);
+}
+
+// ---- Fix round 2 -------------------------------------------------------------------------------------------------------
+
+TEST_CASE("a tick with nothing changed doesn't work the box's words out again", "[showmidi]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(s);
+    sqlive::test::ScopedLook look;
+    ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
+    const auto ticks = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil(200); };   // six of the shell's ticks
+    const int made = shell.comesBackBox().wordsBuilt();
+    s.enterShow();  d.settle();  ticks();
+    CHECK(shell.comesBackBox().wordsBuilt() == made);             // hidden, nothing cut off: never looked at
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    host.deviceLost();  d.settle();  ticks();
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  d.settle();  ticks();
+    REQUIRE(shell.showingComesBackBox());
+    CHECK(shell.comesBackBox().wordsBuilt() == made);             // shown, but nothing its words come from has changed
+    s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('Q')}}));
+    d.settle();  ticks();
+    CHECK(shell.comesBackBox().wordsBuilt() == made + 1);         // the band's keys changed: once
+    CHECK(shell.comesBackBox().hint().startsWith("Q restarts"));
+    ticks();
+    CHECK(shell.comesBackBox().wordsBuilt() == made + 1);
 }
