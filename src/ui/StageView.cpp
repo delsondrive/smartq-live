@@ -240,7 +240,7 @@ void StageView::repaintChanges(const ShowState& st, double hold) {
     case Screen::Between:
         if (st.upLabel != was.upLabel || st.label != was.label) repaintDesign(labelBox_);
         if (st.action != was.action || st.actionDetail != was.actionDetail || st.pill != was.pill || st.readiness != was.readiness
-            || st.loadProgress != was.loadProgress)
+            || st.loadProgress != was.loadProgress || st.startKey != was.startKey)
             repaintDesign(cta_);
         if (st.after != was.after) repaintDesign(after_);
         break;
@@ -444,7 +444,7 @@ void StageView::paintBetween(juce::Graphics& g) {
     }
     const auto clip = g.getClipBounds().toFloat();
 
-    // The call to action: mint when Space will start the song, grey while it loads, red when it can't play.
+    // The call to action: mint when Start's key will start the song, grey while it loads, red when it can't play.
     if (clip.intersects(cta_)) {
         const auto readiness = state_.readiness;
         const bool ready = readiness == Readiness::Ready, failed = readiness == Readiness::Failed, loading = !ready && !failed;
@@ -453,11 +453,14 @@ void StageView::paintBetween(juce::Graphics& g) {
         drawBox(g, cta_, kCtaRadius, 2.0f, fill, border);
         auto inner = cta_.reduced(kCtaPad + 2.0f);
 
-        const auto key = inner.removeFromLeft(std::ceil(widthOf(keyFont(), "Space")) + 2.0f * kKeyPadX)
-                             .withSizeKeepingCentre(std::ceil(widthOf(keyFont(), "Space")) + 2.0f * kKeyPadX, kKeyHeight);
+        // Start's key (or pedal), as wide as its word, up to a third of the panel.
+        const float keyWidth =
+            std::min(std::ceil(widthOf(keyFont(), state_.startKey)) + 2.0f * kKeyPadX, std::max(0.0f, inner.getWidth() / 3.0f));
+        const auto key = inner.removeFromLeft(keyWidth).withSizeKeepingCentre(keyWidth, kKeyHeight);
         g.setColour(ready ? theme::mint : theme::field);
         g.fillRoundedRectangle(key, 12.0f);
-        drawFitted(g, "Space", keyFont(), ready ? theme::onAccent : theme::dim, key, juce::Justification::centred);
+        drawnStartKey_ = drawFitted(g, state_.startKey, keyFont(), ready ? theme::onAccent : theme::dim, key.reduced(kKeyPadX / 2.0f, 0.0f),
+                                    juce::Justification::centred);
         inner.removeFromLeft(kCtaGap);
 
         const float pillWidth = std::min(std::ceil(widthOf(pillFont(), state_.pill)) + 2.0f, std::max(0.0f, 0.4f * inner.getWidth()));

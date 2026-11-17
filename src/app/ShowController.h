@@ -27,7 +27,8 @@ enum class PedalKind { Held, Tap };
 //  - Start starts a song on the press. During a song a key on Start stops it only when held for a second; a tapped Start
 //    never stops anything. A key still held from the press that started a song never stops it.
 //  - Stop, on a key, stops when held for a second; on a tapped pedal, when tapped twice during a song, within a second and
-//    at least 150 ms apart (a quicker second press is a bounce or a duplicate). A Start forgets a first Stop tap.
+//    at least 150 ms apart (a quicker second press is a bounce or a duplicate). A Start forgets a first Stop tap, and so
+//    does a song started from anywhere else (the top bar's ▶, a seamless follow-on): both taps must be in one song.
 //  - Esc stops only when pressed twice within a second and at least 150 ms apart, always (the band can't give Esc away).
 //  - The other actions act once per press; auto-repeat is ignored.
 // Keys are looked up in the band's ControlMap (the defaults: Space, the arrows and Tab), rebuilt when the band's controls
@@ -88,6 +89,13 @@ private:
     std::map<Holder, double> stop_holds_;          // a held Start (during a song) or Stop, counting toward a stop, since when
     double last_time_ = 0.0;
     DoublePress esc_, tapped_stop_;
+    // The song the first Stop tap was in: a second tap in another song (or the same one started again, by ▶ or anything
+    // else outside this controller) is a first tap again.
+    struct TappedIn {
+        int index = -1;
+        juce::String songId;
+        double seconds = 0.0;
+    } tapped_in_;
 };
 
 }  // namespace sqlive::app

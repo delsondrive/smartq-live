@@ -67,6 +67,7 @@ TEST_CASE("the MIDI set-up page describes devices and controls in the mockup's w
     REQUIRE(state.controls.size() == 5);
     CHECK(state.controls[0].title == "Start the song");  CHECK(state.controls[0].key == "Space");  CHECK(state.controls[0].midi == "CC 64, ch 10");
     CHECK(state.controls[1].title == "Stop");   CHECK(state.controls[1].key == juce::String::fromUTF8("hold Space · Esc Esc"));
+    CHECK(state.controls[1].keyNote.isEmpty());                   // Space is what it names: nothing more to say
     // Ruling (Task 8): a single tap never stops a song and no pedal is ever held to stop, so Start's pedal doesn't stop
     // anything and Stop has a pedal only once one is learned for it (the brief's "hold CC 64, ch 10" would be untrue).
     CHECK(state.controls[1].midi.isEmpty());
@@ -102,6 +103,8 @@ TEST_CASE("Stop says what a key and a pedal do, and only the keyboard holds", "[
     CHECK(state.controls[1].key == juce::String::fromUTF8("hold S · Esc Esc"));
     CHECK(state.controls[1].midi == "CC 65, ch 10");
     CHECK(state.controls[1].hint == "tap twice");                 // a Stop pedal is tapped twice, 150 ms to 1 s apart
+    CHECK(state.controls[1].keyNote == "Holding Space, Start's key, for a second during a song stops it too.");
+    CHECK(makeMidiSetupState(s, nullptr).controls[0].keyNote.isEmpty());
     s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding(0)}}));
     s.commands().run("controls.set", params({{"action", "stop"}, {"binding", binding(0)}}));
     CHECK(makeMidiSetupState(s, nullptr).controls[1].key == "Esc Esc");   // Esc twice always stops
@@ -275,7 +278,10 @@ TEST_CASE("the patch list dialog saves a list it can read, and says which line i
     CHECK(dialog.problem() == juce::String::fromUTF8("Line 2 needs a program number first, like “12 Crunch”."));
     CHECK(closed == 0);
     CHECK(s.model().band().midiDevices[0].patches.size() == 1);
-    CHECK(fractionNotBackground(snapshot(dialog, ui::PatchListDialog::width, dialog.idealHeight())) > 0.5);
+    const auto withProblem = snapshot(dialog, ui::PatchListDialog::width, dialog.idealHeight());
+    CHECK(fractionNotBackground(withProblem) > 0.5);
+    CHECK(hasColour(withProblem, theme::caution));               // a line to fix, in caution: nothing is broken
+    CHECK_FALSE(hasColour(withProblem, theme::danger));
     dialog.text().setText("4 Clean\n12 Crunch\n20 Lead", juce::dontSendNotification);
     dialog.save();
     CHECK(closed == 1);

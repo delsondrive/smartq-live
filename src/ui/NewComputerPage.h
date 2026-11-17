@@ -57,12 +57,15 @@ public:
 
 private:
     class MidiTable;
+    friend struct NewComputerPageTest;                            // tests reach saveMidiPorts without a device to finish with
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void rebuild(const juce::String& type);                       // the state for the chosen rig and a type, shown
     void rebuildMidi();                                           // the MIDI rows only, as the ports are now
     void chooseDevice(int index);
     void finish();
+    bool saveMidiPorts();                                         // Done's MIDI step: rig.setMidi for each port chosen here;
+                                                                  // false (and said) when one is refused
     void say(const juce::String& problem);
     juce::String rigHint() const;
     int columnWidth() const;

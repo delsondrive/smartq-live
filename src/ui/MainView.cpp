@@ -19,6 +19,7 @@ constexpr int kSideWidth = 250, kSideGap = 10, kBoxPadX = 12, kBoxPadY = 10;
 constexpr int kCapsHeight = 15, kCapsGap = 6, kTitleHeight = 25, kHintHeight = 17, kHintLine = 23;
 constexpr int kCaptionLeft = 12, kCaptionTop = 7, kCaptionHeight = 16, kChoiceRight = 10, kChoiceTop = 5, kChoiceHeight = 20;
 constexpr int kChoiceMaxWidth = 220, kCaptionChoiceGap = 8;
+constexpr int kMinBottomRow = 220;                                // the next song's box and the hints, with the gaps around them
 
 juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
 juce::Font captionFont() { return theme::tracked(theme::font(theme::sizeTag, true), 0.8f); }
@@ -93,6 +94,7 @@ void MainView::refresh() {
     const auto state = makeShowState(session_);
 
     strip_.set(state.cards);
+    if (map_.setLanes(state.lanes)) resized();                    // a lane more or less: the map's height follows them
     map_.refresh();
     if (map_.songId() != mixer_.songId()) mixer_.show(map_.songId(), outputId_);   // the mixer follows the song by itself
 
@@ -137,7 +139,9 @@ void MainView::resized() {
     auto area = getLocalBounds();
     strip_.setBounds(area.removeFromTop(SetlistStrip::idealHeight));
     area.removeFromTop(kMapTop);
-    map_.setBounds(area.removeFromTop(SongMapView::idealHeight).reduced(kPadX, 0));
+    // The map's lanes take what the bottom row can spare: a lane that doesn't fit is cut off, never the next song's box.
+    const int mapHeight = std::max(SongMapView::waveHeight, std::min(map_.idealHeight(), area.getHeight() - kMinBottomRow));
+    map_.setBounds(area.removeFromTop(mapHeight).reduced(kPadX, 0));
     area.removeFromTop(kMapBottom + kBottomTop);
     area.removeFromBottom(kBottomBottom);
     area.reduce(kPadX, 0);

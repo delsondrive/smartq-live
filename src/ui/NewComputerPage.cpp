@@ -264,7 +264,20 @@ void NewComputerPage::finish() {
         say(result.message);
         return;
     }
-    // Each MIDI port chosen here, for this computer in the rig; a device removed meanwhile is left out.
+    if (!saveMidiPorts()) return;
+    session_.chooseRig(rigId_);
+    const auto opened = host_.openFromRig();
+    if (opened.failed()) {
+        say(opened.getErrorMessage());
+        return;
+    }
+    say({});
+    if (onDone) onDone();
+}
+
+// Each MIDI port chosen here, for this computer in the rig ("" for a device skipped: not on this computer); a device removed
+// meanwhile is left out.
+bool NewComputerPage::saveMidiPorts() {
     const auto& devices = session_.model().band().midiDevices;
     for (const auto& [deviceId, port] : midiPorts_) {
         const auto& id = deviceId;
@@ -277,17 +290,10 @@ void NewComputerPage::finish() {
         const auto saved = session_.commands().run("rig.setMidi", juce::var(object));
         if (!saved.ok) {
             say(saved.message);
-            return;
+            return false;
         }
     }
-    session_.chooseRig(rigId_);
-    const auto opened = host_.openFromRig();
-    if (opened.failed()) {
-        say(opened.getErrorMessage());
-        return;
-    }
-    say({});
-    if (onDone) onDone();
+    return true;
 }
 
 void NewComputerPage::say(const juce::String& problem) {

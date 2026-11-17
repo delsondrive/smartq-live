@@ -185,6 +185,19 @@ TEST_CASE("a Stop tap before the song starts doesn't count toward stopping it", 
     p.cc(10, 65, 0, 1.7);  p.cc(10, 65, 127, 2.0);                                       // and a second: stop
     CHECK(p.seen == std::vector{Action::Start, Action::Stop});
 }
+TEST_CASE("a Stop tap in one song doesn't count toward stopping a song started from outside", "[controls]") {
+    Pedals p({{"stop", binding(0, 1, 10, 65)}});
+    p.space(1.0, 1.1);  p.s.advanceWithoutDevice(48000 * 3);
+    p.cc(10, 65, 127, 2.0);  p.cc(10, 65, 0, 2.1);                                       // one tap in the first song
+    // The top bar's ▶ held to stop, then pressed to start the next song: straight to the session, not through here.
+    p.s.perform(Action::Stop);  p.s.advanceWithoutDevice(4800);
+    p.s.perform(Action::Start);  p.s.advanceWithoutDevice(4800);
+    REQUIRE(p.s.now().playing);
+    p.cc(10, 65, 127, 2.5);                                                               // within a second of the first tap
+    CHECK(p.seen == std::vector{Action::Start});                                          // a first tap in this song
+    p.cc(10, 65, 0, 2.6);  p.cc(10, 65, 127, 2.9);
+    CHECK(p.seen == std::vector{Action::Start, Action::Stop});
+}
 TEST_CASE("a pedal stuck down never blocks the keyboard's Start or its hold to stop", "[controls]") {
     Pedals p({{"start", binding(juce::KeyPress::spaceKey, 2, 10, 36)}});
     p.noteOn(10, 36, 1.0);                                                                // and never let go

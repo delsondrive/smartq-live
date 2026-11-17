@@ -33,8 +33,9 @@ namespace sqlive::app {
 // while learning. MIDI doesn't need the keyboard, so pedals work whichever window has it.
 //
 // Threads. JUCE's MIDI threads call receive: it works out the press or release under a spin lock (the threads take turns)
-// and queues only presses and releases, with their time, for the message thread (AsyncUpdater); a stream of values that
-// crosses nothing queues nothing. If the queue is full anyway, the press is dropped: nothing is held, so nothing is stuck.
+// and queues only presses, with their time, for the message thread (AsyncUpdater); a release only moves the control's
+// state on (nothing is held, so there is nothing to let go), and a stream of values that crosses nothing queues nothing.
+// If the queue is full anyway, the press is dropped: nothing is held, so nothing is stuck.
 //
 // Inputs are open only while the band has a MIDI control, or one is being learned; a band that uses no pedals holds no
 // input. Every 2 s the list is looked at: a new input is opened, a vanished one closed, and one that couldn't be opened is

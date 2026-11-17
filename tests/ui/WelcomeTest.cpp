@@ -83,3 +83,35 @@ TEST_CASE("a new computer chooses a port for each MIDI device, or skips it", "[w
     CHECK(s.model().rig(s.rigId())->computers.at(s.settings().computerName()).midiPorts.count(g2) == 0);   // saved by Done
     s.attachMidi(nullptr);
 }
+
+namespace sqlive::ui {
+struct NewComputerPageTest {
+    static bool saveMidiPorts(NewComputerPage& page) { return page.saveMidiPorts(); }
+};
+}  // namespace sqlive::ui
+
+TEST_CASE("Done saves each port chosen: a skipped device has none here, a removed one is left out", "[welcome]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(s);
+    const auto add = [&](const char* name) { return s.commands().run("device.add", params({{"name", name}})).value.toString(); };
+    const auto g1 = add("Guitar 1"), g2 = add("Guitar 2"), lights = add("Lights");
+    const juce::String port = "USB MIDI Interface Port 1";
+    struct Quiet : app::MidiPorts::Output { void send(const std::uint8_t*, int) override {} };
+    app::MidiPorts ports(s, [port] { return juce::StringArray(port); },
+                         [](const juce::String&) -> std::unique_ptr<app::MidiPorts::Output> { return std::make_unique<Quiet>(); });
+    s.attachMidi(&ports);
+    ports.refresh();
+    const auto computer = s.settings().computerName();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", lights}, {"computerId", computer}, {"port", port}}));
+
+    ui::NewComputerPage page(s, host);
+    page.chooseMidiPort(0, 0);                                    // Guitar 1 on the port
+    page.chooseMidiPort(1, 0);                                    // Guitar 2 too, but it is removed before Done
+    page.chooseMidiPort(2, 1);                                    // Lights: not on this computer
+    REQUIRE(s.commands().run("device.remove", params({{"deviceId", g2}})).ok);
+    CHECK(NewComputerPageTest::saveMidiPorts(page));              // the removed device refuses nothing
+    const auto& saved = s.model().rig(s.rigId())->computers.at(computer).midiPorts;
+    CHECK(saved.at(g1) == port);
+    CHECK(saved.count(lights) == 0);                              // skipped: the port it had here is gone
+    CHECK(saved.count(g2) == 0);
+    s.attachMidi(nullptr);
+}

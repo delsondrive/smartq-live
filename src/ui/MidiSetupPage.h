@@ -40,6 +40,8 @@ struct MidiSetupState {
         juce::String hint;
             // said after the pedal, in dim: "tap twice" for Stop's own pedal; while learning, "Set a latching switch to
             // momentary." (its tooltip adds toggling pads: either acts only on every other tap)
+        juce::String keyNote;
+            // the key cell's tooltip adds it: for Stop with a key of its own, that Start's key held stops too
         bool operator==(const Control&) const = default;
     };
     juce::String rigName;

@@ -190,7 +190,7 @@ void PatchListDialog::paint(juce::Graphics& g) {
     g.setFont(hintFont());
     g.drawText(kHint, hint_, juce::Justification::centredLeft, true);
     if (problem_.isNotEmpty()) {
-        g.setColour(theme::danger);
+        g.setColour(theme::caution);                              // a line to fix, not something broken
         g.setFont(hintFont());
         g.drawText(shorten(problem_, hintFont(), static_cast<float>(problemLine_.getWidth())), problemLine_, juce::Justification::centredLeft,
                    false);

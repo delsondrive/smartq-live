@@ -18,7 +18,7 @@ namespace sqlive::ui {
 // shortened with "…"), the bar, BPM and time left on the right; the beat lights and the song's progress; the next-song
 // box ("END OF THE SET" while the last song plays); the key hints along the bottom. While Space is held to stop, a ring
 // around the beat lights fills with ShowController::holdProgress() and "Keep holding to stop" takes the progress bar's
-// place. Between songs: "UP NEXT", the title, its BPM, key (when it has one) and length; the call to action (the Space
+// place. Between songs: "UP NEXT", the title, its BPM, key (when it has one) and length; the call to action (Start's
 // key, what it does and the pill) on a mint panel when the song is ready, a grey one with a progress bar while it loads,
 // a red one when it can't play; the row of songs around it; the hints. After a song was cut off (the device went away):
 // "PAUSED · 1 OF 3" in mint, the title and the bar it reached, and nothing else (the mockup's screen 5; the shell's box
@@ -50,6 +50,7 @@ public:
     juce::Rectangle<int> progressRowArea() const { return areaOf(barRow_); }
     // For tests: the call to action's words as last drawn between songs: the action, its detail and the pill.
     juce::StringArray drawnCallToAction() const { return drawnCallToAction_; }
+    juce::String drawnStartKey() const { return drawnStartKey_; }  // for tests: the big key's word as last drawn ("Space")
     // The label over the title: "NOW PLAYING · 1 OF 3" in mint while a song plays, or "PAUSED · 1 OF 3" after one was cut
     // off; otherwise "UP NEXT · 2 OF 3" in ember.
     juce::String drawnLabel() const;
@@ -111,6 +112,7 @@ private:
     int repaints_asked_ = 0;
     juce::Rectangle<int> repainted_;
     juce::StringArray drawnCallToAction_;
+    juce::String drawnStartKey_;
     BeatLights beats_;
 
     // Laid out by layout(), in the mockup's pixels (the window's divided by scale_), and drawn by paint().

@@ -23,7 +23,8 @@ juce::String parsePatchList(const juce::String& text, std::vector<model::Patch>&
 // Naming a device's patches (Setup's "24 named" / "Name them"), drawn as the mockup's dialogs are: the title, a text box
 // with the current list and the hint "Paste a list, or type one patch per line.", then Cancel and Save. Save reads the
 // list (parsePatchList) and runs device.setPatches, one undo step, then calls onClose; a line that can't be read, or a
-// refusal, is said in the footer in danger and the dialog stays open. In Show mode Save is off. Escape closes it.
+// refusal, is said in the footer in caution (a typo to fix, nothing broken) and the dialog stays open. In Show mode Save
+// is off. Escape closes it.
 class PatchListDialog : public juce::Component {
 public:
     static constexpr int width = 480;

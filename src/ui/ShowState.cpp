@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "app/Controls.h"
+#include "model/SongAudio.h"
+#include "model/SongMidi.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 
@@ -88,7 +91,70 @@ juce::String countInText(int bars) {
     return (bars == 1 ? juce::String("1 bar") : juce::String(bars) + " bars") + " of count-in, then bar 1.";
 }
 
+bool laneHasChanges(const model::SongDoc& song, const juce::String& deviceId) {
+    const auto found = song.midiLanes.find(deviceId);
+    return found != song.midiLanes.end() && !found->second.empty();
+}
+
+// The lanes of the song the map shows: a band device with a change in the song has one.
+std::vector<ShowState::Lane> lanesOf(const model::BandDoc& band, const model::SongDoc* song) {
+    std::vector<ShowState::Lane> lanes;
+    if (song == nullptr || song->midiLanes.empty()) return lanes;
+    const auto tempo = model::tempoMapOf(*song);
+    const auto [start, end] = model::songExtentSeconds(*song, tempo);
+    const double span = std::max(1.0e-9, end - start);
+    for (const auto& device : band.midiDevices) {
+        if (!laneHasChanges(*song, device.id)) continue;
+        ShowState::Lane lane{device.name, device.colour, {}};
+        for (const auto& marker : song->midiLanes.at(device.id))
+            lane.chips.push_back({std::clamp((tempo.secondsAt({marker.bar, marker.beat}) - start) / span, 0.0, 1.0),
+                                  model::markerLabel(marker, &device)});
+        std::stable_sort(lane.chips.begin(), lane.chips.end(), [](const auto& a, const auto& b) { return a.position01 < b.position01; });
+        lanes.push_back(std::move(lane));
+    }
+    return lanes;
+}
+
+// Whether the song changes any band device's patch, so Start sends its first patches.
+bool hasPedalChanges(const model::BandDoc& band, const model::SongDoc* song) {
+    if (song == nullptr) return false;
+    return std::any_of(band.midiDevices.begin(), band.midiDevices.end(),
+                       [song](const model::MidiDeviceDoc& device) { return laneHasChanges(*song, device.id); });
+}
+
+// The keys the sentences and hints name, as the band has them.
+struct Keys {
+    juce::String start;                                            // Start's key, else its pedal, else the top bar's ▶
+    juce::String hold;                                             // a key held to stop: Stop's, else Start's; "" for none
+    juce::String arrows;                                           // "← →": Next song earlier's and later's keys
+    juce::String view;                                             // "Tab"
+};
+
+Keys keysOf(const model::BandDoc& band) {
+    using app::Action;
+    using app::ControlMap;
+    const ControlMap map(band.controls);
+    Keys keys;
+    keys.start = ControlMap::describe(map.bindingFor(Action::Start));
+    if (keys.start.isEmpty()) keys.start = utf8("\xe2\x96\xb6");   // "▶"
+    keys.hold = ControlMap::describeKey(map.bindingFor(Action::Stop));
+    if (keys.hold.isEmpty()) keys.hold = ControlMap::describeKey(map.bindingFor(Action::Start));
+    juce::StringArray arrows{ControlMap::describeKey(map.bindingFor(Action::NextSongEarlier)),
+                             ControlMap::describeKey(map.bindingFor(Action::NextSongLater))};
+    arrows.removeEmptyStrings();
+    keys.arrows = arrows.joinIntoString(" ");
+    keys.view = ControlMap::describeKey(map.bindingFor(Action::ToggleView));
+    return keys;
+}
+
+// "<key> <what it does>"; nothing when the action has no key.
+void addHint(juce::StringArray& hints, const juce::String& key, const juce::String& what) {
+    if (key.isNotEmpty()) hints.add(key + " " + what);
+}
+
 }  // namespace
+
+std::pair<double, double> mapSpanSeconds(const model::SongDoc& song) { return model::songExtentSeconds(song, model::tempoMapOf(song)); }
 
 ShowState makeShowState(const app::Session& session) {
     using Kind = ShowState::Card::Kind;
@@ -98,6 +164,8 @@ ShowState makeShowState(const app::Session& session) {
     const auto* list = model.setlist(session.setlistId());
     const int count = list != nullptr ? static_cast<int>(list->entries.size()) : 0;
     if (list != nullptr) st.setlistName = list->name;
+    const auto keys = keysOf(model.band());
+    st.startKey = keys.start;
     const auto songAt = [&](int index) -> const model::SongDoc* {
         if (list == nullptr || index < 0 || index >= count) return nullptr;
         return model.song(list->entries[static_cast<std::size_t>(index)].songId);
@@ -178,7 +246,7 @@ ShowState makeShowState(const app::Session& session) {
         if (now.playing) st.nextInfo << "\n" << followText(list, playingAt);
     }
 
-    // Between songs: the song Space starts, and the row of songs around it.
+    // Between songs: the song Start starts, and the row of songs around it.
     if (!now.playing && nextAt >= 0) {
         st.upLabel = "UP NEXT" + kDot + place(nextAt, count);
         st.upTitle = titleAt(nextAt);
@@ -192,8 +260,10 @@ ShowState makeShowState(const app::Session& session) {
         st.pill = readinessPill(next);
         switch (next.readiness) {
         case Readiness::Ready:
-            st.action = now.interrupted ? "Press Space to start again from the top" : "Press Space to start";
+            st.action = "Press " + keys.start + " to start" + (now.interrupted ? " again from the top" : "");
             st.actionDetail = countInText(nextSong != nullptr ? nextSong->countInBars : 0);
+            if (hasPedalChanges(model.band(), nextSong))
+                st.actionDetail << " The pedalboards switch to this song's first patches when you press.";
             break;
         case Readiness::Failed:
             st.action = st.upTitle + " can't be played";
@@ -202,7 +272,7 @@ ShowState makeShowState(const app::Session& session) {
         case Readiness::None:
         case Readiness::Loading:
             st.action = "Loading " + st.upTitle + utf8("\xe2\x80\xa6");
-            st.actionDetail = "Space will work as soon as this says Ready.";
+            st.actionDetail = keys.start + " will work as soon as this says Ready.";
             break;
         }
 
@@ -215,13 +285,20 @@ ShowState makeShowState(const app::Session& session) {
             st.after.push_back({juce::String(i + 1) + " " + titleAt(i), AfterKind::Later});
     }
 
-    const auto arrows = utf8("\xe2\x86\x90 \xe2\x86\x92 ");           // "← → "
-    if (!session.stageView())
-        st.hints = {arrows + "next song", "hold Space stop", "Tab stage view"};
-    else if (now.playing)
-        st.hints = {arrows + "next song", "hold Space stop", "Tab main view"};
-    else
-        st.hints = {"Space start", arrows + "choose a different song", "Tab main view"};
+    // The hints, with the band's keys: an action with no key has no hint, and with no key to hold, Esc twice stops.
+    const auto stop = keys.hold.isNotEmpty() ? "hold " + keys.hold + " stop" : juce::String("Esc Esc stop");
+    if (!session.stageView() || now.playing) {
+        addHint(st.hints, keys.arrows, "next song");
+        st.hints.add(stop);
+        addHint(st.hints, keys.view, session.stageView() ? "main view" : "stage view");
+    } else {
+        st.hints.add(keys.start + " start");
+        addHint(st.hints, keys.arrows, "choose a different song");
+        addHint(st.hints, keys.view, "main view");
+    }
+
+    // The song the map shows: the one playing, else the next.
+    st.lanes = lanesOf(model.band(), model.song(now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId));
     return st;
 }
 

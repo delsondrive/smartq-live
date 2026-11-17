@@ -155,7 +155,10 @@ MidiSetupState makeMidiSetupState(const app::Session& session, const app::Contro
         if (action == app::Action::Stop) {
             // A key on Stop, or else Start's, held for a second; Esc twice always. A pedal only when one is learned for
             // Stop, and then tapped twice: no pedal is ever held to stop.
-            const auto held = control.key.isNotEmpty() ? control.key : app::ControlMap::describeKey(map.bindingFor(app::Action::Start));
+            const auto startKey = app::ControlMap::describeKey(map.bindingFor(app::Action::Start));
+            if (control.key.isNotEmpty() && startKey.isNotEmpty())
+                control.keyNote = "Holding " + startKey + ", Start's key, for a second during a song stops it too.";
+            const auto held = control.key.isNotEmpty() ? control.key : startKey;
             control.key = (held.isNotEmpty() ? "hold " + held + kDot : juce::String()) + "Esc Esc";
             if (control.midi.isNotEmpty()) control.hint = kTapTwice;
         }
@@ -725,7 +728,10 @@ juce::String MidiSetupPage::getTooltip() {
                                 "momentary, or it acts on every other tap.";
         if (r.pedal.contains(at) && c.action == "stop")
             return "A pedal stops the song when tapped twice, 150 ms to 1 s apart. Only a key can be held to stop.";
-        if (r.key.contains(at) && editable()) return "Click, then press the key. Esc cancels.";
+        if (r.key.contains(at)) {
+            const juce::String edit = editable() ? "Click, then press the key. Esc cancels." : "";
+            return c.keyNote.isEmpty() ? edit : (edit + " " + c.keyNote).trim();
+        }
     }
     return {};
 }

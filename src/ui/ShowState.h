@@ -1,5 +1,6 @@
 #pragma once
 
+#include <utility>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -37,6 +38,11 @@ struct ShowState {
     juce::String upLabel, upTitle, upBpm, upBpmLabel, upKey, upLength;   // "UP NEXT · 4 OF 7", …, "BPM · 4/4" (its first metre)
                                                                    // upKey "" when the song has no key
     juce::String action, actionDetail, pill;                       // "Press Space to start", "2 bars of count-in, then bar 1.", "✓ READY"
+                                                                   // (the detail adds "The pedalboards switch to this song's first
+                                                                   // patches when you press." when the song has a pedal change)
+    juce::String startKey;                                         // what starts a song, as the sentences name it: Start's key
+                                                                   // ("Space", "Q"), else its pedal ("CC 64, ch 10"), else "▶" (the
+                                                                   // top bar's button: nothing else starts)
     Readiness readiness = Readiness::None;
     double loadProgress = 0.0;
     struct After {
@@ -47,8 +53,23 @@ struct ShowState {
     };
     std::vector<After> after;                                      // between songs only; Played is NowPlaying::lastPlayedIndex
                                                                    // (none before the first song ends or is stopped)
-    juce::StringArray hints;                                       // the key hints along the bottom
+    juce::StringArray hints;                                       // the key hints along the bottom, with the band's keys
     juce::String setlistName;                                      // the stage view, once the last song has ended
+    // The song the main view's map shows (the one playing, else the next): one lane per band device that has a change in
+    // it, in the band's order, each change a chip with its model::markerLabel at its place across the map's span (from
+    // the count-in to the end, model::songExtentSeconds), in the lane's order.
+    struct Lane {
+        juce::String name;
+        juce::Colour colour;
+        struct Chip {
+            double position01;
+            juce::String label;
+            bool operator==(const Chip&) const = default;
+        };
+        std::vector<Chip> chips;
+        bool operator==(const Lane&) const = default;
+    };
+    std::vector<Lane> lanes;
     bool operator==(const ShowState&) const = default;
 };
 
@@ -58,7 +79,12 @@ struct ShowState {
 // Played alone (Edit-mode playback), the label is "NOW PLAYING" and no card plays. Between songs (and after an
 // interruption) the "up" fields and the action describe the next song; with nothing next they are empty and endOfSet
 // is true. The second line of nextInfo says what happens between the song playing and the next one; between songs
-// there is none, and nextInfo has its first line only.
+// there is none, and nextInfo has its first line only. The sentences and hints name the band's own keys (app::ControlMap):
+// "Press Q to start", "hold S stop".
 ShowState makeShowState(const app::Session&);
+
+// The span the main view's map draws for a song, in song time (seconds from bar 1): model::songExtentSeconds of its
+// model::tempoMapOf, from the count-in (or the audio before bar 1) to the end.
+std::pair<double, double> mapSpanSeconds(const model::SongDoc&);
 
 }  // namespace sqlive::ui

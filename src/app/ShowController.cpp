@@ -65,15 +65,25 @@ void ShowController::release(Source source, Action a, double now) {
 // A button whose release can't be trusted: nothing is held, so a tap never stops a song by being "held".
 void ShowController::tap(Action a, double now) {
     last_time_ = now;
-    const bool playing = session_.now().playing;
+    const auto song = session_.now();
+    const bool playing = song.playing;
     switch (a) {
         case Action::Start:
             if (!playing) act(Action::Start);
             break;
-        case Action::Stop:
-            if (!playing) tapped_stop_.reset();    // only taps during a song count
-            else if (tapped_stop_.press(now)) act(Action::Stop);
+        case Action::Stop: {
+            if (!playing) {
+                tapped_stop_.reset();              // only taps during a song count
+                break;
+            }
+            // Only taps in the same song: one started since the first tap, wherever from, forgets it.
+            const bool sameSong = song.playingIndex == tapped_in_.index && song.playingSongId == tapped_in_.songId
+                                  && song.seconds >= tapped_in_.seconds;
+            if (tapped_stop_.armed && !sameSong) tapped_stop_.reset();
+            if (tapped_stop_.press(now)) act(Action::Stop);
+            else if (tapped_stop_.armed && tapped_stop_.at == now) tapped_in_ = {song.playingIndex, song.playingSongId, song.seconds};
             break;
+        }
         default: act(a); break;
     }
 }
