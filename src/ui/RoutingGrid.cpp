@@ -12,6 +12,7 @@
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/OutputLabelPill.h"
+#include "ui/OutputMeter.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -30,6 +31,7 @@ constexpr int kMinColumnWidth = 72, kMaxColumnWidth = 140, kMinNameWidth = 150, 
 constexpr int kBarWidth = 4, kBarHeight = 14, kBarGap = 8;
 constexpr int kLevelMinWidth = 38, kLevelPadX = 6, kLevelHeight = 18;
 constexpr int kTrimPadX = 8, kTrimHeight = 20, kBlockWidth = 14, kBlockHeight = 2;
+constexpr int kMeterGap = 4;                                       // between an output's live meter and its trim
 constexpr int kFooterHeight = 40, kFooterPadX = 12, kFooterGap = 14;
 constexpr int kDragThreshold = 3, kPixelsPerStep = 2;
 constexpr float kDbPerStep = 0.5f;
@@ -91,6 +93,23 @@ juce::String sampleRateText(double rate) {
 
 juce::String bufferText(int size) { return juce::String(size) + (size >= 512 ? juce::String::fromUTF8(" \xc2\xb7 safest") : juce::String()); }
 
+// An output's trim in its cell and, when it has a bus, its live meter (OutputMeter) just left of it, the two centred
+// together.
+struct TrimPlace { juce::Rectangle<float> box; juce::Rectangle<int> meter; };
+TrimPlace trimPlace(juce::Rectangle<int> cell, const juce::String& trim, bool metered) {
+    const auto font = theme::font(theme::sizeCaption, true);
+    const float meterSpace = metered ? static_cast<float>(OutputMeter::idealWidth + kMeterGap) : 0.0f;
+    const float height = static_cast<float>(kTrimHeight);
+    const float width = std::max(0.0f, std::min(static_cast<float>(cell.getWidth() - 4) - meterSpace,
+                                                widthOf(font, trim) + 2.0f * kTrimPadX));
+    const float left = static_cast<float>(cell.getCentreX()) - 0.5f * (width + meterSpace);
+    const float top = static_cast<float>(cell.getCentreY()) - 0.5f * height;
+    TrimPlace place;
+    place.box = {left + meterSpace, top, width, height};
+    if (metered) place.meter = juce::Rectangle<float>(left, top, static_cast<float>(OutputMeter::idealWidth), height).toNearestInt();
+    return place;
+}
+
 }  // namespace
 
 // ---- The state ---------------------------------------------------------------------------------------------------------
@@ -114,7 +133,8 @@ RoutingState makeRoutingState(const app::Session& session, const app::AudioHost*
 
     for (const auto& out : rig->outputs)
         state.columns.push_back({out.id, out.name, formatChannels(out.firstChannel, out.stereo), outputLabelName(out.label), out.label,
-                                 out.label == model::OutputLabel::Unused ? juce::String() : formatLevelDb(out.trimDb)});
+                                 out.label == model::OutputLabel::Unused ? juce::String() : formatLevelDb(out.trimDb),
+                                 model::busIndexOf(*rig, out.id, session.outputChannels())});
 
     // The click, then the cues, then the parts, each in the band's order.
     std::vector<const model::Role*> roles;
@@ -202,8 +222,7 @@ public:
             if (column.trim.isNotEmpty()) {
                 const auto cell = grid_.cellBounds(rows, c);
                 const auto font = theme::font(theme::sizeCaption, true);
-                const float tw = std::min(static_cast<float>(cell.getWidth() - 4), widthOf(font, column.trim) + 2.0f * kTrimPadX);
-                const auto box = cell.toFloat().withSizeKeepingCentre(tw, static_cast<float>(kTrimHeight));
+                const auto box = trimPlace(cell, column.trim, column.bus >= 0).box;
                 const bool hot = hovered_.part == Part::Trim && hovered_.column == c;
                 g.setColour(hot ? theme::fieldHover : theme::field);
                 g.fillRoundedRectangle(box, theme::radiusField);
@@ -485,6 +504,28 @@ void RoutingGrid::layoutGrid() {
     names_viewport_->setBounds(namesArea.withHeight(viewport_->getViewHeight()));
     names_->setSize(name_width_, contentHeight);
     names_viewport_->setViewPosition(0, viewport_->getViewPositionY());
+    placeMeters();
+}
+
+void RoutingGrid::placeMeters() {
+    const int rows = static_cast<int>(state_.rows.size());
+    std::vector<int> buses;
+    for (const auto& column : state_.columns) buses.push_back(column.trim.isNotEmpty() ? column.bus : -1);
+    if (buses != meter_buses_) {                                  // made again only when the outputs' buses change
+        meters_.clear();
+        meter_buses_ = buses;
+        for (const int bus : buses) {
+            if (bus < 0) {
+                meters_.push_back(nullptr);
+                continue;
+            }
+            meters_.push_back(std::make_unique<OutputMeter>([this, bus] { return session_.engine().takeBusPeak(bus); }));
+            body_->addAndMakeVisible(*meters_.back());
+        }
+    }
+    for (std::size_t c = 0; c < meters_.size(); ++c)
+        if (meters_[c] != nullptr)
+            meters_[c]->setBounds(trimPlace(cellBounds(rows, static_cast<int>(c)), state_.columns[c].trim, true).meter);
 }
 
 void RoutingGrid::paint(juce::Graphics& g) {

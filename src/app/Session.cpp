@@ -6,6 +6,7 @@
 #include <set>
 #include <utility>
 
+#include "app/LevelChecker.h"
 #include "app/MidiPorts.h"
 #include "app/ShowArrangement.h"
 #include "model/CoreCommands.h"
@@ -92,11 +93,14 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     if (mode_ == Mode::Edit) snapshotOnOpening();
     else snapshot_owed_ = true;                                  // nothing is written in a show: made when it ends
 
+    level_checker_ = std::make_unique<LevelChecker>(*this);
+    level_checker_->onChanged = [this] { changed(); };
     refresh();
     startTimerHz(kTimerHz);
 }
 
 Session::~Session() {
+    level_checker_.reset();                                      // its thread stops, and nothing of it reaches back here
     stopVoice(true);                                             // its onDone never reaches a session that has gone
     stopTimer();
     cache_.onChanged = nullptr;
@@ -128,6 +132,9 @@ const model::SnapshotStore& Session::snapshots() const { return snapshots_; }
 juce::ChangeBroadcaster& Session::changes() { return changes_; }
 juce::String Session::rigId() const { return rig_id_; }
 juce::String Session::setlistId() const { return setlist_id_; }
+LevelChecker& Session::levelChecker() { return *level_checker_; }
+const LevelChecker& Session::levelChecker() const { return *level_checker_; }
+std::uint64_t Session::tonightRevision() const { return tonight_revision_; }
 
 const model::ComputerBinding* Session::thisComputer() const {
     const auto* rig = model().rig(rig_id_);
@@ -431,6 +438,7 @@ void Session::writeShowMemory() {
 }
 
 void Session::tonightChanged() {
+    ++tonight_revision_;
     writeShowMemory();
     refresh();
 }
@@ -530,6 +538,7 @@ juce::Result Session::resolveConflict(const model::ConflictCopy& conflict, bool 
 
 void Session::timerCallback() {
     cue_sent_this_tick_ = false;
+    level_checker_->holdBack(mode_ == Mode::Show && playing_.active());   // a show's song plays: no measuring meanwhile
     if (handleEngineEvents()) refresh();
     else refreshTransport();                                     // retries a cue the engine's full queue refused, or one held back
     jassert(knowsWhatPlays(last_status_));                       // whatever the engine plays, every stop gesture can stop
@@ -556,6 +565,7 @@ void Session::refresh() {
     refreshPlayingLevels();
     refreshTransport();
     rememberShow();
+    if (level_checker_ != nullptr) level_checker_->noteChanges();   // measured again 2 s after the last change, if any
     noteSaveState();
     changed();
 }

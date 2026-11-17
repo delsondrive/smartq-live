@@ -16,7 +16,8 @@ namespace sqlive::ui {
 // the band's songs. Below, the MixerPanel on the left and a 300 px side panel on the right. For "This song" the side
 // panel says "THIS SONG" and "How loud each part is in this song, for everyone."; for an output, its name, label pill
 // and channels, the sentence from the state, and "Overall level" with the output's trim (drag up or down to change,
-// Shift for fine steps, double-click for 0 dB; one Session::setLevel gesture per drag).
+// Shift for fine steps, double-click for 0 dB; one Session::setLevel gesture per drag). Under it, for the song, the level
+// check's box, "WHAT EACH OUTPUT GETS · LOUDEST MOMENT" (MixerState::outputLines), then the mockup's closing sentence.
 //
 // It changes nothing itself: levels go through Session::setLevel and setMute, which decide (a command in Edit mode,
 // tonight's level in Show mode). Nothing on it takes the keyboard. It refreshes on Session::changes() while visible,
@@ -49,6 +50,7 @@ private:
     void layOutAgain();
     void layoutHeader();
     void layoutSide();
+    void paintLevels(juce::Graphics&);                            // the level check's box and the closing sentence
 
     app::Session& session_;
     juce::String songId_, outputId_;
@@ -65,7 +67,7 @@ private:
     std::unique_ptr<TrimValue> trim_;
 
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<int> header_, levelsForLabel_, side_, sideTitle_, sideText_, trimLabel_;
+    juce::Rectangle<int> header_, levelsForLabel_, side_, sideTitle_, sideText_, trimLabel_, levelsBox_, closingBox_;
 };
 
 }  // namespace sqlive::ui

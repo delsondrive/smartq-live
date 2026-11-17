@@ -15,6 +15,8 @@ class AudioHost;
 
 namespace sqlive::ui {
 
+class OutputMeter;
+
 // What Setup's audio and routing page shows (the mockup's screen 11): the chosen rig, its outputs as columns and the
 // band's roles as rows, each cell how loud that role is in that output's mix.
 struct RoutingState {
@@ -22,6 +24,7 @@ struct RoutingState {
         juce::String outputId, name, channels, label;            // channels "1/2", "15"; label "In-ears", "PA", "Timecode", "Not used"
         model::OutputLabel kind = model::OutputLabel::Monitor;
         juce::String trim;                                        // "0 dB", "-2.5 dB"; "" for an output that isn't used
+        int bus = -1;                                             // its bus in the engine's mix (model::busIndexOf); -1 = none
         bool operator==(const Column&) const = default;
     };
     struct Cell {
@@ -59,7 +62,8 @@ RoutingState makeRoutingState(const app::Session&, const app::AudioHost*);
 // Label, Remove), unless onOutputPressed takes it. A cell is a mint pill with the level when sent (brighter above 0 dB),
 // a faint "·" when it could be, and a short dash with model::whyNot as its tooltip when it can't. A click sends a role
 // at 0 dB or stops sending it; a vertical drag changes the level, 0.5 dB for every 2 px, one undo step a drag; a
-// double-click asks for a number. The last row, "Overall level", is each output's trim, dragged the same way. A role's
+// double-click asks for a number. The last row, "Overall level", is each output's trim, dragged the same way, with a live
+// meter and clip light (OutputMeter, from Engine::takeBusPeak) beside it for an output that has a bus. A role's
 // name has a right-click menu: Rename, Colour (not for the click, always ember), Remove.
 //
 // Every change is a command, in Edit mode only; in Show mode nothing here changes anything, and nothing takes the
@@ -116,6 +120,7 @@ private:
     void timerCallback() override;
     void refresh(bool force = false);
     void layoutGrid();
+    void placeMeters();                                           // one OutputMeter per column that has a bus, beside its trim
     bool editable() const;
 
     // Runs a command in Edit mode. A refusal is said under the grid, and so is what a command says it did.
@@ -153,6 +158,8 @@ private:
     std::unique_ptr<FollowingViewport> viewport_, names_viewport_;
     std::unique_ptr<Body> body_;
     std::unique_ptr<Names> names_;
+    std::vector<std::unique_ptr<OutputMeter>> meters_;            // in body_, one a column (nullptr: no bus); after it, so gone first
+    std::vector<int> meter_buses_;                                // the bus each was made for
     int name_width_ = 0, column_width_ = 0;
     juce::Rectangle<int> footer_, add_role_, add_output_, one_per_role_, hint_;
 };

@@ -29,6 +29,7 @@
 
 namespace sqlive::app {
 
+class LevelChecker;
 class MidiPorts;
 class ShowArrangement;
 struct ArrangementNow;
@@ -199,6 +200,13 @@ public:
     void dropTonightChanges();
     model::SongDoc songAsHeard(const juce::String& songId) const;    // the document with tonight's changes applied
     model::RigDoc rigAsHeard() const;                            // the chosen rig, with tonight's changes applied
+    model::BandDoc bandAsHeard() const;                          // the band, with tonight's changes applied
+    std::uint64_t tonightRevision() const;                       // a new one each time tonight's changes change
+
+    // The level check (LevelChecker): each setlist song's loudest moment per output, measured in the background. The
+    // session asks it to look again 2 s after the last change to anything that affects levels (LevelChecker::noteChanges),
+    // and never waits for it.
+    LevelChecker& levelChecker();           const LevelChecker& levelChecker() const;
 
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
                                                                  // never while a real device runs
@@ -320,8 +328,7 @@ private:
     void changed();
     void pollFolder();                                           // Edit mode: outside changes, conflict copies, cue clips
 
-    model::BandDoc bandAsHeard() const;
-    void restoreShow();                                          // from the show memory, when opening
+    void restoreShow();                                         // from the show memory, when opening
     void rememberShow();                                         // in Show mode: the show memory, when it differs
     void writeShowMemory();                                      // the show memory as it is now; the file is saved by the flush
     void tonightChanged();
@@ -386,6 +393,7 @@ private:
     int mix_channels_ = 0;
 
     Tonight tonight_;
+    std::uint64_t tonight_revision_ = 0;                         // tonightRevision()
     // The playing song's levels as last sent to the engine, for the song with this serial.
     std::uint64_t levels_serial_ = 0;
     model::SongDoc levels_doc_;
@@ -414,6 +422,8 @@ private:
     // Last: their loader threads stop first, and their onChanged reach into the members above.
     CueLibrary cues_{folder_, sample_rate_};
     SongCache cache_;
+    // After them, so it goes first: its thread works only from copies, but its timer and callbacks reach the session.
+    std::unique_ptr<LevelChecker> level_checker_;
 };
 
 }  // namespace sqlive::app

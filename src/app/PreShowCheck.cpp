@@ -4,6 +4,7 @@
 #include <cmath>
 #include <utility>
 
+#include "app/LevelChecker.h"
 #include "app/MidiPorts.h"
 #include "app/PartFiles.h"
 #include "model/CloudFiles.h"
@@ -42,6 +43,32 @@ void addRouting(std::vector<CheckItem>& items, const Session& session, const Che
     }
     for (const auto& p : problems)
         items.push_back(item(p.blocksShow ? Level::Blocker : Level::Warning, "routing", "Routing", p.message));
+}
+
+// The level check (LevelChecker): a warning naming the first output that would clip, once any does; else how far it has
+// got, or that nothing clips. Songs whose audio can't be read are left out of the count, and said. Nothing for a setlist
+// with no songs.
+void addLevels(std::vector<CheckItem>& items, const Session& session) {
+    const auto& checker = session.levelChecker();
+    const int total = checker.total(), measured = checker.measured(), cant = checker.cantMeasure();
+    if (total == 0 && cant == 0) return;
+    const juce::String unchecked = cant > 0 ? plural(cant, "song", "songs") + " couldn't be checked: no audio" : juce::String();
+    const auto withUnchecked = [&](const juce::String& detail) {
+        return unchecked.isEmpty() ? detail : detail.isEmpty() ? unchecked : detail + juce::String::fromUTF8(" \xc2\xb7 ") + unchecked;
+    };
+    if (const auto sentences = checker.clipSentences(); !sentences.empty()) {
+        auto detail = sentences.front();
+        if (sentences.size() > 1)
+            detail = detail.upToLastOccurrenceOf(".", false, false) + ", and " + juce::String((int) sentences.size() - 1) + " more.";
+        items.push_back(item(Level::Warning, "levels", plural(checker.clippingOutputs(), "output would clip", "outputs would clip"),
+                             withUnchecked(detail)));
+        return;
+    }
+    juce::String detail;
+    if (measured < total) detail = juce::String::fromUTF8("Checking\xe2\x80\xa6 ") + juce::String(measured) + " of " + plural(total, "song", "songs");
+    else if (total == 1) detail = "no output clips in the one song";
+    else if (total > 1) detail = "no output clips in any of the " + plural(total, "song", "songs");
+    items.push_back(item(Level::Ok, "levels", "Levels", withUnchecked(detail)));
 }
 
 // Each device bound to a port here that isn't found; a warning when no device has a port here; else one line saying they
@@ -153,6 +180,7 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
     std::vector<CheckItem> items;
     items.push_back(audioItem(session, in));
     addRouting(items, session, in);
+    addLevels(items, session);
     addMidi(items, session);
     const auto* setlist = session.model().setlist(session.setlistId());
     const auto clips = clipProblems(session, setlist);

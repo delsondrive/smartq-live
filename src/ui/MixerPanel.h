@@ -35,6 +35,20 @@ struct MixerState {
     // "This song": "THIS SONG", "", "", and "How loud each part is in this song, for everyone."
     juce::String panelTitle, panelLabel, panelChannels, panelText;
     model::OutputLabel panelLabelKind = model::OutputLabel::Monitor;
+    // The box under the side panel, "WHAT EACH OUTPUT GETS · LOUDEST MOMENT", from the level check: one line per output of
+    // the rig, "Headphones · 1/2", its meter filled to (peak + 23) / 23 (the mockup's scale), and the peak, "-9 dB"; or
+    // "clips" with a red meter and the detail "Bar 97: 1.4 dB over. Turn a part down."; or "silent"; or "not used" with no
+    // meter, for an output that has no bus. While the song isn't measured there are no lines and the note says
+    // "Measuring…", or "This song has no audio loaded."; "" with no song.
+    struct OutputLine {
+        juce::String name, value;
+        float fill01 = 0.0f;
+        bool clips = false, used = true;                           // used: it has a bus, so a meter
+        juce::String detail;
+        bool operator==(const OutputLine&) const = default;
+    };
+    std::vector<OutputLine> outputLines;
+    juce::String outputLinesNote;
     bool operator==(const MixerState&) const = default;
 };
 
@@ -60,7 +74,8 @@ public:
     explicit MixerPanel(app::Session&);
     ~MixerPanel() override;
 
-    void show(const juce::String& songId, const juce::String& outputId);   // and refreshes now
+    // And refreshes now. A song outside the setlist is measured too (LevelChecker::alsoMeasure), for its output lines.
+    void show(const juce::String& songId, const juce::String& outputId);
     juce::String songId() const { return songId_; }
     juce::String outputId() const { return outputId_; }
     std::function<void()> onStateChanged;                         // after a refresh that changed state()

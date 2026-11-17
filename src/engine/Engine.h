@@ -190,6 +190,12 @@ public:
     EngineStatus status() const noexcept; // any thread; all fields from one publish (a block's end)
     double sampleRate() const noexcept;
 
+    // Any thread, one reader (an output's live meter; two readers would share the peaks between them): the largest sample
+    // magnitude on the bus's device channels since it was last asked, which it then resets to 0. 0 for a bus the mix
+    // doesn't have. Each process raises it at its end, after rendering (EnginePeaks.cpp).
+    float takeBusPeak(int bus) noexcept;
+    int busCount() const noexcept;        // any thread: the mix's buses, as of the last process (at most kMaxBuses)
+
 private:
     struct Command {
         enum class Type : std::uint8_t {
@@ -259,6 +265,7 @@ private:
     void retire(SongSlot&) noexcept;
     void flushHeld() noexcept;
     void publishStatus() noexcept;
+    void notePeaks(float* const* out, int channelCount, int frames) noexcept;   // raises each bus's peak (EnginePeaks.cpp)
 
     // Shared between the threads.
     SpscQueue<Command> commands_;
@@ -279,6 +286,9 @@ private:
     std::atomic<int> status_pending_step_{-1};
     std::atomic<bool> status_looping_{false};
     std::atomic<bool> status_count_off_{false};
+    // Each bus's peak since takeBusPeak last took it: raised by the audio thread with a compare-exchange, taken with exchange.
+    std::array<std::atomic<float>, kMaxBuses> bus_peaks_{};
+    std::atomic<int> bus_count_{0};
 
     // Control thread only.
     std::uint64_t next_serial_ = 1;

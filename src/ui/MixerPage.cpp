@@ -23,6 +23,12 @@ constexpr int kSongsMinWidth = 160, kSongsMaxWidth = 280, kListMaxWidth = 240;
 constexpr int kSideWidth = 300, kBoxPadX = 12, kBoxPadY = 10, kTitleHeight = 16, kTitleGap = 6, kRowGap = 10;
 constexpr int kRowHeight = 24, kValueMinWidth = 80, kValuePadX = 8;
 constexpr float kTrimStepDb = 0.1f, kFineTrimStepDb = 0.025f;   // a pixel of drag
+// The level check's box (.side's gap 10, .row, .meter 80 x 6 with 3 px corners, the clip line .hint at 12 px) and the
+// mockup's closing sentence in a box of its own.
+constexpr int kSideGap = 10, kLineHeight = 24, kDetailHeight = 16, kMeterWidth = 80, kMeterHeight = 6, kMeterGap = 8;
+const juce::String kLevelsTitle = juce::String::fromUTF8("WHAT EACH OUTPUT GETS \xc2\xb7 LOUDEST MOMENT");
+const juce::String kLevelsClosing = "Worked out from the whole song without playing it, so a problem shows up here and in the "
+                                    "pre-show check, not on stage.";
 
 juce::Font hintFont() { return theme::font(theme::sizeSmall); }
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
@@ -32,9 +38,10 @@ juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, tr
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
 
 // The sentence's height in the side panel at that width.
-juce::TextLayout sentenceLayout(const juce::String& text, float width) {
+juce::TextLayout sentenceLayout(const juce::String& text, float width, const juce::Font& font = bodyFont(),
+                                juce::Colour colour = theme::mid) {
     juce::AttributedString s;
-    s.append(text, bodyFont(), theme::mid);
+    s.append(text, font, colour);
     s.setWordWrap(juce::AttributedString::byWord);
     juce::TextLayout layout;
     layout.createLayout(s, std::max(1.0f, width));
@@ -184,7 +191,8 @@ void MixerPage::applyPanelState() {
     for (const auto& option : state.options) options.add(option.name);
     const bool sideChanged = state.panelTitle != shownSide_.panelTitle || state.panelLabel != shownSide_.panelLabel
                              || state.panelLabelKind != shownSide_.panelLabelKind || state.panelChannels != shownSide_.panelChannels
-                             || state.panelText != shownSide_.panelText;
+                             || state.panelText != shownSide_.panelText
+                             || state.outputLines != shownSide_.outputLines || state.outputLinesNote != shownSide_.outputLinesNote;
     if (options == options_ && state.chosen == shownChosen_ && !sideChanged) return;   // only the strips changed: the panel's own
 
     if (options != options_) {                                    // setItems forgets the hovered segment: only when they change
@@ -201,6 +209,8 @@ void MixerPage::applyPanelState() {
     shownSide_.panelLabelKind = state.panelLabelKind;
     shownSide_.panelChannels = state.panelChannels;
     shownSide_.panelText = state.panelText;
+    shownSide_.outputLines = state.outputLines;
+    shownSide_.outputLinesNote = state.outputLinesNote;
     trim_->set(outputId_);
     layOutAgain();
 }
@@ -260,7 +270,20 @@ void MixerPage::layoutSide() {
 
     int height = kBoxPadY + kTitleHeight + kTitleGap + textHeight + kBoxPadY;
     if (output) height += kRowGap + kRowHeight;
+    const auto column = side_;
     side_ = side_.withHeight(std::min(height, side_.getHeight()));
+
+    // Under it, the level check's box and the closing sentence, as far as the column reaches.
+    levelsBox_ = closingBox_ = {};
+    if (!state.outputLines.empty() || state.outputLinesNote.isNotEmpty()) {
+        int lines = state.outputLines.empty() ? kLineHeight : 0;
+        for (const auto& line : state.outputLines) lines += kLineHeight + (line.detail.isNotEmpty() ? kDetailHeight : 0);
+        auto below = column.withTrimmedTop(side_.getHeight() + kSideGap);
+        levelsBox_ = below.removeFromTop(std::min(below.getHeight(), kBoxPadY + kTitleHeight + kTitleGap + lines + kBoxPadY));
+        below.removeFromTop(std::min(below.getHeight(), kSideGap));
+        const auto closing = sentenceLayout(kLevelsClosing, static_cast<float>(innerWidth), hintFont(), theme::dim);
+        closingBox_ = below.removeFromTop(std::min(below.getHeight(), ceilToInt(closing.getHeight()) + 2 * kBoxPadY));
+    }
 
     auto inner = side_.reduced(kBoxPadX, kBoxPadY);
     sideTitle_ = inner.removeFromTop(kTitleHeight);
@@ -322,6 +345,63 @@ void MixerPage::paint(juce::Graphics& g) {
         g.setFont(bodyFont());
         g.drawText("Overall level", trimLabel_, juce::Justification::centredLeft, true);
     }
+    paintLevels(g);
+}
+
+void MixerPage::paintLevels(juce::Graphics& g) {
+    if (levelsBox_.getHeight() <= 2 * kBoxPadY) return;
+    const auto& state = panel_.state();
+    const juce::Graphics::ScopedSaveState saved(g);
+    g.reduceClipRegion(levelsBox_.getUnion(closingBox_));
+    theme::paintPanel(g, levelsBox_.toFloat());
+    auto inner = levelsBox_.reduced(kBoxPadX, kBoxPadY);
+    const auto caps = capsFont();
+    g.setFont(caps);
+    g.setColour(theme::dim);
+    g.drawText(shorten(kLevelsTitle, caps, static_cast<float>(inner.getWidth())), inner.removeFromTop(kTitleHeight),
+               juce::Justification::centredLeft, false);
+    inner.removeFromTop(kTitleGap);
+
+    if (state.outputLines.empty()) {
+        g.setFont(bodyFont());
+        g.setColour(theme::mid);
+        g.drawText(state.outputLinesNote, inner.removeFromTop(kLineHeight), juce::Justification::centredLeft, true);
+    }
+    for (const auto& line : state.outputLines) {
+        auto row = inner.removeFromTop(kLineHeight);
+        // On the right: the meter, then the peak ("clips" in danger, bold).
+        const auto valueFont = line.clips ? theme::font(theme::sizeBody, true) : bodyFont();
+        const int valueWidth = ceilToInt(widthOf(valueFont, line.value));
+        g.setFont(valueFont);
+        g.setColour(line.clips ? theme::danger : theme::mid);
+        g.drawText(line.value, row.removeFromRight(valueWidth), juce::Justification::centredRight, false);
+        if (line.used) {
+            row.removeFromRight(kMeterGap);
+            const int meterWidth = std::min(kMeterWidth, std::max(0, row.getWidth() / 2));
+            const auto meter = row.removeFromRight(meterWidth).withSizeKeepingCentre(meterWidth, kMeterHeight).toFloat();
+            g.setColour(theme::field);
+            g.fillRoundedRectangle(meter, 0.5f * kMeterHeight);
+            if (line.fill01 > 0.0f) {
+                g.setColour(line.clips ? theme::danger : theme::mint);
+                g.fillRoundedRectangle(meter.withWidth(line.fill01 * meter.getWidth()), 0.5f * kMeterHeight);
+            }
+        }
+        row.removeFromRight(kMeterGap);
+        g.setFont(bodyFont());
+        g.setColour(theme::mid);
+        g.drawText(shorten(line.name, bodyFont(), static_cast<float>(row.getWidth())), row, juce::Justification::centredLeft, false);
+        if (line.detail.isNotEmpty()) {
+            const auto detail = inner.removeFromTop(kDetailHeight);
+            g.setFont(hintFont());
+            g.setColour(theme::danger);
+            g.drawText(shorten(line.detail, hintFont(), static_cast<float>(detail.getWidth())), detail, juce::Justification::centredLeft, false);
+        }
+    }
+
+    if (closingBox_.getHeight() <= 2 * kBoxPadY) return;
+    theme::paintPanel(g, closingBox_.toFloat());
+    const auto text = closingBox_.reduced(kBoxPadX, kBoxPadY);
+    sentenceLayout(kLevelsClosing, static_cast<float>(text.getWidth()), hintFont(), theme::dim).draw(g, text.toFloat());
 }
 
 }  // namespace sqlive::ui

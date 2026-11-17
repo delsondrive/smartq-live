@@ -204,6 +204,7 @@ void Engine::process(float* const* out, int numChannels, int frames) noexcept {
             retire(object);
         },
         kRetiresPerRender - retired_);
+    notePeaks(out, channelCount, frames);
     publishStatus();
 }
 

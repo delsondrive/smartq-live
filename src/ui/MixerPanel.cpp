@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "app/LevelChecker.h"
+#include "engine/Engine.h"
 #include "model/Routing.h"
 #include "model/Units.h"
 #include "ui/Format.h"
@@ -92,6 +94,46 @@ juce::String tonightChange(const app::Session& session, const MixerState::Strip&
     if (change == 0.0f && strip.target.kind == LevelTarget::Kind::Part && strip.muted != savedMute(session, strip.target))
         return strip.muted ? "muted" : "unmuted";
     return formatDb(change) + " dB";
+}
+
+// The level check's lines for the song: its loudest moment in each output of the rig as heard, or why there are none.
+void addOutputLines(MixerState& state, const app::Session& session, const juce::String& songId) {
+    using State = app::LevelChecker::State;
+    if (session.model().song(songId) == nullptr) return;
+    const auto& checker = session.levelChecker();
+    const auto checked = checker.state(songId);
+    if (checked == State::CantMeasure) {
+        state.outputLinesNote = "This song has no audio loaded.";
+        return;
+    }
+    const auto levels = checked == State::Done ? checker.levels(songId) : std::nullopt;
+    if (!levels) {
+        state.outputLinesNote = juce::String::fromUTF8("Measuring\xe2\x80\xa6");
+        return;
+    }
+    const auto rig = session.rigAsHeard();
+    for (const auto& peak : levels->outputs) {
+        const auto out = std::find_if(rig.outputs.begin(), rig.outputs.end(), [&](const model::OutputDoc& o) { return o.id == peak.outputId; });
+        if (out == rig.outputs.end()) continue;
+        MixerState::OutputLine line;
+        line.name = out->name + juce::String::fromUTF8(" \xc2\xb7 ") + formatChannels(out->firstChannel, out->stereo);
+        line.used = model::busIndexOf(rig, out->id, engine::kMaxDeviceChannels) >= 0;
+        if (!line.used) {
+            line.value = "not used";
+        } else if (peak.clips) {
+            line.clips = true;
+            line.value = "clips";
+            line.fill01 = 1.0f;
+            const float over = std::max(0.1f, std::round(peak.peakDb * 10.0f) / 10.0f);   // as model::describeClip says it
+            line.detail = "Bar " + juce::String(peak.bar) + ": " + juce::String(over, 1) + " dB over. Turn a part down.";
+        } else if (peak.peakDb <= -99.0f) {
+            line.value = "silent";
+        } else {
+            line.value = juce::String(juce::roundToInt(peak.peakDb)) + " dB";
+            line.fill01 = std::clamp((peak.peakDb + 23.0f) / 23.0f, 0.0f, 1.0f);
+        }
+        state.outputLines.push_back(std::move(line));
+    }
 }
 
 }  // namespace
@@ -203,6 +245,7 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
             strip.footerIsWarning = true;
         }
     }
+    addOutputLines(state, session, songId);
     return state;
 }
 
@@ -341,6 +384,7 @@ MixerPanel::MixerPanel(app::Session& session) : session_(session), row_(std::mak
 MixerPanel::~MixerPanel() { session_.changes().removeChangeListener(this); }
 
 void MixerPanel::show(const juce::String& songId, const juce::String& outputId) {
+    session_.levelChecker().alsoMeasure(songId);
     songId_ = songId;
     outputId_ = outputId;
     refresh(true);
