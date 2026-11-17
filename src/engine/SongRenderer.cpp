@@ -124,8 +124,7 @@ void SongRenderer::setMix(const MixSetup* mix) noexcept {
 
 void SongRenderer::updatePartTargets() noexcept {
     for (int p = 0; p < part_count_; ++p) {
-        const bool silenced = part_mute_[p] != 0 || (solo_ >= 0 && solo_ != p);
-        part_gain_[p].target = silenced ? 0.0 : static_cast<double>(part_level_[p]);
+        part_gain_[p].target = partSilenced(p) ? 0.0 : static_cast<double>(part_level_[p]);
     }
     parts_moving_ = true;
 }
@@ -225,9 +224,26 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
         std::size_t first = song.click.enabled ? playable_first_ : count_in_first_;
         std::size_t last = song.click.enabled ? all.size() : count_in_end_;
         const auto render = [&](std::size_t from, std::size_t to) {
-            renderClick(all.subspan(from, to - from), song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f,
-                        click_.data());
+            const std::span<const ClickTick> run = all.subspan(from, to - from);
+            if (song.clickAutomation.empty()) {
+                renderClick(run, song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f, click_.data());
+                return;
+            }
+            // Automated: each tick sounds whole at the gain the automation has at the tick's own time, so a step point
+            // a few samples after a tick never cuts it. The count-in and a count-off (ticks before the song's start)
+            // keep the click's own level.
+            const auto length = static_cast<SamplePos>(song.clickSound.beat.size());
+            auto it = std::lower_bound(run.begin(), run.end(), songTime - length + 1,
+                                       [](const ClickTick& t, SamplePos v) { return t.at < v; });
+            for (; it != run.end() && it->at < songTime + frames; ++it) {
+                const bool countOff = it->at < 0 || (it->at >= what.forcedClickFrom && it->at < what.forcedClickTo);
+                const float gain = countOff ? 1.0f : automationGain(song.clickAutomation, it->at);
+                if (gain != 0.0f)
+                    renderClick(std::span<const ClickTick>(&*it, 1), song.clickSound, song.click.accentDownbeat, songTime, frames,
+                                gain, click_.data());
+            }
         };
+
         if (what.forcedClickTo > what.forcedClickFrom) {
             const std::size_t forcedFirst = firstTickAt(what.forcedClickFrom);
             const std::size_t forcedLast = firstTickAt(what.forcedClickTo);
@@ -299,8 +315,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
         }
 
         if (clickRouted) {
-            float click = click_[i] * static_cast<float>(click_gain_.value);
-            if (click != 0.0f && !song.clickAutomation.empty()) click *= automationGain(song.clickAutomation, songTime + i);
+            const float click = click_[i] * static_cast<float>(click_gain_.value);
             if (click != 0.0f) {
                 const Smoothed* row = &cells_[static_cast<std::size_t>(click_role_) * kMaxBuses];
                 for (int b = 0; b < bus_count_; ++b) {

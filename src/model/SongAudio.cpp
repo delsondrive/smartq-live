@@ -91,7 +91,8 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     prepared.startStopDevices = std::move(midi.startStopDevices);
     prepared.midiDeviceIds = std::move(midi.deviceIds);
     if (!prepared.clockDevices.empty())
-        prepared.clockTicks = engine::buildClockTicks(prepared.tempo, sampleRate, engine::countOffFloor(prepared.tempo, sampleRate, prepared.start), prepared.end);
+        prepared.clockTicks = engine::buildClockTicks(
+            prepared.tempo, sampleRate, engine::countOffFloor(prepared.tempo, sampleRate, prepared.start), prepared.end);
     return prepared;
 }
 

@@ -30,7 +30,8 @@ struct AutoPoint {
 
 // The linear gain the points give at song time `at`: 1 when there are none; a straight line in dB between points, flat
 // outside them; -60 dB and below is 0. Where points share a time the last of them counts from that time on. Precondition:
-// the points are sorted by `at`, ties in written order (buildPreparedSong sorts them, stably; never sort on the audio thread).
+// the points are sorted by `at`, ties in written order: the caller supplies them so (Task 8's buildPreparedSong will sort
+// them, stably); the audio thread never sorts.
 // Searches by bisection, allocates nothing. std::pow runs only inside a segment whose two points differ in dB; a held level
 // is worked out once (the renderer does so once per segment, not per sample).
 float automationGain(std::span<const AutoPoint>, SamplePos at) noexcept;

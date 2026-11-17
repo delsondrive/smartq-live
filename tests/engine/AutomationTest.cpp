@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -113,4 +114,33 @@ TEST_CASE("automation playing across a jump allocates and frees nothing on the a
     }
     CHECK(allocationCount() == 0);
     CHECK(deallocationCount() == 0);
+}
+TEST_CASE("a click tick plays whole at the gain of its own time", "[automation]") {
+    // 120 BPM: ticks every 24000 samples. The step point falls 5 samples after the tick at 24000, mid-sound.
+    auto run = [](std::vector<AutoPoint> automation) {
+        Engine e; e.prepare(48000.0, 512); e.setMix(splitMix());
+        auto song = testSong("s", 2 * 96000, 0.0f, 0, true);
+        song.clickAutomation = std::move(automation);
+        e.cue(share(song));  e.start();
+        return renderOffline(e, 2, 96000, 512)[1];
+    };
+    const auto plain = run({});
+    const auto cut = run({{0, 0.0f}, {24005, 0.0f}, {24005, -60.0f}});
+    for (int i = 24000; i < 24000 + 1000; ++i) CHECK(cut[static_cast<std::size_t>(i)] == plain[static_cast<std::size_t>(i)]);   // the whole tick sounds
+    for (int i = 48000; i < 48000 + 1000; ++i) CHECK(cut[static_cast<std::size_t>(i)] == 0.0f);                                // the next one is silent
+    const auto held = run({{0, -12.0f}});
+    const float gain = std::pow(10.0f, -12.0f / 20.0f);
+    for (int i = 24000; i < 24000 + 1000; ++i) CHECK(held[static_cast<std::size_t>(i)] == Catch::Approx(plain[static_cast<std::size_t>(i)] * gain).margin(1e-6));
+}
+TEST_CASE("a click automated to silence still has an audible count-in", "[automation]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(splitMix());
+    auto song = testSong("s", 96000, 0.0f, 1, true);
+    song.clickAutomation = {{-100000, -60.0f}};
+    e.cue(share(song));  e.start();
+    auto out = renderOffline(e, 2, 2 * 96000, 512)[1];
+    float countIn = 0.0f, body = 0.0f;
+    for (int i = 0; i < 96000; ++i) countIn = std::max(countIn, std::abs(out[static_cast<std::size_t>(i)]));
+    for (int i = 96000; i < 2 * 96000; ++i) body = std::max(body, std::abs(out[static_cast<std::size_t>(i)]));
+    CHECK(countIn > 0.1f);
+    CHECK(body == 0.0f);
 }
