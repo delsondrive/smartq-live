@@ -25,7 +25,8 @@ namespace sqlive::app {
 // noted with its device ids, and a message goes to the port its own song's id names, never by the band's order now. The
 // newest 8 songs noted are kept, and so is any song that played (the newest 4 of those: it sent something, or the session
 // said the engine started it) and the one playing, so a song's last messages (note-offs, 0xFC) still find their ports
-// after later cues, even when they were held while a device restarted.
+// after later cues, even when they were held while a device restarted. A device removed from the band while a song that
+// played names it keeps its port open, for that song only, until the song is let go of.
 //
 // Ports come and go. Whenever the system says its list of MIDI devices changed (juce::MidiDeviceListConnection), every
 // bound port is opened again, even when the list reads the same as before: a quick unplug and replug may leave the names
@@ -79,6 +80,7 @@ private:
     // One song's devices: the band's id for each engine device number, and the open output each goes to now.
     struct Table {
         std::vector<juce::String> ids;
+        std::vector<juce::String> ports;             // the port each went to here, as last bound: kept for a device removed since
         std::array<Output*, engine::kMaxMidiDevices> outputs{};
         bool played = false;                         // it played (it has sent something, or notePlaying): its last messages may
                                                      // still be on their way
@@ -108,6 +110,8 @@ private:
     bool bindingsChanged() const;
     Output* outputFor(const juce::String& deviceId) const;   // message thread: the open output a device goes to now
     void fillTable(Table&) const;                    // message thread
+    // The ports a song that played still needs for devices no longer in `devices` (removed from the band while it played).
+    static juce::StringArray removedPorts(const Table&, const std::vector<Device>& devices);
     bool needsALook(const Listing&) const;           // the timer: refresh?
 
     Session& session_;

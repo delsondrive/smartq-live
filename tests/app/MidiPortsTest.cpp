@@ -239,6 +239,28 @@ TEST_CASE("a port unplugged and back so quickly that the list reads the same is 
         s.attachMidi(nullptr);
     }
 }
+TEST_CASE("a device removed while its song plays still gets that song's note-offs, then its port closes", "[ports]") {
+    DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};
+    auto g1 = s.commands().run("device.add", params({{"name", "Synth"}})).value.toString();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", s.settings().computerName()}, {"port", "Port A"}}));
+    model::MidiMessageDoc note; note.type = model::MidiMessageDoc::Type::Note; note.note = 60; note.velocity = 100; note.beats = 32.0;
+    auto song = d.setlist().entries[0].songId;
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 1}, {"beat", 1}, {"messages", messages({note})}}));
+    d.settle();
+    app::MidiPorts ports(s, fake.lister(), fake.opener());  s.attachMidi(&ports);  ports.refresh();
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 4);   // past the count-in: the note sounds
+    engine::OutMidi m; while (s.engine().popMidi(m)) ports.send(m);
+    REQUIRE(fake.sent["Port A"].size() == 1);  REQUIRE(fake.sent["Port A"][0][0] == 0x90);
+    const auto played = s.engine().status().playingSerial;
+    s.commands().run("device.remove", params({{"deviceId", g1}}));  ports.refresh();
+    s.perform(Action::Stop);  s.advanceWithoutDevice(48000);
+    while (s.engine().popMidi(m)) ports.send(m);
+    REQUIRE(fake.sent["Port A"].size() == 2);                       // its note-off, where the note-on went
+    CHECK(fake.sent["Port A"][1] == std::vector<std::uint8_t>{0x80, 60, 0});
+    CHECK(fake.closes["Port A"] == 0);
+    for (std::uint64_t k = 1; k <= 10; ++k) { ports.noteSong(played + k, {});  ports.notePlaying(played + k); }   // later songs play
+    CHECK(fake.closes["Port A"] == 1);                              // that song let go of: nothing keeps the port now
+}
 TEST_CASE("devices with no port on this computer are said to be not connected", "[ports]") {
     DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};
     sqlive::test::ScopedLook look;

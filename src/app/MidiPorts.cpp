@@ -154,6 +154,14 @@ void MidiPorts::refreshWith(const Listing& now, bool reopenAll) {
     std::map<juce::String, juce::String> wanted;
     for (const auto& d : next)
         if (const int at = listed_.indexOf(d.port); d.port.isNotEmpty() && at >= 0) wanted[d.port] = listedIds_[at];
+    // And the ports of devices removed from the band that a song that played still names: kept open for its last messages
+    // (note-offs, 0xFC) until that song is let go of.
+    {
+        const juce::ScopedLock sl(lock_);                // send marks a song as played
+        for (const auto& [serial, table] : songs_)
+            for (const auto& port : removedPorts(table, next))
+                if (const int at = listed_.indexOf(port); at >= 0) wanted.emplace(port, listedIds_[at]);
+    }
     const auto current = [&](const juce::String& port) {
         const auto open = open_.find(port);
         const auto want = wanted.find(port);
@@ -232,8 +240,32 @@ MidiPorts::Output* MidiPorts::outputFor(const juce::String& deviceId) const {
 }
 
 void MidiPorts::fillTable(Table& table) const {
-    for (std::size_t n = 0; n < table.outputs.size(); ++n)
-        table.outputs[n] = n < table.ids.size() ? outputFor(table.ids[n]) : nullptr;
+    table.ports.resize(table.ids.size());
+    for (std::size_t n = 0; n < table.outputs.size(); ++n) {
+        if (n >= table.ids.size()) {
+            table.outputs[n] = nullptr;
+            continue;
+        }
+        const auto device = std::find_if(devices_.begin(), devices_.end(), [&](const Device& d) { return d.id == table.ids[n]; });
+        if (device != devices_.end()) {
+            table.ports[n] = device->port;
+            table.outputs[n] = outputFor(device->id);
+            continue;
+        }
+        // Removed from the band since: a song that played still sends its last messages where the device was.
+        const auto kept = table.played && table.ports[n].isNotEmpty() ? open_.find(table.ports[n]) : open_.end();
+        table.outputs[n] = kept != open_.end() ? kept->second.out.get() : nullptr;
+    }
+}
+
+juce::StringArray MidiPorts::removedPorts(const Table& table, const std::vector<Device>& devices) {
+    juce::StringArray ports;
+    if (!table.played) return ports;
+    for (std::size_t n = 0; n < table.ids.size() && n < table.ports.size(); ++n) {
+        const bool inBand = std::any_of(devices.begin(), devices.end(), [&](const Device& d) { return d.id == table.ids[n]; });
+        if (!inBand && table.ports[n].isNotEmpty()) ports.addIfNotAlreadyThere(table.ports[n]);
+    }
+    return ports;
 }
 
 void MidiPorts::timerCallback() {
@@ -259,6 +291,7 @@ void MidiPorts::noteSong(std::uint64_t serial, const std::vector<std::string>& d
         const juce::ScopedLock sl(lock_);
         if (const auto known = songs_.find(serial); known != songs_.end()) {
             std::swap(known->second.ids, table.ids);
+            std::swap(known->second.ports, table.ports);
             known->second.outputs = table.outputs;
         } else {
             songs_.merge(added);
@@ -283,6 +316,9 @@ void MidiPorts::noteSong(std::uint64_t serial, const std::vector<std::string>& d
             it = after;
         }
     }
+    // A song let go of may have kept a removed device's port open for its last messages: it closes now.
+    if (std::any_of(gone.begin(), gone.end(), [this](const auto& song) { return !removedPorts(song.second, devices_).isEmpty(); }))
+        refresh();
 }
 
 void MidiPorts::notePlaying(std::uint64_t serial) {
