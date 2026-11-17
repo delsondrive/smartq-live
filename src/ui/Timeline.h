@@ -18,9 +18,10 @@ namespace sqlive::ui {
 enum class EditTool { Select, Draw };
 enum class SnapTo { Bar, Beat, Eighth };                          // the mockup's "Bar · Beat · 1/8"
 
-// What is picked on the timeline: a tempo point (by index) or a lane's marker (by device and id).
+// What is picked on the timeline: a tempo point (by index), a lane's marker (by device and id), a section (by id), or a cue
+// or an automation point (as their lanes name them).
 struct EditorSelection {
-    enum class Kind { None, Tempo, Marker } kind = Kind::None;
+    enum class Kind { None, Tempo, Marker, Section, Cue, Automation } kind = Kind::None;
     juce::String deviceId, id;
     int index = -1;
     bool operator==(const EditorSelection&) const = default;

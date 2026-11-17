@@ -136,7 +136,9 @@ public:
     // plain Start and Section2 … Section10 start the next entry from that step, after a bar of count-off (startAtStep).
     void perform(Action);
     bool stageView() const;                                      // toggled by Action::ToggleView
-    void playSong(const juce::String& songId, double fromSeconds);   // Edit mode: play one song from a place
+    // Edit mode: play one song from a place, as that arrangement plays it ("" = the sections in order): from the first step
+    // whose section holds the place (Engine::startAt).
+    void playSong(const juce::String& songId, double fromSeconds, const juce::String& arrangementId = {});
     void setEditFocus(const juce::String& songId);               // the song open in an Edit page: kept loaded first
 
     // This computer's MIDI ports (App makes them), so views can reach them; nullptr detaches. Each song the engine takes from

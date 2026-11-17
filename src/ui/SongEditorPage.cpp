@@ -20,6 +20,7 @@
 #include "ui/MidiImportDialog.h"
 #include "ui/MidiLane.h"
 #include "ui/PartLanes.h"
+#include "ui/SectionsLane.h"
 #include "ui/Theme.h"
 #include "ui/Veil.h"
 
@@ -296,6 +297,9 @@ SongEditorPage::SongEditorPage(app::Session& session)
       songs_(std::make_unique<SongsBody>(*this)),
       timeline_(session),
       markerInspector_(session),
+      sectionCard_(session),
+      jumpCard_(session),
+      arrangementRow_(session),
       title_(std::make_unique<TitleLabel>()),
       tap_("Tap"),
       play_(juce::String::fromUTF8("\xe2\x96\xb6 Play")),
@@ -328,6 +332,11 @@ SongEditorPage::SongEditorPage(app::Session& session)
     markerView_.setScrollBarsShown(true, false);
     markerView_.setScrollBarThickness(10);
     addChildComponent(markerView_);
+    sectionCard_.onRemoved = [this] { timeline_.select({}); };
+    addChildComponent(sectionCard_);
+    addChildComponent(jumpCard_);
+    arrangementRow_.onPlayAsArranged = [this] { playAsArranged(); };
+    addChildComponent(arrangementRow_);
 
     title_->onClick = [this] { showTitleMenu(); };
     addAndMakeVisible(*title_);
@@ -342,11 +351,12 @@ SongEditorPage::SongEditorPage(app::Session& session)
 
     tap_.onClick = [this] { tap(app::wallClockSeconds()); };
     play_.onClick = [this] { togglePlay(); };
+    play_.onMenu = [this] { showPlayMenu(); };
     setToCursor_.onClick = [this] { setBarOneAtCursor(); };
     emptyNew_.onClick = [this] {
         if (onNewSong) onNewSong();
     };
-    for (auto* button : {&tap_, &play_, &setToCursor_, &emptyNew_}) {
+    for (PillButton* button : std::initializer_list<PillButton*>{&tap_, &play_, &setToCursor_, &emptyNew_}) {
         button->setWantsKeyboardFocus(false);
         addAndMakeVisible(*button);
     }
@@ -450,7 +460,10 @@ void SongEditorPage::refresh(bool force) {
     std::vector<int> ports;
     for (const auto& device : devices) ports.push_back(session_.midi() != nullptr ? static_cast<int>(session_.midi()->status(device.id)) : -1);
     const bool sameMidi = devices == devicesShown_ && ports == portsShown_;
-    const bool onlyCursor = sameDoc && sameMidi && loaded == loaded_ && editable() == shownEditable_ && withoutCursor(next) == withoutCursor(state_);
+    // The sections and the arrangement row take their colours from the band's section types.
+    const bool sameTypes = session_.model().band().sectionTypes == typesShown_;
+    const bool onlyCursor = sameDoc && sameMidi && sameTypes && loaded == loaded_ && editable() == shownEditable_
+                            && withoutCursor(next) == withoutCursor(state_);
     const bool footerChanged = next.footerBar != state_.footerBar || next.footerTime != state_.footerTime;
     state_ = std::move(next);
     if (onlyCursor && !force) {
@@ -462,9 +475,11 @@ void SongEditorPage::refresh(bool force) {
     loaded_ = std::move(loaded);
     devicesShown_ = devices;
     portsShown_ = std::move(ports);
+    typesShown_ = session_.model().band().sectionTypes;
     shownEditable_ = editable();
     buildLanes();
     timeline_.refresh();
+    arrangementRow_.show(songId_);
     showInspector();
     updateControls();
     resized();
@@ -492,6 +507,7 @@ void SongEditorPage::buildLanes() {
         auto tempo = std::make_unique<TempoLane>(session_, songId_);
         tempoLane_ = tempo.get();
         lanes.push_back(std::move(tempo));
+        lanes.push_back(std::make_unique<SectionsLane>(session_, songId_));
         for (const auto& device : laneDevices_) lanes.push_back(std::make_unique<MidiLane>(session_, songId_, device));
         for (const auto& part : state_.parts) {
             auto lane = std::make_unique<PartLane>(session_, songId_, part.partId);
@@ -509,14 +525,21 @@ void SongEditorPage::showInspector() {
     const bool tempo = picked.kind == EditorSelection::Kind::Tempo && tempoLane_ != nullptr && picked.index >= 0
                        && picked.index < static_cast<int>(tempoLane_->state().points.size());
     const bool change = picked.kind == EditorSelection::Kind::Marker && findMarker(session_, songId_, picked.deviceId, picked.id) != nullptr;
-    if ((picked.kind == EditorSelection::Kind::Tempo && !tempo) || (picked.kind == EditorSelection::Kind::Marker && !change)) {
+    sectionCard_.show(songId_, picked.kind == EditorSelection::Kind::Section ? picked.id : juce::String());
+    const bool section = sectionCard_.state().visible;
+    if ((picked.kind == EditorSelection::Kind::Tempo && !tempo) || (picked.kind == EditorSelection::Kind::Marker && !change)
+        || (picked.kind == EditorSelection::Kind::Section && !section)) {
         timeline_.select({});                                     // undone away: nothing is selected (and this runs again)
         return;
     }
+    const bool open = state_.songId.isNotEmpty();
     tempoCard_.show(tempo ? tempoLane_ : nullptr, picked.index, editable());
-    tempoCard_.setVisible(tempo && state_.songId.isNotEmpty());
+    tempoCard_.setVisible(tempo && open);
+    sectionCard_.setVisible(section && open);
+    jumpCard_.show(songId_);
+    jumpCard_.setVisible(open);
     markerInspector_.show(songId_, change ? picked : EditorSelection{});
-    markerView_.setVisible(change && state_.songId.isNotEmpty());
+    markerView_.setVisible(change && open);
 }
 
 bool SongEditorPage::changeShown() const { return markerView_.isVisible(); }
@@ -524,7 +547,8 @@ bool SongEditorPage::changeShown() const { return markerView_.isVisible(); }
 void SongEditorPage::updateControls() {
     const bool open = state_.songId.isNotEmpty();
     const bool edit = editable();
-    for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_, &snapTo_})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_,
+                                                                      &snapTo_, &arrangementRow_})
         c->setVisible(open);
     // The song panels give the column to the change inspector.
     for (juce::Component* c : std::initializer_list<juce::Component*>{&setToCursor_, &barOneEditor_, &songLabel_, &clickLabel_, &clickOn_,
@@ -589,7 +613,7 @@ void SongEditorPage::resized() {
 
     // The bar under the top bar: the title, the chips (Tap after the BPM), a gap, the tools, then ▶ Play on the right. When
     // they would leave the title too little room, the tools go to a second row. Play is as wide as the wider of its two
-    // words, so it doesn't move when it changes (PillButton's font and padding).
+    // words, so it doesn't move when it changes (PillButton's font and padding). The arrangement row is under it.
     const int playWidth = std::max(play_.idealWidth(), ceilToInt(widthOf(boldFont(), juce::String::fromUTF8("\xe2\x96\xa0 Stop")) + 26.0f));
     int chipsWidth = tap_.idealWidth();
     for (auto& chip : chips_) chipsWidth += chip->idealWidth() + kBarGap;
@@ -597,6 +621,7 @@ void SongEditorPage::resized() {
     const int rowWidth = edit.getWidth() - 2 * kBarPadX - playWidth - kBarGap;
     const bool twoRows = rowWidth - chipsWidth - kTitleGap - toolsWidth < kMinTitleWidth;
     bar_ = edit.removeFromTop(kBarHeight + (twoRows ? kToolsRow : 0));
+    arrangementRow_.setBounds(edit.removeFromTop(ArrangementRow::height));
     footer_ = edit.removeFromBottom(kFooterHeight);
     timeline_.setBounds(edit);
 
@@ -630,24 +655,28 @@ void SongEditorPage::resized() {
         bpmEditor_.setBounds(chip.withWidth(std::max(chip.getWidth(), 64)).getIntersection(bar));
     }
 
-    // The panel on the right: the change inspector alone while a change is selected; else TEMPO while a tempo point is
-    // selected, SONG, then CLICK, each a card of labelled rows.
+    // The panel on the right: the change inspector while a change is selected; else TEMPO while a tempo point is selected or
+    // SECTION while a section is, SONG, then CLICK, each a card of labelled rows; and under either, WHEN A SECTION IS CHOSEN
+    // LIVE.
     auto inspector = inspector_.withTrimmedLeft(1).reduced(kInspectorPad);
-    if (changeShown()) {
-        songCard_ = clickCard_ = {};
-        markerView_.setBounds(inspector);
-        const int ideal = markerInspector_.idealHeight();
-        const int width = std::max(0, inspector.getWidth() - (ideal > inspector.getHeight() ? markerView_.getScrollBarThickness() : 0));
-        markerInspector_.setSize(width, ideal);
-        return;
-    }
     const auto card = [&](int height) {
         auto c = inspector.removeFromTop(std::min(inspector.getHeight(), height));
         inspector.removeFromTop(std::min(kCardGap, inspector.getHeight()));
         return c;
     };
+    if (changeShown()) {
+        songCard_ = clickCard_ = {};
+        const int ideal = markerInspector_.idealHeight();
+        const int room = std::max(0, inspector.getHeight() - jumpCard_.idealHeight() - kCardGap);
+        markerView_.setBounds(card(std::min(ideal, room)));
+        const int width = std::max(0, inspector.getWidth() - (ideal > room ? markerView_.getScrollBarThickness() : 0));
+        markerInspector_.setSize(width, ideal);
+        jumpCard_.setBounds(card(jumpCard_.idealHeight()));
+        return;
+    }
     const auto rowsCard = [&](int rows) { return card(2 * kCardPadY + kCapsHeight + 6 + rows * kCardRow); };
     if (tempoCard_.isVisible()) tempoCard_.setBounds(card(tempoCard_.idealHeight()));
+    if (sectionCard_.isVisible()) sectionCard_.setBounds(card(sectionCard_.idealHeight()));
     const auto rowOf = [this](juce::Rectangle<int>& inner, const juce::String& label, juce::Component* control, int width, int height) {
         auto r = inner.removeFromTop(std::min(kCardRow, inner.getHeight()));
         if (control != nullptr) {
@@ -671,6 +700,7 @@ void SongEditorPage::resized() {
     rowOf(clickInner, "Sound", &clickSound_, kChoiceWidth, kFieldHeight);
     rowOf(clickInner, "Subdivision", &subdivision_, kChoiceWidth, kFieldHeight);
     rowOf(clickInner, "Accent the first beat", &accent_, 34, 18);
+    jumpCard_.setBounds(card(jumpCard_.idealHeight()));
 }
 
 void SongEditorPage::paint(juce::Graphics& g) {
@@ -843,7 +873,28 @@ void SongEditorPage::togglePlay() {
         session_.perform(app::Action::Stop);
         return;
     }
-    if (session_.model().song(songId_) != nullptr) session_.playSong(songId_, timeline_.cursorSeconds());
+    if (session_.model().song(songId_) != nullptr) session_.playSong(songId_, timeline_.cursorSeconds());   // in order
+}
+
+void SongEditorPage::playAsArranged() {
+    const auto* song = session_.model().song(songId_);
+    if (session_.mode() != app::Mode::Edit || song == nullptr || session_.now().playing) return;
+    // From the song's start (its count-in, or its audio before bar 1), leading into the arrangement's first step.
+    const auto start = model::songExtentSeconds(*song, model::tempoMapOf(*song)).first;
+    session_.playSong(songId_, start, arrangementRow_.arrangementId());
+}
+
+void SongEditorPage::showPlayMenu() {
+    if (session_.mode() != app::Mode::Edit || session_.now().playing) return;
+    juce::PopupMenu menu;
+    menu.addItem(1, juce::String::fromUTF8("\xe2\x96\xb6 Play from the cursor"));
+    menu.addItem(2, juce::String::fromUTF8("\xe2\x96\xb6 Play as arranged"));
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&play_),
+                       [safe = juce::Component::SafePointer<SongEditorPage>(this)](int result) {
+                           if (safe == nullptr) return;
+                           if (result == 1) safe->togglePlay();
+                           else if (result == 2) safe->playAsArranged();
+                       });
 }
 
 void SongEditorPage::showTitleMenu() {

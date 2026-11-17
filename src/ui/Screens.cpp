@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <utility>
 
 #include "app/AudioHost.h"
 #include "app/ControlInput.h"
@@ -13,6 +14,7 @@
 #include "model/ActionNames.h"
 #include "model/DemoBand.h"
 #include "model/DocumentsJson.h"
+#include "model/JsonObject.h"
 #include "model/Snapshots.h"
 #include "ui/AppShell.h"
 #include "ui/MixerPage.h"
@@ -228,6 +230,26 @@ juce::String changeAt(const app::Session& session, const juce::String& songId, c
     return {};
 }
 
+// The song's sections, as the mockup's screen 9 has them (on the demo's 16 bars), and its arrangement "Long ending" (the
+// Chorus once more before the Outro, still to be put in by the editor). The id of the arrangement and of the last Chorus;
+// "" when a command was refused.
+std::pair<juce::String, juce::String> addMockupSections(app::Session& session, const juce::String& songId) {
+    struct Start { const char* name; int bar; };
+    const Start starts[] = {{"Intro", 1}, {"Verse 1", 3}, {"Chorus", 5}, {"Verse 2", 7}, {"Chorus", 9}, {"Bridge", 11}, {"Outro", 14}};
+    juce::StringArray ids;
+    for (const auto& start : starts) {
+        const auto made = session.commands().run(
+            "section.add", model::jsonObject({{"songId", songId}, {"name", start.name}, {"startBar", start.bar}}));
+        if (!made.ok) return {};
+        ids.add(made.value.toString());
+    }
+    juce::Array<juce::var> steps;
+    for (const int i : {0, 1, 2, 3, 4, 5, 4, 6}) steps.add(ids[i]);
+    const auto made = session.commands().run(
+        "arrangement.add", model::jsonObject({{"songId", songId}, {"name", "Long ending"}, {"steps", steps}}));
+    return made.ok ? std::pair{made.value.toString(), ids[4]} : std::pair<juce::String, juce::String>{};
+}
+
 juce::Image render(const juce::String& name, int width, int height) {
     Scene scene(name == "interrupted" || name == "new-computer" || name == "routing");
     if (!scene.ok()) return {};
@@ -274,9 +296,12 @@ juce::Image render(const juce::String& name, int width, int height) {
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onNewSong)
             setlists->onNewSong(stemsFor(scene));
     } else if (name == "song-editor") {
+        const auto [arrangementId, chorusId] = addMockupSections(session, scene.songIdAt(0));
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onOpenSong)
             setlists->onOpenSong(scene.songIdAt(0));              // as a double-click does: the editor, and the Mixer's song
         if (auto* editor = scene.page<SongEditorPage>(Page::SongEditor)) {
+            editor->arrangementRow().choose(arrangementId);       // "Long ending", with its last Chorus just put in again
+            editor->arrangementRow().insertSection(chorusId, 7);
             editor->setCursorSeconds(12.0);
             juce::String deviceId;                                // Guitar 1's Crunch selected, so the inspector shows
             const auto markerId = changeAt(session, scene.songIdAt(0), "Guitar 1", 9, deviceId);

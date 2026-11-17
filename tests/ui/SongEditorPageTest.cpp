@@ -290,10 +290,12 @@ TEST_CASE("the song editor dims the click before the count-in when the click is 
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(id);
     auto image = snapshot(page, 1280, 698);
-    // The Click row is under the 47 px bar, the 26 px ruler, the 28 px Tempo lane and three 44 px parts: 233 to 269.
+    CHECK(page.arrangementRow().getBounds() == juce::Rectangle<int>(200, 47, 1280 - 200 - 290, 34));   // one row of tools
+    // The Click row is under the 47 px bar, the 34 px arrangement row, the 26 px ruler, the 28 px Tempo and Sections lanes
+    // and three 44 px parts: 295 to 331.
     const auto tickAt = [&](double seconds) {
         const int x = 350 + juce::roundToInt((seconds + 4.8) * 640.0 / 38.4);
-        return image.getClippedImage({x, 243, 1, 16});
+        return image.getClippedImage({x, 305, 1, 16});
     };
     CHECK_FALSE(hasColour(tickAt(-4.2), theme::ember));          // before the count-in, the click is off: dimmed
     CHECK(hasColour(tickAt(-1.8), theme::ember));                 // in the count-in, which always clicks
@@ -311,10 +313,10 @@ TEST_CASE("the song editor fills a waveform that stays above zero down to the ce
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(id);
     auto image = snapshot(page, 1280, 698);
-    // The Keys lane (under the 28 px Tempo lane) runs from 101 to 145, its centre line at 123; at x 600 the wave reaches
-    // about 12 px above it.
+    // The Keys lane (under the arrangement row and the 28 px Tempo and Sections lanes) runs from 163 to 207, its centre
+    // line at 185; at x 600 the wave reaches about 12 px above it.
     const auto keys = s.model().band().roles[3].colour;
-    CHECK(hasColour(image.getClippedImage({600, 118, 1, 1}), keys));  // between the wave's top and the centre line
-    CHECK(hasColour(image.getClippedImage({600, 122, 1, 1}), keys));  // down to the centre line, at y 123.0
-    CHECK_FALSE(hasColour(image.getClippedImage({600, 128, 1, 1}), keys));   // nothing below it
+    CHECK(hasColour(image.getClippedImage({600, 180, 1, 1}), keys));  // between the wave's top and the centre line
+    CHECK(hasColour(image.getClippedImage({600, 184, 1, 1}), keys));  // down to the centre line, at y 185.0
+    CHECK_FALSE(hasColour(image.getClippedImage({600, 190, 1, 1}), keys));   // nothing below it
 }

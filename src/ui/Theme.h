@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "model/Documents.h"
 #include "model/MeaningColours.h"
 
 namespace sqlive::theme {
@@ -67,6 +68,16 @@ inline void paintAppBackground(juce::Graphics& g, juce::Rectangle<int> area) {
     glowFill.transform = juce::AffineTransform::scale(1.0f, 500.0f / 1200.0f, centre.x, centre.y);
     g.setFillType(glowFill);
     g.fillRect(r);
+}
+
+// The one place a section's colour is worked out for the screen: its type's colour, or `mid` for no type or one the band
+// doesn't have. A section type never has a meaning colour (the section commands refuse them), so a section never looks
+// like "playing now" or "next".
+inline juce::Colour sectionColour(const model::BandDoc& band, const juce::String& typeId) {
+    if (typeId.isNotEmpty())
+        for (const auto& type : band.sectionTypes)
+            if (type.id == typeId) return type.colour;
+    return mid;
 }
 
 // The mockup's .box and .card: the panel fill and a hairline border.

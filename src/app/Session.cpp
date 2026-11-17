@@ -329,9 +329,9 @@ void Session::perform(Action action) {
     }
 }
 
-void Session::playSong(const juce::String& songId, double fromSeconds) {
+void Session::playSong(const juce::String& songId, double fromSeconds, const juce::String& arrangementId) {
     if (!deviceMayPlay() || playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
-    const auto prepared = preparedFor(songId, {});                // one song alone: its sections in order
+    const auto prepared = preparedFor(songId, arrangementId);     // one song alone, as that arrangement plays it
     if (prepared == nullptr || prepared->song->sampleRate != engine_.sampleRate()) return;   // the engine would ignore it
     const auto serial = engine_.cue(prepared->song);
     if (serial == 0) return;                                     // the queue is full: nothing was cued

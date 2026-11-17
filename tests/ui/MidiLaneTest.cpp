@@ -240,11 +240,11 @@ TEST_CASE("the song editor has a lane per device, keeps one for a removed device
     ui::SongEditorPage page(s);  page.openSong(song);
     snapshot(page, 1280, 698);
     auto& timeline = page.timeline();
-    REQUIRE(timeline.lanes().size() == 8);                         // the tempo, three devices, three parts, the click
-    CHECK(timeline.lanes()[1]->title() == "Guitar 1");  CHECK(timeline.lanes()[2]->title() == "Guitar 2");
-    CHECK(timeline.lanes()[3]->subtitle() == "no longer a device");
-    CHECK(timeline.lanes()[1]->getHeight() == 24);
-    CHECK(timeline.lanes()[4]->title() == "Keys");
+    REQUIRE(timeline.lanes().size() == 9);                         // the tempo, the sections, three devices, three parts, the click
+    CHECK(timeline.lanes()[2]->title() == "Guitar 1");  CHECK(timeline.lanes()[3]->title() == "Guitar 2");
+    CHECK(timeline.lanes()[4]->subtitle() == "no longer a device");
+    CHECK(timeline.lanes()[2]->getHeight() == 24);
+    CHECK(timeline.lanes()[5]->title() == "Keys");
 
     timeline.select({EditorSelection::Kind::Marker, g1, change, -1});
     auto* inspector = findVisible<ui::MarkerInspector>(page);
@@ -256,7 +256,7 @@ TEST_CASE("the song editor has a lane per device, keeps one for a removed device
     CHECK(hasColour(image.getClippedImage({350, 0, 640, 698}), s.model().band().midiDevices[0].colour));   // the chip
 
     // A drag on the chip moves it, snapped, as one undo step; Ctrl at the press copies it; Alt doesn't snap.
-    auto* lane = dynamic_cast<ui::MidiLane*>(timeline.lanes()[1].get());
+    auto* lane = dynamic_cast<ui::MidiLane*>(timeline.lanes()[2].get());
     REQUIRE(lane != nullptr);
     const auto& doc = *s.model().song(song);
     const auto tempo = model::tempoMapOf(doc);
@@ -312,7 +312,7 @@ TEST_CASE("the song editor has a lane per device, keeps one for a removed device
     CHECK(buttonSaying(page, "Set to the cursor") != nullptr);
 
     // A removed device's lane edits its changes but adds none.
-    auto* orphan = dynamic_cast<ui::MidiLane*>(timeline.lanes()[3].get());
+    auto* orphan = dynamic_cast<ui::MidiLane*>(timeline.lanes()[4].get());
     REQUIRE(orphan != nullptr);
     orphan->mouseDown(eventOn(*orphan, {scale.xAtBar(8) + 1.0f, 12.0f}));
     CHECK(s.model().song(song)->midiLanes.at(gone).size() == 1);
