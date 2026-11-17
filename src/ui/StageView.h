@@ -57,7 +57,7 @@ public:
     // For tests: the figures as laid out, three strings each (the number, its small part, the caption; while a song plays
     // the digits are 0s, the widths' templates), and the key hints as laid out.
     juce::StringArray drawnFigures() const { return shape_.figures; }
-    juce::StringArray drawnHints() const { return shape_.hints; }
+    juce::StringArray drawnHints() const { return textsOf(shape_.hints); }
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -73,7 +73,7 @@ private:
         juce::StringArray figures;
         int beats = 0;
         bool endOfSet = false, noSongs = false;
-        juce::StringArray hints;
+        std::vector<KeyHint> hints;
         bool operator==(const Shape&) const = default;
     };
     // A big figure on the right: "33" with ".1" after it in dim, and "BAR" under it.

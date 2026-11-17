@@ -72,7 +72,7 @@ TEST_CASE("the show state between songs", "[show]") {
     CHECK(st.action == "Press Space to start");  CHECK(st.actionDetail == "1 bar of count-in, then bar 1.");
     CHECK(st.pill == juce::String::fromUTF8("✓ READY"));  CHECK(st.readiness == Readiness::Ready);
     CHECK(st.after[0].text == "1 First Light");  CHECK(st.after[0].kind == ShowState::After::Kind::Next);
-    CHECK(st.hints[0] == "Space start");
+    CHECK(st.hints[0].text() == "Space start");
 }
 
 TEST_CASE("the show state while a song plays", "[show]") {
@@ -163,9 +163,9 @@ TEST_CASE("the show state's notes, texts and hints follow the setlist and the vi
     s.perform(Action::NextSongEarlier);
 
     // The hints: the stage view while playing, then the main view.
-    CHECK(st.hints == juce::StringArray{juce::String::fromUTF8("← → next song"), "hold Space stop", "Tab main view"});
+    CHECK(textsOf(st.hints) == juce::StringArray{juce::String::fromUTF8("← → next song"), "hold Space stop", "Tab main view"});
     s.perform(Action::ToggleView);
-    CHECK(makeShowState(s).hints == juce::StringArray{juce::String::fromUTF8("← → next song"), "hold Space stop", "Tab stage view"});
+    CHECK(textsOf(makeShowState(s).hints) == juce::StringArray{juce::String::fromUTF8("← → next song"), "hold Space stop", "Tab stage view"});
     s.perform(Action::ToggleView);
 
     // The second song follows seamlessly: "straight after this song".
@@ -179,7 +179,7 @@ TEST_CASE("the show state's notes, texts and hints follow the setlist and the vi
     // Between songs, after the second: the one stopped (the second, which is next again), the next, and the rest.
     st = makeShowState(s);
     REQUIRE_FALSE(st.playing);
-    CHECK(st.hints == juce::StringArray{"Space start", juce::String::fromUTF8("← → choose a different song"), "Tab main view"});
+    CHECK(textsOf(st.hints) == juce::StringArray{"Space start", juce::String::fromUTF8("← → choose a different song"), "Tab main view"});
     CHECK(st.upLabel == juce::String::fromUTF8("UP NEXT · 2 OF 3"));
     CHECK(st.upKey == "A");
     REQUIRE(st.after.size() == 3);

@@ -48,7 +48,7 @@ private:
         bool endOfSet = true;
         juce::String title, note, follow;                         // "4 · Long Way Down", "✓ Ready", "after a 4 s gap"
         bool noteGood = false, noteBad = false;
-        juce::StringArray hints;
+        std::vector<KeyHint> hints;
         bool operator==(const Side&) const = default;
     };
 

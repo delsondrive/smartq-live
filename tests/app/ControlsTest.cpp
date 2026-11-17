@@ -189,12 +189,29 @@ TEST_CASE("a Stop tap in one song doesn't count toward stopping a song started f
     Pedals p({{"stop", binding(0, 1, 10, 65)}});
     p.space(1.0, 1.1);  p.s.advanceWithoutDevice(48000 * 3);
     p.cc(10, 65, 127, 2.0);  p.cc(10, 65, 0, 2.1);                                       // one tap in the first song
-    // The top bar's ▶ held to stop, then pressed to start the next song: straight to the session, not through here.
+    // The top bar's ▶ held to stop, the next song chosen and ▶ pressed: straight to the session, not through here.
     p.s.perform(Action::Stop);  p.s.advanceWithoutDevice(4800);
+    p.s.chooseNext(1);
     p.s.perform(Action::Start);  p.s.advanceWithoutDevice(4800);
     REQUIRE(p.s.now().playing);
+    REQUIRE(p.s.now().playingIndex == 1);
     p.cc(10, 65, 127, 2.5);                                                               // within a second of the first tap
     CHECK(p.seen == std::vector{Action::Start});                                          // a first tap in this song
+    p.cc(10, 65, 0, 2.6);  p.cc(10, 65, 127, 2.9);
+    CHECK(p.seen == std::vector{Action::Start, Action::Stop});
+}
+TEST_CASE("a Stop tap doesn't count toward stopping the same song started again from outside", "[controls]") {
+    Pedals p({{"stop", binding(0, 1, 10, 65)}});
+    p.space(1.0, 1.1);  p.s.advanceWithoutDevice(48000 * 3);
+    p.cc(10, 65, 127, 2.0);  p.cc(10, 65, 0, 2.1);                                       // one tap, 3 s into the first song
+    // The top bar's ▶ held to stop it, the same song chosen again and ▶ pressed: straight to the session.
+    p.s.perform(Action::Stop);  p.s.advanceWithoutDevice(4800);
+    p.s.chooseNext(0);
+    p.s.perform(Action::Start);  p.s.advanceWithoutDevice(4800);
+    REQUIRE(p.s.now().playing);
+    REQUIRE(p.s.now().playingIndex == 0);                                                 // the same entry, from the top
+    p.cc(10, 65, 127, 2.5);                                                               // within a second of the first tap
+    CHECK(p.seen == std::vector{Action::Start});
     p.cc(10, 65, 0, 2.6);  p.cc(10, 65, 127, 2.9);
     CHECK(p.seen == std::vector{Action::Start, Action::Stop});
 }

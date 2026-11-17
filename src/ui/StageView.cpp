@@ -308,8 +308,8 @@ void StageView::layout() {
     // The hints along the bottom, as many to a line as fit.
     hintLines_.clear();
     float used = 0.0f;
-    for (int i = 0; i < shape_.hints.size(); ++i) {
-        const float hint = hintWidth(shape_.hints[i], hintFont());
+    for (int i = 0; i < static_cast<int>(shape_.hints.size()); ++i) {
+        const float hint = hintWidth(shape_.hints[static_cast<std::size_t>(i)], hintFont());
         if (hintLines_.empty() || used + kHintGap + hint > inner) {
             hintLines_.push_back({i});
             used = hint;
@@ -532,7 +532,7 @@ void StageView::paintHints(juce::Graphics& g) {
     for (const auto& line : hintLines_) {
         float x = hintsBox_.getX();
         for (const int i : line) {
-            const auto& hint = shape_.hints[i];
+            const auto& hint = shape_.hints[static_cast<std::size_t>(i)];
             drawHint(g, hint, hintFont(), x, centreY);
             x += hintWidth(hint, hintFont()) + kHintGap;
         }

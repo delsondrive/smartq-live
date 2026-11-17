@@ -18,9 +18,9 @@ namespace sqlive::ui {
 // box. 112 px high.
 //
 // Under it, the song's MIDI lanes (ShowState::lanes): 6 px down, one 22 px lane per device with a change in the song, 3 px
-// apart, the device's name at the left in dim and each change a chip in the device's colour at its place across the same
-// span. A chip ends before the next one starts, down to a tick. They are read-only: nothing here takes a click. Sections
-// and cues are later stages'.
+// apart (a lane that doesn't fit whole in the map's height is left out), the device's name at the left in dim and each
+// change a chip in the device's colour at its place across the same span. A chip ends before the next one starts, down
+// to a tick. They are read-only: nothing here takes a click. Sections and cues are later stages'.
 //
 // refresh() reads the session (now(), the song's document and the cache's loaded song; never a file) and repaints only
 // what moved: the strip of waveform the playhead crossed, or everything when the song, its span or its audio changed.
@@ -35,6 +35,10 @@ public:
     // The lanes to draw; true when their number changed, so the map's idealHeight() did.
     bool setLanes(std::vector<ShowState::Lane>);
     int idealHeight() const;                                      // the waveform, and the lanes under it
+    // The tallest it can be within room with whole lanes only (at least the waveform): a lane that doesn't fit whole is
+    // left out, never cut in half.
+    int heightWithin(int room) const;
+    int lanesShown() const;                                       // for tests: the lanes that fit whole in its height
     juce::String songId() const { return songId_; }               // the song shown; "" for none
 
     void paint(juce::Graphics&) override;

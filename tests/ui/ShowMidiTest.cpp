@@ -3,13 +3,17 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "app/AudioHost.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/MidiParams.h"
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
+#include "ui/Helpers.h"
+#include "ui/InterruptedBanner.h"
 #include "ui/MainView.h"
 #include "ui/ShowState.h"
 #include "ui/StageView.h"
+#include "ui/Widgets.h"
 
 using namespace sqlive;
 using namespace sqlive::ui;
@@ -73,20 +77,28 @@ TEST_CASE("the sentences and hints name the learned keys, or Start's pedal", "[s
     s.enterShow();
     REQUIRE(s.stageView());                                       // Show mode opens on the stage view
     auto between = makeShowState(s);
-    CHECK(between.action == "Press CC 64, ch 10 to start");
-    CHECK(between.startKey == "CC 64, ch 10");
-    CHECK(between.hints == juce::StringArray{"CC 64, ch 10 start", juce::String::fromUTF8("← D choose a different song"), "V main view"});
+    CHECK(between.action == "Press the Start pedal to start");     // a pedal is "the Start pedal" in a sentence
+    CHECK(between.startKey == "Pedal");
+    CHECK(textsOf(between.hints) == juce::StringArray{"Pedal start", juce::String::fromUTF8("← D choose a different song"), "V main view"});
+    // The keys are carried apart from the words, so each is drawn as a key, learned or not.
+    CHECK(between.hints[0].keys == juce::StringArray{"Pedal"});
+    CHECK(between.hints[1].keys == juce::StringArray{juce::String::fromUTF8("←"), "D"});
+    CHECK(between.hints[2].keys == juce::StringArray{"V"});
+    CHECK(between.hints[2].words == "main view");
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 3);
-    CHECK(makeShowState(s).hints == juce::StringArray{juce::String::fromUTF8("← D next song"), "hold S stop", "V main view"});
+    CHECK(textsOf(makeShowState(s).hints) == juce::StringArray{juce::String::fromUTF8("← D next song"), "hold S stop", "V main view"});
+    CHECK(makeShowState(s).hints[1].before == "hold");  CHECK(makeShowState(s).hints[1].keys == juce::StringArray{"S"});
     s.commands().run("controls.set", params({{"action", "stop"}, {"binding", binding(0)}}));   // nothing on a key can be held
-    CHECK(makeShowState(s).hints[1] == "Esc Esc stop");
+    CHECK(makeShowState(s).hints[1].text() == "Esc Esc stop");
     s.perform(Action::Stop);  s.advanceWithoutDevice(9600);
 
-    // Loading, and after a cut-off.
-    s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('Q')}}));
+    // Loading, with the pedal and then with a key, and after a cut-off.
     s.cache().setPaused(true);
     s.cache().forget(d.setlist().entries[1].songId);
     s.chooseNext(1);
+    REQUIRE(makeShowState(s).readiness == app::Readiness::Loading);
+    CHECK(makeShowState(s).actionDetail == "The Start pedal will work as soon as this says Ready.");
+    s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('Q')}}));
     const auto loading = makeShowState(s);
     REQUIRE(loading.readiness == app::Readiness::Loading);
     CHECK(loading.actionDetail == "Q will work as soon as this says Ready.");
@@ -135,4 +147,80 @@ TEST_CASE("the stage view's key names Start's key", "[showmidi]") {
     snapshot(view, 1280, 698);
     CHECK(view.drawnCallToAction().contains("Press Q to start"));
     CHECK(view.drawnStartKey() == "Q");
+}
+
+// ---- Fix round 1 -------------------------------------------------------------------------------------------------------
+
+TEST_CASE("the pedalboards sentence counts only changes that send a patch", "[showmidi]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 5}, {"beat", 1}, {"messages", messages({cc(11, 90)})}}));
+    s.enterShow();
+    auto st = makeShowState(s);
+    CHECK(st.lanes.size() == 1);                                  // the change is shown on its lane
+    CHECK(st.actionDetail == "1 bar of count-in, then bar 1.");   // but sends no patch
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 9}, {"beat", 1}, {"messages", messages({cc(11, 40), pc(3)})}}));
+    CHECK(makeShowState(s).actionDetail == "1 bar of count-in, then bar 1. The pedalboards switch to this song's first patches when you press.");
+}
+
+TEST_CASE("a lane that doesn't fit whole in the map is left out", "[showmidi]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    for (int i = 0; i < 30; ++i) {
+        auto id = s.commands().run("device.add", params({{"name", "Device " + juce::String(i)}})).value.toString();
+        s.commands().run("marker.add", params({{"songId", song}, {"deviceId", id}, {"bar", 3}, {"beat", 1}}));
+    }
+    s.enterShow();
+    s.perform(Action::ToggleView);
+    sqlive::test::ScopedLook look;
+    ui::MainView view(s);
+    view.setVisible(true);
+    for (const auto& [w, h] : {std::pair{1100, 618}, std::pair{1280, 698}, std::pair{1920, 1018}}) {
+        INFO(w << " x " << h);
+        snapshot(view, w, h);
+        const int lanes = view.map().lanesShown();
+        CHECK(lanes < 30);                                        // thirty lanes don't fit over the bottom row
+        CHECK(view.map().getHeight() == 112 + (lanes == 0 ? 0 : 6 + lanes * 22 + (lanes - 1) * 3));   // whole lanes only
+        CHECK(view.sideBounds().getHeight() >= 160);              // the next song's box and the hints keep their room
+        CHECK(childrenInside(view));
+    }
+}
+
+TEST_CASE("a learned key in a hint is drawn as a key", "[showmidi]") {
+    sqlive::test::ScopedLook look;
+    const auto font = theme::font(theme::sizeSmall);
+    const ui::KeyHint learned{{}, {"Q"}, "start"};
+    CHECK(hintWidth(learned, font) == Catch::Approx(keyWidth("Q") + 4.0f + widthOf(font, "start")));
+    const ui::KeyHint hold{"hold", {"F5"}, "stop"};
+    CHECK(hintWidth(hold, font) == Catch::Approx(widthOf(font, "hold") + 4.0f + keyWidth("F5") + 4.0f + widthOf(font, "stop")));
+    const ui::KeyHint arrows{{}, {juce::String::fromUTF8("←"), "D"}, "next song"};
+    CHECK(hintWidth(arrows, font) == Catch::Approx(keyWidth(juce::String::fromUTF8("←")) + 3.0f + keyWidth("D") + 4.0f + widthOf(font, "next song")));
+    CHECK(arrows.text() == juce::String::fromUTF8("← D next song"));
+}
+
+TEST_CASE("after a cut-off, the banner and the box name the band's keys and the pedalboards", "[showmidi]") {
+    DemoSession d; auto& s = *d.session; app::AudioHost host(s);
+    s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('Q')}}));
+    s.commands().run("controls.set", params({{"action", "nextSongLater"}, {"binding", binding('D')}}));
+    sqlive::test::ScopedLook look;
+    ui::InterruptedBanner banner(s, &host);
+    ui::ComesBackBox box(s);
+    s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);
+    host.deviceLost();
+    host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);
+    banner.refresh();  box.refresh();
+    REQUIRE(banner.wanted());
+    CHECK(banner.sentence() == "Press Q to start the song again from the top.");
+    CHECK(box.hint() == juce::String::fromUTF8("Q restarts the song from the top \xc2\xb7 \xe2\x86\x90 D choose another song. Nothing starts by itself."));
+    // A band with pedalboards: a restart sends them their patches again, and the box says so.
+    s.commands().run("device.add", params({{"name", "Guitar 1"}}));
+    box.refresh();
+    CHECK(box.hint().endsWith("Nothing starts by itself. The pedalboards are sent their patches again."));
+    // Start on a pedal only, and no song keys: no "choose another song".
+    s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding(0, 1, 10, 64)}}));
+    s.commands().run("controls.set", params({{"action", "nextSongLater"}, {"binding", binding(0)}}));
+    s.commands().run("controls.set", params({{"action", "nextSongEarlier"}, {"binding", binding(0)}}));
+    banner.refresh();  box.refresh();
+    CHECK(banner.sentence() == "Press the Start pedal to start the song again from the top.");
+    CHECK(box.hint() == "The Start pedal restarts the song from the top. Nothing starts by itself. The pedalboards are sent their patches again.");
+    CHECK(fractionNotBackground(snapshot(box, 1224, ui::ComesBackBox::height)) > 0.0);
 }

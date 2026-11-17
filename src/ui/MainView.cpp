@@ -139,8 +139,8 @@ void MainView::resized() {
     auto area = getLocalBounds();
     strip_.setBounds(area.removeFromTop(SetlistStrip::idealHeight));
     area.removeFromTop(kMapTop);
-    // The map's lanes take what the bottom row can spare: a lane that doesn't fit is cut off, never the next song's box.
-    const int mapHeight = std::max(SongMapView::waveHeight, std::min(map_.idealHeight(), area.getHeight() - kMinBottomRow));
+    // The map's lanes take what the bottom row can spare: a lane that doesn't fit whole is left out, never the next song's box.
+    const int mapHeight = map_.heightWithin(area.getHeight() - kMinBottomRow);
     map_.setBounds(area.removeFromTop(mapHeight).reduced(kPadX, 0));
     area.removeFromTop(kMapBottom + kBottomTop);
     area.removeFromBottom(kBottomBottom);
@@ -169,8 +169,8 @@ void MainView::layoutSide() {
     hintLines_.clear();
     const float lineWidth = static_cast<float>(std::max(0, side_.getWidth() - 2 * kBoxPadX));
     float used = 0.0f;
-    for (int i = 0; i < shownSide_.hints.size(); ++i) {
-        const float w = hintWidth(shownSide_.hints[i], hintFont());
+    for (int i = 0; i < static_cast<int>(shownSide_.hints.size()); ++i) {
+        const float w = hintWidth(shownSide_.hints[static_cast<std::size_t>(i)], hintFont());
         const float withDot = w + widthOf(hintFont(), kDot);
         if (hintLines_.empty() || used + withDot > lineWidth) {
             hintLines_.push_back({i});
@@ -237,7 +237,7 @@ void MainView::paint(juce::Graphics& g) {
                     g.drawText(kDot, juce::Rectangle<float>(x, centreY - 0.5f * kHintHeight, w + 1.0f, kHintHeight), juce::Justification::centredLeft, false);
                     x += w;
                 }
-                const auto& hint = shownSide_.hints[line[i]];
+                const auto& hint = shownSide_.hints[static_cast<std::size_t>(line[i])];
                 drawHint(g, hint, hintFont(), x, centreY);
                 x += hintWidth(hint, hintFont());
             }

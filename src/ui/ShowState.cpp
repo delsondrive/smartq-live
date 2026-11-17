@@ -115,44 +115,53 @@ std::vector<ShowState::Lane> lanesOf(const model::BandDoc& band, const model::So
     return lanes;
 }
 
-// Whether the song changes any band device's patch, so Start sends its first patches.
-bool hasPedalChanges(const model::BandDoc& band, const model::SongDoc* song) {
+// Whether the song changes any band device's patch (a change that sends a program), so Start sends its first patches.
+bool hasPatchChanges(const model::BandDoc& band, const model::SongDoc* song) {
     if (song == nullptr) return false;
-    return std::any_of(band.midiDevices.begin(), band.midiDevices.end(),
-                       [song](const model::MidiDeviceDoc& device) { return laneHasChanges(*song, device.id); });
+    const auto sendsProgram = [](const model::MarkerDoc& marker) {
+        return std::any_of(marker.messages.begin(), marker.messages.end(),
+                           [](const model::MidiMessageDoc& m) { return m.type == model::MidiMessageDoc::Type::Program; });
+    };
+    for (const auto& device : band.midiDevices)
+        if (const auto found = song->midiLanes.find(device.id); found != song->midiLanes.end())
+            if (std::any_of(found->second.begin(), found->second.end(), sendsProgram)) return true;
+    return false;
 }
 
-// The keys the sentences and hints name, as the band has them.
-struct Keys {
-    juce::String start;                                            // Start's key, else its pedal, else the top bar's ▶
-    juce::String hold;                                             // a key held to stop: Stop's, else Start's; "" for none
-    juce::String arrows;                                           // "← →": Next song earlier's and later's keys
-    juce::String view;                                             // "Tab"
-};
-
-Keys keysOf(const model::BandDoc& band) {
-    using app::Action;
-    using app::ControlMap;
-    const ControlMap map(band.controls);
-    Keys keys;
-    keys.start = ControlMap::describe(map.bindingFor(Action::Start));
-    if (keys.start.isEmpty()) keys.start = utf8("\xe2\x96\xb6");   // "▶"
-    keys.hold = ControlMap::describeKey(map.bindingFor(Action::Stop));
-    if (keys.hold.isEmpty()) keys.hold = ControlMap::describeKey(map.bindingFor(Action::Start));
-    juce::StringArray arrows{ControlMap::describeKey(map.bindingFor(Action::NextSongEarlier)),
-                             ControlMap::describeKey(map.bindingFor(Action::NextSongLater))};
-    arrows.removeEmptyStrings();
-    keys.arrows = arrows.joinIntoString(" ");
-    keys.view = ControlMap::describeKey(map.bindingFor(Action::ToggleView));
-    return keys;
-}
-
-// "<key> <what it does>"; nothing when the action has no key.
-void addHint(juce::StringArray& hints, const juce::String& key, const juce::String& what) {
-    if (key.isNotEmpty()) hints.add(key + " " + what);
+// "<keys> <what they do>"; nothing when the action has no key.
+void addHint(std::vector<KeyHint>& hints, juce::StringArray keys, const juce::String& what) {
+    keys.removeEmptyStrings();
+    if (!keys.isEmpty()) hints.push_back({{}, keys, what});
 }
 
 }  // namespace
+
+juce::String ShowKeys::startCap() const {
+    if (startKey.isNotEmpty()) return startKey;
+    return startPedal ? juce::String("Pedal") : utf8("\xe2\x96\xb6");   // "▶"
+}
+
+juce::String ShowKeys::startWords(bool sentenceStart) const {
+    if (startKey.isNotEmpty()) return startKey;
+    if (startPedal) return sentenceStart ? "The Start pedal" : "the Start pedal";
+    return utf8("\xe2\x96\xb6");
+}
+
+ShowKeys showKeysOf(const model::BandDoc& band) {
+    using app::Action;
+    using app::ControlMap;
+    const ControlMap map(band.controls);
+    ShowKeys keys;
+    const auto start = map.bindingFor(Action::Start);
+    keys.startKey = ControlMap::describeKey(start);
+    keys.startPedal = ControlMap::describeMidi(start).isNotEmpty();
+    keys.holdKey = ControlMap::describeKey(map.bindingFor(Action::Stop));
+    if (keys.holdKey.isEmpty()) keys.holdKey = keys.startKey;
+    keys.songKeys = {ControlMap::describeKey(map.bindingFor(Action::NextSongEarlier)), ControlMap::describeKey(map.bindingFor(Action::NextSongLater))};
+    keys.songKeys.removeEmptyStrings();
+    keys.viewKey = ControlMap::describeKey(map.bindingFor(Action::ToggleView));
+    return keys;
+}
 
 std::pair<double, double> mapSpanSeconds(const model::SongDoc& song) { return model::songExtentSeconds(song, model::tempoMapOf(song)); }
 
@@ -164,8 +173,8 @@ ShowState makeShowState(const app::Session& session) {
     const auto* list = model.setlist(session.setlistId());
     const int count = list != nullptr ? static_cast<int>(list->entries.size()) : 0;
     if (list != nullptr) st.setlistName = list->name;
-    const auto keys = keysOf(model.band());
-    st.startKey = keys.start;
+    const auto keys = showKeysOf(model.band());
+    st.startKey = keys.startCap();
     const auto songAt = [&](int index) -> const model::SongDoc* {
         if (list == nullptr || index < 0 || index >= count) return nullptr;
         return model.song(list->entries[static_cast<std::size_t>(index)].songId);
@@ -260,9 +269,9 @@ ShowState makeShowState(const app::Session& session) {
         st.pill = readinessPill(next);
         switch (next.readiness) {
         case Readiness::Ready:
-            st.action = "Press " + keys.start + " to start" + (now.interrupted ? " again from the top" : "");
+            st.action = "Press " + keys.startWords() + " to start" + (now.interrupted ? " again from the top" : "");
             st.actionDetail = countInText(nextSong != nullptr ? nextSong->countInBars : 0);
-            if (hasPedalChanges(model.band(), nextSong))
+            if (hasPatchChanges(model.band(), nextSong))
                 st.actionDetail << " The pedalboards switch to this song's first patches when you press.";
             break;
         case Readiness::Failed:
@@ -272,7 +281,7 @@ ShowState makeShowState(const app::Session& session) {
         case Readiness::None:
         case Readiness::Loading:
             st.action = "Loading " + st.upTitle + utf8("\xe2\x80\xa6");
-            st.actionDetail = keys.start + " will work as soon as this says Ready.";
+            st.actionDetail = keys.startWords(true) + " will work as soon as this says Ready.";
             break;
         }
 
@@ -286,15 +295,15 @@ ShowState makeShowState(const app::Session& session) {
     }
 
     // The hints, with the band's keys: an action with no key has no hint, and with no key to hold, Esc twice stops.
-    const auto stop = keys.hold.isNotEmpty() ? "hold " + keys.hold + " stop" : juce::String("Esc Esc stop");
+    const auto stop = keys.holdKey.isNotEmpty() ? KeyHint{"hold", {keys.holdKey}, "stop"} : KeyHint{{}, {"Esc", "Esc"}, "stop"};
     if (!session.stageView() || now.playing) {
-        addHint(st.hints, keys.arrows, "next song");
-        st.hints.add(stop);
-        addHint(st.hints, keys.view, session.stageView() ? "main view" : "stage view");
+        addHint(st.hints, keys.songKeys, "next song");
+        st.hints.push_back(stop);
+        addHint(st.hints, juce::StringArray(keys.viewKey), session.stageView() ? "main view" : "stage view");
     } else {
-        st.hints.add(keys.start + " start");
-        addHint(st.hints, keys.arrows, "choose a different song");
-        addHint(st.hints, keys.view, "main view");
+        st.hints.push_back({{}, {keys.startCap()}, "start"});
+        addHint(st.hints, keys.songKeys, "choose a different song");
+        addHint(st.hints, juce::StringArray(keys.viewKey), "main view");
     }
 
     // The song the map shows: the one playing, else the next.

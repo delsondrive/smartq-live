@@ -98,6 +98,20 @@ int SongMapView::idealHeight() const {
     return waveHeight + (count == 0 ? 0 : lanesTop + count * laneHeight + (count - 1) * laneGap);
 }
 
+int SongMapView::heightWithin(int room) const {
+    const int count = static_cast<int>(lanes_.size());
+    const int fit = std::clamp((room - waveHeight - lanesTop + laneGap) / (laneHeight + laneGap), 0, count);
+    return waveHeight + (fit == 0 ? 0 : lanesTop + fit * laneHeight + (fit - 1) * laneGap);
+}
+
+int SongMapView::lanesShown() const {
+    int shown = 0;
+    while (shown < static_cast<int>(lanes_.size())
+           && laneArea(static_cast<std::size_t>(shown)).getBottom() <= static_cast<float>(getHeight()))
+        ++shown;
+    return shown;
+}
+
 float SongMapView::xAt(double position01) const {
     const float inner = std::max(0.0f, static_cast<float>(getWidth()) - 2.0f - kHeadWidth);
     return 1.0f + static_cast<float>(std::clamp(position01, 0.0, 1.0)) * inner;
@@ -190,7 +204,8 @@ void SongMapView::paint(juce::Graphics& g) {
 
 void SongMapView::paintLanes(juce::Graphics& g) {
     const auto chipText = chipFont(), label = labelFont();
-    for (std::size_t l = 0; l < lanes_.size() && l < chips_.size(); ++l) {
+    const auto shown = static_cast<std::size_t>(lanesShown());   // a lane that doesn't fit whole is left out
+    for (std::size_t l = 0; l < shown && l < chips_.size(); ++l) {
         const auto area = laneArea(l);
         const auto& lane = lanes_[l];
         juce::Graphics::ScopedSaveState saved(g);

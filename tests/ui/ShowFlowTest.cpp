@@ -189,7 +189,7 @@ TEST_CASE("a song cut off in Show mode says what happens when the device comes b
     s.perform(Action::Start);  s.advanceWithoutDevice(4800);  d.settle();
     CHECK_FALSE(shell.showingComesBackBox());
     CHECK_FALSE(hasColour(snapshot(shell, 1280, 760).getClippedImage(boxArea), theme::dim));
-    ui::ComesBackBox box;
+    ui::ComesBackBox box(s);
     CHECK(box.title() == "WHEN IT COMES BACK");
     CHECK(box.hint() == juce::String::fromUTF8("Space restarts the song from the top \xc2\xb7 \xe2\x86\x90 \xe2\x86\x92 choose another song. "
                                                "Nothing starts by itself."));

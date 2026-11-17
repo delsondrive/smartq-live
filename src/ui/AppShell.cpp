@@ -82,7 +82,7 @@ private:
 };
 
 AppShell::AppShell(app::Session& session, app::AudioHost* host)
-    : session_(session), host_(host), topBar_(session), interrupted_(session, host), outside_(session) {
+    : session_(session), host_(host), topBar_(session), interrupted_(session, host), comesBack_(session), outside_(session) {
     setWantsKeyboardFocus(true);                                  // keys reach the window's ShowController from here
     setOpaque(true);
 
@@ -276,6 +276,7 @@ void AppShell::refreshBanners() {
     interrupted_.refresh();
     // The box goes with the banner while the song it was playing waits to start again from the top.
     const bool box = interrupted_.wanted() && session_.now().interrupted;
+    comesBack_.refresh();
     if (box != comesBack_.isVisible()) comesBack_.setVisible(box);
     outside_.refresh();
     if (outside_.wanted() != outside_.isVisible()) outside_.setVisible(outside_.wanted());

@@ -196,10 +196,19 @@ private:
 float drawKey(juce::Graphics&, const juce::String& key, float x, float centreY);
 float keyWidth(const juce::String& key);
 
-// A key hint as the mockups write it ("hold Space stop", "← → next song"): its words in dim in that font, each key name
-// among them (an arrow, Space, Tab, Esc) drawn as a key, keys side by side 3 px apart and other words 4 px.
-float hintWidth(const juce::String& hint, const juce::Font&);
-void drawHint(juce::Graphics&, const juce::String& hint, const juce::Font&, float x, float centreY);
+// A key hint as the mockups write it ("hold Space stop", "← → next song"): the word before its keys, its keys drawn as
+// keys side by side 3 px apart, then its words, in dim in that font, 4 px from the keys. The keys are carried apart from
+// the words, so a learned key ("Q", "F5", "Ctrl+Z") is drawn as a key like the defaults.
+struct KeyHint {
+    juce::String before;                                          // "hold"; "" for none
+    juce::StringArray keys;                                       // {"←", "→"}, {"Space"}, {"Esc", "Esc"}
+    juce::String words;                                           // "next song"
+    juce::String text() const;                                    // the whole, as one line: "hold Space stop"
+    bool operator==(const KeyHint&) const = default;
+};
+juce::StringArray textsOf(const std::vector<KeyHint>&);
+float hintWidth(const KeyHint&, const juce::Font&);
+void drawHint(juce::Graphics&, const KeyHint&, const juce::Font&, float x, float centreY);
 
 // The mockup's .beats: one light a beat of the bar, the current one mint with a glow, the others on a field with a
 // hairline border. 12 px in the top bar, 34 px on the stage view; the gap and the glow scale with them.

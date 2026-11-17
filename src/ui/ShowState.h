@@ -6,10 +6,26 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
+#include "ui/Widgets.h"
 
 namespace sqlive::ui {
 
 using app::Readiness;
+
+// The keys (and Start's pedal) the Show screens name, from the band's controls (app::ControlMap): the sentences, the hints,
+// the interrupted banner and the WHEN IT COMES BACK box all say what the band has learned.
+struct ShowKeys {
+    juce::String startKey;                                         // Start's key ("Space", "Q"); "" when it has none
+    bool startPedal = false;                                       // Start has a pedal (said only when it has no key)
+    juce::String holdKey;                                          // a key held during a song stops it: Stop's, else Start's
+    juce::StringArray songKeys;                                    // the keys of Next song: earlier, later ("←", "→"), those set
+    juce::String viewKey;                                          // Main view ⇄ stage view's ("Tab"); "" for none
+    // The big key and a hint's key for Start: its key, else "Pedal", else "▶" (the top bar's button: nothing else starts).
+    juce::String startCap() const;
+    // Start in a sentence: its key, else "the Start pedal" ("The Start pedal" at the start of one), else "▶".
+    juce::String startWords(bool sentenceStart = false) const;
+};
+ShowKeys showKeysOf(const model::BandDoc&);
 
 // Everything both Show views draw (the mockup's screens 1 to 3), in their words.
 struct ShowState {
@@ -40,9 +56,8 @@ struct ShowState {
     juce::String action, actionDetail, pill;                       // "Press Space to start", "2 bars of count-in, then bar 1.", "✓ READY"
                                                                    // (the detail adds "The pedalboards switch to this song's first
                                                                    // patches when you press." when the song has a pedal change)
-    juce::String startKey;                                         // what starts a song, as the sentences name it: Start's key
-                                                                   // ("Space", "Q"), else its pedal ("CC 64, ch 10"), else "▶" (the
-                                                                   // top bar's button: nothing else starts)
+    juce::String startKey;                                         // the stage view's big key: ShowKeys::startCap ("Space", "Q",
+                                                                   // "Pedal", "▶"); the sentences say ShowKeys::startWords
     Readiness readiness = Readiness::None;
     double loadProgress = 0.0;
     struct After {
@@ -53,7 +68,7 @@ struct ShowState {
     };
     std::vector<After> after;                                      // between songs only; Played is NowPlaying::lastPlayedIndex
                                                                    // (none before the first song ends or is stopped)
-    juce::StringArray hints;                                       // the key hints along the bottom, with the band's keys
+    std::vector<KeyHint> hints;                                    // the key hints along the bottom, with the band's keys
     juce::String setlistName;                                      // the stage view, once the last song has ended
     // The song the main view's map shows (the one playing, else the next): one lane per band device that has a change in
     // it, in the band's order, each change a chip with its model::markerLabel at its place across the map's span (from
