@@ -288,6 +288,7 @@ Set a latching footswitch to momentary on the footswitch itself before you learn
 - [ ] Play a song in Show mode and unplug one pedalboard's USB mid-song. The song keeps playing. The pill at the top turns amber and says **MIDI:**, the device's name and **missing**. In Edit mode with the window at its smallest (1100 × 680), the pill is shortened to **MIDI missing**.
 - [ ] While it is unplugged, the device's lane in the Song editor says **not connected**, and **▶ Send now** is greyed out, with the tip that it **isn't connected**.
 - [ ] Plug it back in during the song. Within a couple of seconds the pill says **MIDI 2** again, and the pedal is put on the patch the song is at now, without waiting for the next change.
+- [ ] During a song, pull the pedalboard's USB out and push it back in within a second. The next change in the song still reaches the pedal, and the pedal is put on the patch the song is at now.
 - [ ] Stop the song, unplug the pedalboard and click **SHOW**. The check says the device **isn't connected**, with **!** and **its MIDI port wasn't found. Plug it in, or go on without it.** You can still go on, because it is your call.
 - [ ] Unplug the audio interface mid-song (as in section 9). The box **WHEN IT COMES BACK** also says **The pedalboards are sent their patches again.** Plug it back in and press Space: the pedals go to the song's first patches before it starts.
 

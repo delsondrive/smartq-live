@@ -26,13 +26,15 @@ using sqlive::test::pc;
 
 namespace {
 // This computer's MIDI outputs, as a test says they are: never a real port. A port in `refused` is listed but can't be
-// opened (another program holds it); `ids` gives a port's system identifier (its name when it has none).
-struct FakePorts { juce::StringArray present, refused; std::map<juce::String, juce::String> ids; std::map<juce::String, int> opens, closes;
+// opened (another program holds it); `ids` gives a port's system identifier (its name when it has none). A port in `single`
+// can be open only once at a time, as many Windows drivers allow.
+struct FakePorts { juce::StringArray present, refused, single; std::map<juce::String, juce::String> ids; std::map<juce::String, int> opens, closes;
     std::map<juce::String, std::vector<std::vector<std::uint8_t>>> sent;
     MidiPorts::Lister lister() { return [this] { return present; }; }
     MidiPorts::Lister identifiers() { return [this] { juce::StringArray out; for (auto& n : present) out.add(ids.count(n) > 0 ? ids[n] : n); return out; }; }
     MidiPorts::Opener opener() { return [this](const juce::String& name) -> std::unique_ptr<MidiPorts::Output> {
         if (!present.contains(name) || refused.contains(name)) return nullptr;
+        if (single.contains(name) && opens[name] > closes[name]) return nullptr;
         ++opens[name];
         struct Out : MidiPorts::Output { FakePorts& f; juce::String n; Out(FakePorts& ff, juce::String nn) : f(ff), n(nn) {} ~Out() override { ++f.closes[n]; }
                                          void send(const std::uint8_t* b, int s) override { f.sent[n].emplace_back(b, b + s); } };
@@ -210,6 +212,32 @@ TEST_CASE("a port another program held is opened once it is free, and one unplug
     CHECK(fake.opens["Port A"] == 2);  CHECK(fake.closes["Port A"] == 1);  CHECK(ports.status(g1) == MidiPorts::Status::Connected);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(1300);
     CHECK(fake.opens["Port A"] == 2);                               // nothing changed since: left open
+}
+TEST_CASE("a port unplugged and back so quickly that the list reads the same is opened again and sent its patch", "[ports]") {
+    for (bool singleClient : {false, true}) {
+        INFO(singleClient);
+        DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};  fake.ids["Port A"] = "usb-1";
+        if (singleClient) fake.single = {"Port A"};
+        auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+        s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", s.settings().computerName()}, {"port", "Port A"}}));
+        auto song = d.setlist().entries[0].songId;
+        s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 1}, {"beat", 1}, {"messages", messages({pc(7)})}}));
+        d.settle();
+        app::MidiPorts ports(s, fake.lister(), fake.opener(), fake.identifiers());  s.attachMidi(&ports);  ports.refresh();
+        s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 4);
+        engine::OutMidi m; while (s.engine().popMidi(m)) {}
+        REQUIRE(fake.opens["Port A"] == 1);
+        ports.devicesChanged();                                     // the system says its devices changed; the list reads as before
+        CHECK(fake.opens["Port A"] == 2);  CHECK(fake.closes["Port A"] == 1);
+        CHECK(ports.status(g1) == MidiPorts::Status::Connected);
+        s.advanceWithoutDevice(512);
+        REQUIRE(s.engine().popMidi(m));                             // its current patch, said again
+        CHECK(m.data[0] == 0xC0);  CHECK(m.data[1] == 7);
+        CHECK(m.serial == s.engine().status().playingSerial);
+        fake.sent.clear();  ports.send(m);                         // through the port opened again
+        REQUIRE(fake.sent["Port A"].size() == 1);  CHECK(fake.sent["Port A"][0] == std::vector<std::uint8_t>{0xC0, 7});
+        s.attachMidi(nullptr);
+    }
 }
 TEST_CASE("devices with no port on this computer are said to be not connected", "[ports]") {
     DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};

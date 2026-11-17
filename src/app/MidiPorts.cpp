@@ -26,17 +26,6 @@ private:
     std::unique_ptr<juce::MidiOutput> out_;
 };
 
-juce::StringArray listOutputs() {
-    juce::StringArray names;
-    for (const auto& device : juce::MidiOutput::getAvailableDevices()) names.add(device.name);
-    return names;
-}
-
-juce::StringArray listIdentifiers() {
-    juce::StringArray ids;
-    for (const auto& device : juce::MidiOutput::getAvailableDevices()) ids.add(device.identifier);
-    return ids;
-}
 
 std::unique_ptr<MidiPorts::Output> openOutput(const juce::String& name) {
     for (const auto& device : juce::MidiOutput::getAvailableDevices())
@@ -61,18 +50,38 @@ juce::String portOf(const model::ComputerBinding* here, const juce::String& devi
 
 }  // namespace
 
-MidiPorts::MidiPorts(Session& session) : MidiPorts(session, listOutputs, openOutput, listIdentifiers) {}
+// One enumeration gives both the names and the identifiers, so they always describe the same list.
+MidiPorts::MidiPorts(Session& session)
+    : MidiPorts(session, [] {
+          Listing listing;
+          for (const auto& device : juce::MidiOutput::getAvailableDevices()) {
+              listing.names.add(device.name);
+              listing.ids.add(device.identifier);
+          }
+          return listing;
+      }, openOutput, true) {}
 
-MidiPorts::MidiPorts(Session& session, Lister lister, Opener opener) : MidiPorts(session, std::move(lister), std::move(opener), {}) {}
+MidiPorts::MidiPorts(Session& session, Lister lister, Opener opener)
+    : MidiPorts(session, [lister = std::move(lister)] { const auto names = lister(); return Listing{names, names}; }, std::move(opener),
+                false) {}
 
 MidiPorts::MidiPorts(Session& session, Lister lister, Opener opener, Lister identifiers)
-    : session_(session), lister_(std::move(lister)), opener_(std::move(opener)), identifiers_(std::move(identifiers)) {
+    : MidiPorts(session, [lister = std::move(lister), identifiers = std::move(identifiers)] {
+          const auto names = lister();
+          const auto ids = identifiers();
+          return Listing{names, ids.size() == names.size() ? ids : names};
+      }, std::move(opener), false) {}
+
+MidiPorts::MidiPorts(Session& session, Look look, Opener opener, bool listen)
+    : session_(session), look_(std::move(look)), opener_(std::move(opener)) {
     session_.changes().addChangeListener(this);
     refresh();
     startTimer(kListMs);
+    if (listen) device_list_ = juce::MidiDeviceListConnection::make([this] { devicesChanged(); });
 }
 
 MidiPorts::~MidiPorts() {
+    device_list_.reset();
     stopTimer();
     session_.changes().removeChangeListener(this);
     if (session_.midi() == this) session_.attachMidi(nullptr);
@@ -121,41 +130,57 @@ bool MidiPorts::bindingsChanged() const {
     return false;
 }
 
-juce::StringArray MidiPorts::identifiersOf(const juce::StringArray& names) const {
-    if (!identifiers_) return names;
-    auto ids = identifiers_();
-    return ids.size() == names.size() ? ids : names;  // listed between two enumerations: the next look sees it settled
-}
-
-bool MidiPorts::needsALook(const juce::StringArray& names, const juce::StringArray& ids) const {
-    if (names != listed_ || ids != listedIds_) return true;
+bool MidiPorts::needsALook(const Listing& now) const {
+    if (now.names != listed_ || now.ids != listedIds_) return true;
     // A port that is listed but couldn't be opened (another program held it) is tried again.
     for (const auto& d : devices_)
-        if (d.status == Status::NotFound && names.contains(d.port)) return true;
+        if (d.status == Status::NotFound && now.names.contains(d.port)) return true;
     return false;
 }
 
-void MidiPorts::refresh() {
+void MidiPorts::refresh() { refreshWith(look_(), false); }
+
+void MidiPorts::devicesChanged() { refreshWith(look_(), true); }
+
+void MidiPorts::refreshWith(const Listing& now, bool reopenAll) {
     const auto listedBefore = listed_;
-    listed_ = lister_();
-    listedIds_ = identifiersOf(listed_);
+    listed_ = now.names;
+    listedIds_ = now.ids;
     auto next = bindings();
 
     // The ports wanted: bound to a device here, and in the list, with their identifiers now. One already open on the same
-    // identifier stays open; one no longer wanted closes; one whose identifier changed (unplugged and back between two
-    // looks) is opened again, and so is one that couldn't be opened last time.
+    // identifier stays open, unless every one is to be opened again; one no longer wanted closes; one whose identifier
+    // changed (unplugged and back between two looks) is opened again, and so is one that couldn't be opened last time.
     std::map<juce::String, juce::String> wanted;
     for (const auto& d : next)
         if (const int at = listed_.indexOf(d.port); d.port.isNotEmpty() && at >= 0) wanted[d.port] = listedIds_[at];
     const auto current = [&](const juce::String& port) {
         const auto open = open_.find(port);
         const auto want = wanted.find(port);
-        return open != open_.end() && want != wanted.end() && open->second.id == want->second;
+        return !reopenAll && open != open_.end() && want != wanted.end() && open->second.id == want->second;
     };
+    std::set<juce::String> wasOpen;
+    for (const auto& entry : open_) wasOpen.insert(entry.first);
     std::map<juce::String, OpenPort> opened;
-    for (const auto& [port, id] : wanted)
-        if (!current(port))
-            if (auto out = opener_(port)) opened[port] = {id, std::move(out)};   // opening can be slow: not under the lock
+    juce::StringArray onlyOnce;
+    for (const auto& [port, id] : wanted) {
+        if (current(port)) continue;
+        if (auto out = opener_(port)) opened[port] = {id, std::move(out)};   // opening can be slow: not under the lock
+        else if (wasOpen.count(port) > 0) onlyOnce.add(port);
+    }
+    // A port still open here that couldn't be opened a second time: many drivers let a port be open only once. It is closed
+    // first (its songs send nothing meanwhile), then opened again.
+    if (!onlyOnce.isEmpty()) {
+        std::map<juce::String, OpenPort> closing;
+        {
+            const juce::ScopedLock sl(lock_);
+            for (const auto& port : onlyOnce) closing.insert(open_.extract(port));
+            for (auto& [serial, table] : songs_) fillTable(table);
+        }
+        closing.clear();
+        for (const auto& port : onlyOnce)
+            if (auto out = opener_(port)) opened[port] = {wanted[port], std::move(out)};
+    }
 
     for (auto& d : next) {
         const bool connected = current(d.port) || opened.count(d.port) > 0;
@@ -166,7 +191,7 @@ void MidiPorts::refresh() {
     // puts them in now, once their tables are in.
     juce::StringArray back;
     for (const auto& d : next)
-        if (d.status == Status::Connected && (status(d.id) == Status::NotFound || (opened.count(d.port) > 0 && open_.count(d.port) > 0)))
+        if (d.status == Status::Connected && (status(d.id) == Status::NotFound || (opened.count(d.port) > 0 && wasOpen.count(d.port) > 0)))
             back.add(d.id);
     const auto same = [](const Device& a, const Device& b) { return a.id == b.id && a.name == b.name && a.status == b.status; };
     const bool changed = listed_ != listedBefore || !std::equal(next.begin(), next.end(), devices_.begin(), devices_.end(), same);
@@ -212,8 +237,7 @@ void MidiPorts::fillTable(Table& table) const {
 }
 
 void MidiPorts::timerCallback() {
-    const auto names = lister_();
-    if (needsALook(names, identifiersOf(names))) refresh();
+    if (const auto now = look_(); needsALook(now)) refreshWith(now, false);   // one look, for the test and the refresh
 }
 
 void MidiPorts::changeListenerCallback(juce::ChangeBroadcaster*) {

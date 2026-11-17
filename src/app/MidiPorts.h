@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_events/juce_events.h>
 
 #include "app/Session.h"
@@ -26,8 +27,10 @@ namespace sqlive::app {
 // said the engine started it) and the one playing, so a song's last messages (note-offs, 0xFC) still find their ports
 // after later cues, even when they were held while a device restarted.
 //
-// Ports come and go: every second the list of outputs is looked at, and the ports are opened or closed to match when it
-// changed (names, or the system's identifiers: a port unplugged and back between two looks is opened again), or when a
+// Ports come and go. Whenever the system says its list of MIDI devices changed (juce::MidiDeviceListConnection), every
+// bound port is opened again, even when the list reads the same as before: a quick unplug and replug may leave the names
+// and identifiers as they were, behind a port that no longer works. As a fallback, every second the list of outputs is
+// looked at, and the ports are opened or closed to match when it changed (names, or the system's identifiers), or when a
 // port that is listed couldn't be opened last time (another program held it). A device whose port was not found, or was
 // opened again, is sent the state the playing song puts it in now (Engine::resendMidiState). A change to the band's
 // devices or to this computer's bindings does the same at once.
@@ -43,8 +46,9 @@ public:
     using Opener = std::function<std::unique_ptr<Output>(const juce::String& portName)>;   // nullptr when the port isn't there
     using Lister = std::function<juce::StringArray()>;
 
-    explicit MidiPorts(Session&);                    // real ports through juce::MidiOutput
-    MidiPorts(Session&, Lister, Opener);             // for tests
+    // Real ports through juce::MidiOutput, listening to the system's device-list changes.
+    explicit MidiPorts(Session&);
+    MidiPorts(Session&, Lister, Opener);             // for tests: never listens to the system's devices
     // For tests too: identifiers lists the system's identifier of each output the lister lists, in its order. A port whose
     // identifier changes under the same name (unplugged and back between two looks) is opened again.
     MidiPorts(Session&, Lister, Opener, Lister identifiers);
@@ -54,6 +58,10 @@ public:
     Status status(const juce::String& deviceId) const;   // NoPort for a device with no port here, or no such device
     juce::StringArray availableOutputs() const;      // as of the last look (refresh, or the 1 s timer)
     void refresh();                                  // message thread: opens or closes ports to match the rig and what is plugged in
+    // Message thread: what the system's device-list notification does. refresh, with every bound port that is listed
+    // opened again (a quick replug may leave its name and identifier as they were), and each device that is connected
+    // then sent the state the playing song puts it in now. Public for tests.
+    void devicesChanged();
     // Message thread: the session calls it for each song the engine takes, with that song's PreparedSong::midiDeviceIds.
     void noteSong(std::uint64_t serial, const std::vector<std::string>& deviceIds);
     // Message thread: the session calls it when the engine starts a song. Its table is kept for its last messages (note-offs,
@@ -84,20 +92,28 @@ private:
         Status status = Status::NoPort;
     };
 
+    // The outputs from one look at the system: their names, and each one's identifier in the same order.
+    struct Listing {
+        juce::StringArray names, ids;
+    };
+    using Look = std::function<Listing()>;
+
+    MidiPorts(Session&, Look, Opener, bool listen);
+
     void timerCallback() override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
 
+    void refreshWith(const Listing&, bool reopenAll);
     std::vector<Device> bindings() const;            // the band's devices, with this computer's ports from the chosen rig
     bool bindingsChanged() const;
     Output* outputFor(const juce::String& deviceId) const;   // message thread: the open output a device goes to now
     void fillTable(Table&) const;                    // message thread
-    juce::StringArray identifiersOf(const juce::StringArray& names) const;   // the names themselves without an identifiers lister
-    bool needsALook(const juce::StringArray& names, const juce::StringArray& ids) const;   // the timer: refresh?
+    bool needsALook(const Listing&) const;           // the timer: refresh?
 
     Session& session_;
-    Lister lister_;
+    Look look_;
     Opener opener_;
-    Lister identifiers_;                             // may be empty: the names are the identifiers
+    juce::MidiDeviceListConnection device_list_;     // the system's device-list changes; inactive in tests
 
     // Message thread.
     juce::StringArray listed_, listedIds_;           // the outputs as of the last look, and their identifiers
