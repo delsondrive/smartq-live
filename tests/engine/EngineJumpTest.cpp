@@ -371,3 +371,18 @@ TEST_CASE("a late device's resend after a jump includes what the chase covered a
     auto again = drainMidi(e);
     REQUIRE(again.size() == 1);  CHECK(again[0].data[0] == 0xC0);  CHECK(again[0].data[1] == 5);
 }
+TEST_CASE("a start from a step on a late device chases what was written before the step, once, at any block size", "[jump]") {
+    for (int block : {64, 512, 4096}) {
+        CAPTURE(block);
+        Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+        auto song = rampSong("r", 3, {1, 1, 1});
+        song.midi = {lateChange(95000, 2000, 0, 0xC0, 4, 0, 2),          // written before step 1's start, placed after it: 97000
+                     lateChange(96000, 2000, 0, 0xC0, 5, 0, 2)};         // written on it: sent at its own late place, 98000
+        e.cue(share(song));  e.startAtStep(1);                           // the count-off is song (and stream) time [0, 96000)
+        renderOffline(e, 2, 2 * 96000, block);
+        auto midi = drainMidi(e);
+        REQUIRE(midi.size() == 2);                                       // program 4 isn't sent again at 97000
+        CHECK(midi[0].data[1] == 4);  CHECK(midi[0].streamTime == 0);    // with the chase, before the count-off
+        CHECK(midi[1].data[1] == 5);  CHECK(midi[1].streamTime == 98000);
+    }
+}

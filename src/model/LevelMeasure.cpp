@@ -45,23 +45,25 @@ SongLevels measureSong(std::shared_ptr<const engine::PreparedSong> song, const B
     if (song == nullptr) return levels;
     levels.songId = juce::String(song->id);
 
-    // Every output, in the rig's order, with the device channels its bus is on (as the mix builds it, all on the device).
+    // Every output, in the rig's order, with the device channels its bus is on, as the mix builds it for the most channels
+    // the engine renders. One that doesn't fit whole within them (a stereo pair on the last channel too) isn't
+    // measured: the engine can't play all of it, and it reads as silence.
     std::vector<Watch> watches;
     int deviceChannels = 1;
     for (const auto& o : rig.outputs) {
         Watch w;
-        if (busIndexOf(rig, o.id, 0) >= 0) {
+        const int channels = o.stereo ? 2 : 1;
+        if (busIndexOf(rig, o.id, engine::kMaxDeviceChannels) >= 0 && o.firstChannel - 1 + channels <= engine::kMaxDeviceChannels) {
             w.firstChannel = o.firstChannel - 1;
-            w.channels = o.stereo ? 2 : 1;
+            w.channels = channels;
             deviceChannels = std::max(deviceChannels, w.firstChannel + w.channels);
         }
         watches.push_back(w);
     }
-    deviceChannels = std::min(deviceChannels, engine::kMaxDeviceChannels);
 
     auto engine = std::make_unique<engine::Engine>();
     engine->prepare(sampleRate, kBlock);
-    engine->setMix(buildMixSetup(band, rig, 0));
+    engine->setMix(buildMixSetup(band, rig, engine::kMaxDeviceChannels));
     engine->cue(song);
     engine->start();
 
@@ -77,14 +79,14 @@ SongLevels measureSong(std::shared_ptr<const engine::PreparedSong> song, const B
     bool stopped = false;
     const bool playable = song->sampleRate == sampleRate;   // the engine plays nothing made at another rate
     for (int block = 0; playable && played < most; ++block) {
-        if (block > 0 && block % kBlocksBetweenAsks == 0
+        if (block > 0 && block % kBlocksBetweenAsks == 0 && keepGoing
             && !keepGoing(expected > 0 ? std::min(1.0, static_cast<double>(played) / static_cast<double>(expected)) : 1.0))
             break;
         engine::SamplePos frames = std::min<engine::SamplePos>(kBlock, most - played);
         if (const auto handOver = nextHandOver(*song, step, songTime); handOver > songTime)
             frames = std::min(frames, handOver - songTime);
         const int n = static_cast<int>(frames);
-        engine->process(out.data(), deviceChannels, n);
+        engine->process(out.data(), deviceChannels, n);   // clears out first, so each block holds only its own samples
         played += n;
 
         // A block runs straight through the song unless it began with a jump (taken at its first sample). One the song

@@ -67,3 +67,37 @@ TEST_CASE("a peak played after a jump counts in the bar it is written in, and th
     CHECK(inCount.outputs[0].peakDb == Catch::Approx(20.0f * std::log10(0.7f)).margin(0.01f));
     CHECK(inCount.outputs[0].bar == 1);
 }
+
+// ---- Task 1's review, fix round 1 ----
+
+TEST_CASE("an output beyond the engine's channels reads as silence, and one within them is measured", "[levels-measure]") {
+    BandDoc band; band.roles = {{"keys", "Keys", RoleKind::Part, {}}};
+    RigDoc rig; rig.outputs = {{"last", "Last", 255, false, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}}},
+                               {"split", "Split", 256, true, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}}},   // its right side would be 257
+                               {"past", "Past", 300, false, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}}},
+                               {"pastPair", "Past pair", 1023, true, OutputLabel::Foh, 0.0f, {{"keys", 0.0f}}}};
+    auto audio = std::make_shared<engine::PartAudio>(); audio->left.assign(48000, 0.5f);
+    auto song = std::make_shared<const engine::PreparedSong>(engine::prepareSong("s", engine::TempoMap{}, 0, 0, {{audio, 0}}, engine::ClickSetup{.enabled = false}, 48000.0));
+    auto levels = measureSong(song, band, rig, 48000.0, [](double) { return true; });
+    REQUIRE(levels.complete);  REQUIRE(levels.outputs.size() == 4);
+    CHECK(levels.outputs[0].peakDb == Catch::Approx(20.0f * std::log10(0.5f)).margin(0.01f));
+    for (std::size_t i = 1; i < 4; ++i) {
+        CAPTURE(i);
+        CHECK(levels.outputs[i].peakDb <= -99.0f);  CHECK_FALSE(levels.outputs[i].clips);
+    }
+}
+TEST_CASE("a song made at another rate isn't measured, and an empty keepGoing keeps going", "[levels-measure]") {
+    BandDoc band; band.roles = {{"keys", "Keys", RoleKind::Part, {}}};
+    RigDoc rig; rig.outputs = {{"pa", "PA", 1, true, OutputLabel::Foh, 0.0f, {{"keys", 0.0f}}}};
+    auto audio = std::make_shared<engine::PartAudio>(); audio->left.assign(8 * 48000, 0.5f);   // more than 64 blocks of 4096
+    auto song = std::make_shared<const engine::PreparedSong>(engine::prepareSong("s", engine::TempoMap{}, 0, 0, {{audio, 0}}, engine::ClickSetup{.enabled = false}, 48000.0));
+    auto other = measureSong(song, band, rig, 44100.0, [](double) { return true; });
+    CHECK_FALSE(other.complete);  REQUIRE(other.outputs.size() == 1);  CHECK(other.outputs[0].peakDb <= -99.0f);
+    auto unasked = measureSong(song, band, rig, 48000.0, {});
+    CHECK(unasked.complete);
+    CHECK(unasked.outputs[0].peakDb == Catch::Approx(20.0f * std::log10(0.5f)).margin(0.01f));
+}
+TEST_CASE("a clip is never described as by less than 0.1 dB", "[levels-measure]") {
+    CHECK(describeClip({"pa", 0.02f, 12, true}, "PA", "Run") == "PA clips in Run at bar 12, by 0.1 dB.");
+    CHECK(describeClip({"pa", 2.0f, 1, true}, "PA", "Run") == "PA clips in Run at bar 1, by 2.0 dB.");
+}

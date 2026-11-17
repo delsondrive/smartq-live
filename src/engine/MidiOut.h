@@ -67,8 +67,8 @@ public:
     void play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept;
     // Producer. A jump (a loop's repeat included): the song goes on from `landing` (song time) at streamTime. Every note
     // still sounding is ended; then the state as of the landing (every program and control change at or before it, and
-    // every one written before it that a late offset placed after it) is worked out and only what differs from what the devices were last sent goes out (MidiChase::emitChanges), at
-    // streamTime. The landing becomes the chase point, so a program or control change exactly there is sent by the chase
+    // every one written before it that a late offset placed after it) is worked out and only what differs from what the
+    // devices were last sent goes out (MidiChase::emitChanges), at streamTime. The landing becomes the chase point, so a program or control change exactly there is sent by the chase
     // and not again; the place in the song's events and in its clock ticks moves to the first at or after the landing, so
     // a note there still sounds. As at begin, the landing goes by the written place: an event written at or after it
     // that an early offset put before it is sent at streamTime (after the chase), and one written before it (the bar
