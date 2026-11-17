@@ -2,11 +2,713 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0c11">
+<meta name="color-scheme" content="dark">
 <title>Smart Q Live remote</title>
+<!-- The phone remote: one file, served by the laptop on the band's Wi-Fi. Nothing is loaded from anywhere else, and
+     whatever the laptop sends is put on the page as text only (textContent), never as markup. -->
+<style>
+:root{
+  --bg1:#0e0c11;--bg2:#17131b;--field:rgba(255,255,255,.07);--hair:rgba(255,255,255,.11);
+  --text:#f5f2f6;--mid:#c9c2cf;--dim:#9a90a2;
+  --ember:#f29a78;--mint:#6ff0c8;--danger:#ff6f7d;--caution:#ffb547;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{background:var(--bg1);-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;min-height:100vh;background:linear-gradient(var(--bg1),var(--bg2)) fixed;color:var(--text);
+  font:14px/1.4 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow-x:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+main{min-height:100vh;min-height:100dvh;max-width:560px;margin:0 auto;display:flex;flex-direction:column;
+  padding:max(10px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
+  transition:opacity .2s}
+section{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0}
+button{font:inherit;color:inherit;margin:0;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;cursor:pointer}
+button:disabled{cursor:default}
+
+.logo{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:.5px;white-space:nowrap}
+.logo i{width:26px;height:26px;border-radius:50%;border:2px solid var(--mint);display:grid;place-items:center;font-style:normal;color:var(--mint);font-size:13px}
+.logo small{color:var(--ember);font-weight:600;font-size:inherit}
+.logo.small{font-size:12px}
+.logo.small i{width:20px;height:20px;font-size:10px}
+.logo.big{font-size:22px;justify-content:center}
+.logo.big i{width:40px;height:40px;font-size:20px}
+.hint{font-size:12px;color:var(--dim);margin:0;overflow-wrap:anywhere}
+.c{text-align:center}
+.st{padding:3px 8px;border-radius:20px;background:rgba(111,240,200,.1);color:var(--mint);border:1px solid rgba(111,240,200,.25);white-space:nowrap;font-size:10px}
+.st.warn{background:rgba(255,181,71,.1);color:var(--caution);border-color:rgba(255,181,71,.3)}
+
+/* joining, waiting, not in Show mode */
+.center{justify-content:center;align-items:stretch;text-align:center;gap:14px;padding:0 6px}
+.center h1{font-size:20px;font-weight:600;margin:4px 0 0}
+.center p{margin:0;color:var(--mid)}
+form{display:flex;flex-direction:column;gap:12px;text-align:left;margin-top:10px}
+label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--mid)}
+input{font:inherit;font-size:18px;color:var(--text);background:var(--field);border:1px solid var(--hair);border-radius:10px;padding:10px 12px;width:100%;-webkit-user-select:text;user-select:text}
+input:focus{outline:2px solid var(--mint);outline-offset:1px}
+#pin{letter-spacing:6px}
+.pri{height:50px;border-radius:12px;border:none;background:var(--mint);color:#0e0c11;font-size:16px;font-weight:700}
+.pri:disabled{opacity:.5}
+.err{color:var(--danger);min-height:1.4em;margin:0;font-size:13px;text-align:center}
+
+/* the show */
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ph-now{font-size:11px;letter-spacing:1.5px;color:var(--mint);font-weight:700}
+.ph-title{font-size:24px;font-weight:600;line-height:1.1;overflow-wrap:anywhere}
+.beats{display:flex;gap:5px;flex-wrap:wrap}
+.beats i{width:12px;height:12px;border-radius:50%;background:var(--field);border:1px solid var(--hair)}
+.beats i.on{background:var(--mint);box-shadow:0 0 10px var(--mint);border-color:var(--mint)}
+.prog{height:10px;border-radius:5px;background:var(--field);overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--mint)}
+.ph-secs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+.ph-secs button{border:none;border-radius:8px;padding:8px 6px;font-size:12px;font-weight:700;color:#0e0c11;text-align:center;
+  background:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:34px}
+.ph-secs .past{opacity:.4}
+.ph-secs .now{outline:2px solid #fff}
+.ph-secs .next{outline:2px dashed var(--ember)}
+.btn{display:block;width:100%;padding:8px 12px;border-radius:8px;background:var(--field);border:1px solid var(--hair);color:var(--mid);font-size:13px;font-weight:600;text-align:center;white-space:nowrap}
+.btn.on{background:var(--mint);color:#0e0c11;border-color:transparent}
+.btn:disabled,.ph-btns button:disabled{opacity:.45}
+.secrow{display:flex;gap:6px;align-items:stretch}
+.secrow .btn{width:auto;flex:none;padding:6px 10px;font-size:12px}
+.thenbox{flex:1;min-width:0;display:block;text-align:center;border:1px dashed var(--ember);border-radius:8px;
+  padding:6px 8px;font-size:12px;line-height:1.4;color:var(--mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thenbox.idle{color:var(--dim);border-color:var(--hair)}
+.nextbox{border:1px dashed var(--ember);border-radius:10px;padding:8px 10px}
+.nextbox .lbl{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--ember)}
+.nextbox .lbl.wait{color:var(--dim)}
+.nextbox .lbl.bad{color:var(--danger)}
+.nextbox .name{font-size:16px;font-weight:600;overflow-wrap:anywhere}
+.ph-btns{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:6px;margin-top:auto}
+.ph-btns button{position:relative;height:58px;border-radius:12px;display:grid;place-items:center;background:var(--field);
+  border:1px solid var(--hair);font-size:12px;font-weight:600;color:var(--mid);text-align:center;line-height:1.2;padding:0 4px;touch-action:none}
+.ph-btns button.go{background:var(--mint);color:#0e0c11;border:none;font-size:15px}
+.ph-btns button.stop{background:rgba(255,111,125,.15);color:var(--danger);border-color:rgba(255,111,125,.4);font-size:15px}
+.ph-btns button.grey{background:var(--field);color:var(--dim);font-size:15px}
+.ring{position:absolute;left:50%;top:50%;width:42px;height:42px;margin:-21px 0 0 -21px;border-radius:50%;visibility:hidden;
+  -webkit-mask:radial-gradient(circle,transparent 14px,#000 15px);mask:radial-gradient(circle,transparent 14px,#000 15px)}
+.holding .ring{visibility:visible}
+.holding .lab{visibility:hidden}
+.ph-list{display:flex;flex-direction:column;gap:3px}
+.ph-list div{display:flex;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:8px;font-size:13px;color:var(--mid)}
+.ph-list b{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ph-list span{flex:none}
+.ph-list .done{opacity:.45}
+.ph-list .playing{background:rgba(111,240,200,.1);color:var(--text);box-shadow:inset 0 0 0 1px var(--mint)}
+.ph-list .next{border:1px dashed var(--ember);color:var(--text)}
+#hint.say{color:var(--caution)}
+#show.view .full,#show.full .view{display:none!important}
+.foot{margin-top:auto}
+
+/* the connection lost: the page dims until it is back */
+body.lost main{opacity:.3;pointer-events:none}
+#lost{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);padding:12px 20px;border-radius:12px;background:#211b27;
+  border:1px solid var(--hair);font-size:16px;font-weight:600;color:var(--text);box-shadow:0 10px 40px rgba(0,0,0,.6);white-space:nowrap}
+
+@media (min-width:600px){
+  body{font-size:16px}
+  .ph-title{font-size:32px}
+  .ph-secs button{font-size:14px;min-height:44px}
+  .ph-btns button{height:84px;font-size:15px}
+  .ph-btns button.go,.ph-btns button.stop,.ph-btns button.grey{font-size:20px}
+  .nextbox .name{font-size:20px}
+}
+</style>
 </head>
 <body>
-<h1>Smart Q Live remote</h1>
-<p>Smart Q Live remote</p>
+<main>
+  <section id="join" class="center" hidden>
+    <div class="logo big"><i>Q</i>SMART Q <small>LIVE</small></div>
+    <h1>Smart Q Live remote</h1>
+    <form id="joinForm" novalidate autocomplete="off">
+      <label>Your name<input id="name" maxlength="40" autocomplete="off" autocapitalize="words" spellcheck="false"></label>
+      <label>PIN<input id="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"></label>
+      <button id="connect" class="pri" type="submit">Connect</button>
+      <p id="joinError" class="err" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="waiting" class="center" hidden>
+    <div class="logo big"><i>Q</i>SMART Q <small>LIVE</small></div>
+    <h1>Waiting to be let in</h1>
+    <p>Ask at the laptop: Setup, then Remote.</p>
+  </section>
+
+  <section id="connecting" class="center" hidden>
+    <div class="logo big"><i>Q</i>SMART Q <small>LIVE</small></div>
+    <p>Connecting…</p>
+  </section>
+
+  <section id="notShow" class="center" hidden>
+    <div class="logo big"><i>Q</i>SMART Q <small>LIVE</small></div>
+    <p>The laptop isn't in Show mode yet.</p>
+  </section>
+
+  <section id="show" class="full" hidden>
+    <div class="top"><span class="logo small"><i>Q</i>LIVE</span><span id="badge" class="st">Full control</span></div>
+    <div><div id="now" class="ph-now"></div><div id="title" class="ph-title"></div><p id="line" class="hint"></p></div>
+    <div id="beats" class="beats full"></div>
+    <div id="prog" class="prog view"><i></i></div>
+    <div id="tiles" class="ph-secs full"></div>
+    <button id="loop" class="btn full" type="button">⟳ Loop this section</button>
+    <div id="secRow" class="secrow full">
+      <button id="secEarlier" class="btn" type="button">‹ earlier</button>
+      <div id="then" class="thenbox"></div>
+      <button id="secLater" class="btn" type="button">later ›</button>
+    </div>
+    <div id="nextBox" class="nextbox full"><div id="nextLbl" class="lbl"></div><div id="nextName" class="name"></div></div>
+    <div id="setlist" class="ph-list view"></div>
+    <div class="ph-btns full">
+      <button id="earlier" type="button">◀<br>earlier song</button>
+      <button id="middle" type="button"><span class="lab"></span><i class="ring"></i></button>
+      <button id="later" type="button"><span class="lab">▶▶<br>later song</span><i class="ring"></i></button>
+    </div>
+    <p id="hint" class="hint c full">Hold ▶ for a second to stop</p>
+    <p class="hint c view foot">This phone can watch but not change anything.</p>
+  </section>
+</main>
+<div id="lost" hidden>Reconnecting…</div>
+
+<script>
+"use strict";
+(function () {
+  const TOKEN_KEY = "sqlive.remote.token", NAME_KEY = "sqlive.remote.name";
+  // What the page sends: each control below names its action here, one of the server's remotePageActions().
+  const ACT = {
+    start: "start", stop: "stop", stopHold: "stopHold",
+    later: "nextSongLater", earlier: "nextSongEarlier", nextNow: "goToNextSongNow", nextNowHold: "nextNowHold",
+    sectionLater: "nextSectionLater", sectionEarlier: "nextSectionEarlier", loop: "loopSection", cancel: "cancelSection"
+  };
+  const SECTION_ACTIONS = ["section1", "section2", "section3", "section4", "section5",
+                           "section6", "section7", "section8", "section9", "section10"];
+  const HOLD_MS = 1000, TAP_MS = 300, MAX_RETRY_MS = 10000, SAY_MS = 3000;
+  const HINT = "Hold ▶ for a second to stop";
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    join: $("join"), waiting: $("waiting"), connecting: $("connecting"), notShow: $("notShow"), show: $("show"),
+    form: $("joinForm"), name: $("name"), pin: $("pin"), connect: $("connect"), joinError: $("joinError"),
+    badge: $("badge"), now: $("now"), title: $("title"), line: $("line"), beats: $("beats"), prog: $("prog").querySelector("i"),
+    tiles: $("tiles"), loop: $("loop"), secRow: $("secRow"), secEarlier: $("secEarlier"), then: $("then"),
+    secLater: $("secLater"), nextBox: $("nextBox"), nextLbl: $("nextLbl"), nextName: $("nextName"), setlist: $("setlist"),
+    earlier: $("earlier"), middle: $("middle"), later: $("later"), hint: $("hint"), lost: $("lost")
+  };
+  const middleLab = el.middle.querySelector(".lab"), middleRing = el.middle.querySelector(".ring");
+  const laterRing = el.later.querySelector(".ring");
+
+  function load(key) { try { return localStorage.getItem(key) || ""; } catch (e) { return ""; } }
+  function keep(key, value) {
+    try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch (e) {}
+  }
+  function setText(node, text) { text = String(text == null ? "" : text); if (node.textContent !== text) node.textContent = text; }
+  function show(node, on) { if (node.hidden === on) node.hidden = !on; }
+
+  let token = load(TOKEN_KEY);
+  let access = "";            // "", "waiting", "view" or "full", as the laptop last said
+  let state = null;           // the last "state" event
+  let es = null;              // the open EventSource
+  let lost = false;
+  let retryTimer = 0, retryMs = 1000;
+
+  // ---- joining ----
+
+  function guessName() {
+    const ua = navigator.userAgent || "";
+    if (/iPhone/.test(ua)) return "iPhone";
+    if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "iPad";
+    if (/Android/.test(ua)) return /Mobile/.test(ua) ? "Android phone" : "Android tablet";
+    if (/Windows/.test(ua)) return "Windows computer";
+    if (/Macintosh/.test(ua)) return "Mac";
+    return "Phone";
+  }
+
+  el.name.value = load(NAME_KEY) || guessName();
+  el.pin.addEventListener("input", () => {
+    const digits = el.pin.value.replace(/[^0-9]/g, "").slice(0, 4);
+    if (digits !== el.pin.value) el.pin.value = digits;
+  });
+
+  async function answerOf(response) {
+    let message = "";
+    try { const body = await response.json(); if (body && typeof body.message === "string") message = body.message; } catch (e) {}
+    return message;
+  }
+
+  el.form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = el.name.value.trim(), pin = el.pin.value.trim();
+    if (!name) { setText(el.joinError, "Type a name for this phone."); return; }
+    if (!/^[0-9]{4}$/.test(pin)) { setText(el.joinError, "The PIN is the four digits shown on the laptop."); return; }
+    setText(el.joinError, "");
+    el.connect.disabled = true;
+    try {
+      let response;
+      try {
+        response = await fetch("/api/join", {
+          method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name, pin: pin })
+        });
+      } catch (err) {
+        setText(el.joinError, "The laptop can't be reached. Is this phone on the band's Wi-Fi?");
+        return;
+      }
+      if (response.status === 200) {
+        let joined = "";
+        try { const body = await response.json(); if (body && typeof body.token === "string") joined = body.token; } catch (err) {}
+        if (!joined) { setText(el.joinError, "That didn't work. Try again."); return; }
+        token = joined;
+        keep(TOKEN_KEY, token);
+        keep(NAME_KEY, name);
+        el.pin.value = "";
+        access = "";
+        state = null;
+        connect();
+        render();
+        return;
+      }
+      const message = await answerOf(response);
+      if (response.status === 403) setText(el.joinError, "That PIN isn't right.");
+      else setText(el.joinError, message || "That didn't work. Try again.");   // 429 and the rest: the laptop says why
+    } finally {
+      el.connect.disabled = false;
+    }
+  });
+
+  // The laptop forgot this phone (or refused it): back to joining.
+  function forget(why) {
+    token = "";
+    keep(TOKEN_KEY, "");
+    closeStream();
+    clearTimeout(retryTimer);
+    access = "";
+    state = null;
+    setLost(false);
+    setText(el.joinError, why || "");
+    render();
+  }
+
+  // ---- the connection ----
+
+  function closeStream() {
+    if (es) { es.close(); es = null; }
+  }
+
+  function setLost(on) {
+    if (lost === on) return;
+    lost = on;
+    document.body.classList.toggle("lost", on);
+    show(el.lost, on);
+    if (on) endPress();
+  }
+
+  function parse(data) { try { return JSON.parse(data); } catch (e) { return undefined; } }
+
+  // A new stream; the laptop ends this phone's older one, if any.
+  function connect() {
+    clearTimeout(retryTimer);
+    closeStream();
+    if (!token) return;
+    const source = new EventSource("/api/events?token=" + encodeURIComponent(token));
+    es = source;
+    source.onopen = () => {
+      if (es !== source) return;
+      retryMs = 1000;
+      setLost(false);
+    };
+    source.onerror = () => {
+      if (es !== source) return;
+      setLost(true);
+      // Still CONNECTING: the browser tries again by itself (the laptop said "retry: 2000"). CLOSED: it never will, and
+      // the stream can't say why, so the laptop is asked whether this phone is still known.
+      if (source.readyState === EventSource.CLOSED) {
+        closeStream();
+        probe().then((answer) => { if (answer !== "gone") retryLater(); });
+      }
+    };
+    source.addEventListener("access", (e) => {
+      if (es !== source) return;
+      const word = parse(e.data);
+      if (typeof word !== "string") return;
+      access = word;
+      render();
+    });
+    source.addEventListener("state", (e) => {
+      if (es !== source) return;
+      const next = parse(e.data);
+      if (!next || typeof next !== "object") return;
+      state = next;
+      render();
+    });
+  }
+
+  // After 1, 2, 4 … 10 s, a new stream.
+  function retryLater() {
+    if (!token) return;
+    setLost(true);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, retryMs);
+    retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
+  }
+
+  // Asks the laptop whether this phone is still let in: "ok", "gone" (forgotten: back to joining) or "unreachable".
+  let probing = null;
+  function probe() {
+    if (!token) return Promise.resolve("gone");
+    if (probing) return probing;
+    const asked = token;
+    probing = (async () => {
+      let response;
+      try {
+        response = await fetch("/api/access?token=" + encodeURIComponent(asked), { cache: "no-store" });
+      } catch (e) {
+        return "unreachable";
+      }
+      if (token !== asked) return "gone";
+      if (response.status === 403) {
+        forget("This phone was forgotten on the laptop. Join again with the PIN.");
+        return "gone";
+      }
+      if (!response.ok) return "unreachable";
+      let body = null;
+      try { body = await response.json(); } catch (e) {}
+      if (body && typeof body.access === "string" && body.access !== access) { access = body.access; render(); }
+      return "ok";
+    })();
+    probing.then(() => { probing = null; });
+    return probing;
+  }
+
+  // Back from a locked screen or another app: the stream may have died meanwhile without a word, so a fresh one.
+  function resume() {
+    if (!token) return;
+    probe().then((answer) => {
+      if (answer === "ok") connect();
+      else if (answer === "unreachable") retryLater();
+    });
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") resume();
+    else endPress();
+  });
+  window.addEventListener("pageshow", (e) => { if (e.persisted) resume(); });
+  window.addEventListener("online", resume);
+
+  // ---- actions ----
+
+  let sayTimer = 0;
+  function say(message) {
+    if (!message) return;
+    setText(el.hint, message);
+    el.hint.classList.add("say");
+    clearTimeout(sayTimer);
+    sayTimer = setTimeout(() => { setText(el.hint, HINT); el.hint.classList.remove("say"); }, SAY_MS);
+  }
+
+  // Sends one action; resolves to the HTTP status (0 when the laptop couldn't be reached). A 408 always comes before the
+  // action is performed, so it is sent once more.
+  async function act(action, again) {
+    if (!token) return 0;
+    let response;
+    try {
+      response = await fetch("/api/action", {
+        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token, action: action })
+      });
+    } catch (e) {
+      say("The laptop can't be reached.");
+      resume();
+      return 0;
+    }
+    if (response.status === 408 && !again) return act(action, true);
+    if (response.status !== 200) {
+      say(await answerOf(response) || "That didn't work.");
+      if (response.status === 403) probe();    // perhaps this phone was forgotten or may only watch now
+    }
+    return response.status;
+  }
+
+  function canAct() { return access === "full" && !!state && !!state.show && !lost; }
+
+  // ---- holding a button: Stop on the middle one, "go to the next song now" on ▶▶ ----
+  //
+  // The hold is asked for first (stopHold, nextNowHold); the ring fills for a second from the laptop's answer, so a slow
+  // network never makes a real hold fall short; then the action. Letting go, or sliding off, before that sends nothing.
+
+  let press = null;           // {button, pointerId, at, mode}
+  let hold = null;            // {button, ring, action, ringAt, timer, shownAfter}
+  let ticker = 0;             // redraws the ring while a hold fills (a timer: it keeps time even where frames are held back)
+
+  function drawRing() {
+    if (!hold || !hold.ringAt) return;
+    const now = performance.now();
+    const p = Math.min(1, (now - hold.ringAt) / HOLD_MS);
+    const showing = !press || now - press.at >= hold.shownAfter;
+    hold.button.classList.toggle("holding", showing);
+    hold.ring.style.background = "conic-gradient(currentColor " + (p * 360).toFixed(1) + "deg, rgba(255,255,255,.14) 0)";
+    if (p >= 1 && ticker) { clearInterval(ticker); ticker = 0; }
+  }
+
+  function beginHold(button, ring, holdAction, action, shownAfter) {
+    const h = { button: button, ring: ring, action: action, ringAt: 0, timer: 0, shownAfter: shownAfter };
+    hold = h;
+    h.asked = act(holdAction).then((status) => {
+      if (hold !== h) return status;
+      if (status !== 200) { endHold(); return status; }
+      h.ringAt = performance.now();
+      drawRing();
+      ticker = setInterval(drawRing, 30);
+      h.timer = setTimeout(() => {
+        if (hold !== h) return;
+        endHold();
+        press = null;
+        act(h.action);
+      }, HOLD_MS);
+      return status;
+    });
+    return h;
+  }
+
+  function endHold() {
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    hold.button.classList.remove("holding");
+    hold.ring.style.background = "";
+    hold = null;
+    if (ticker) { clearInterval(ticker); ticker = 0; }
+  }
+
+  function endPress() {
+    press = null;
+    endHold();
+  }
+
+  // What the middle button does now: "stop", "start", "loading", "failed", "none" (no song left) or "off".
+  function middleMode() {
+    if (!state || access !== "full" || !state.show) return "off";
+    if (state.playing) return "stop";
+    const next = state.next;
+    if (!next) return "none";
+    if (next.ready === "ready") return "start";
+    if (next.ready === "failed") return "failed";
+    return "loading";
+  }
+
+  function pressable(button, down, up) {
+    button.addEventListener("pointerdown", (e) => {
+      if (press || e.button > 0 || !canAct()) return;
+      e.preventDefault();
+      // Touch captures the pointer to the button; let it go, so sliding off the button cancels.
+      if (button.hasPointerCapture && button.hasPointerCapture(e.pointerId)) button.releasePointerCapture(e.pointerId);
+      press = { button: button, pointerId: e.pointerId, at: performance.now(), mode: "" };
+      down(press);
+    });
+    button.addEventListener("pointerup", (e) => {
+      if (!press || press.button !== button || press.pointerId !== e.pointerId) return;
+      const p = press;
+      press = null;
+      up(p);
+    });
+    const cancel = (e) => {
+      if (!press || press.button !== button || press.pointerId !== e.pointerId) return;
+      endPress();
+    };
+    button.addEventListener("pointerleave", cancel);
+    button.addEventListener("pointercancel", cancel);
+    button.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  // The middle button: a tap starts; while a song plays, a hold of a second stops it. A press that began as a hold never
+  // starts anything when it is let go, even if the song ended meanwhile.
+  pressable(el.middle, (p) => {
+    p.mode = middleMode();
+    if (p.mode === "stop") beginHold(el.middle, middleRing, ACT.stopHold, ACT.stop, 0);
+  }, (p) => {
+    if (p.mode === "start" && middleMode() === "start") act(ACT.start);
+    endHold();
+  });
+
+  // ▶▶: let go within 0.3 s, the next song moves one later. Held a second while the laptop can go on, it goes to the next
+  // song now; the ring shows from 0.3 s, as on the keyboard. A longer press let go early does nothing.
+  pressable(el.later, (p) => {
+    p.mode = state && state.canGoOn ? "hold" : "tap";
+    if (p.mode === "hold") p.hold = beginHold(el.later, laterRing, ACT.nextNowHold, ACT.nextNow, TAP_MS);
+  }, (p) => {
+    const tapped = performance.now() - p.at < TAP_MS;
+    if (p.hold && hold === p.hold) endHold();
+    if (!tapped) return;
+    if (p.hold) p.hold.asked.then(() => act(ACT.later));   // after the hold's answer, so the two never cross
+    else act(ACT.later);
+  });
+
+  // A press let go anywhere else, after it slid off its button, is over too.
+  const pressOver = (e) => { if (press && press.pointerId === e.pointerId) endPress(); };
+  document.addEventListener("pointerup", pressOver);
+  document.addEventListener("pointercancel", pressOver);
+
+  el.earlier.addEventListener("click",() => { if (canAct()) act(ACT.earlier); });
+  el.loop.addEventListener("click", () => { if (canAct()) act(state.looping ? ACT.cancel : ACT.loop); });
+  el.secEarlier.addEventListener("click", () => { if (canAct()) act(ACT.sectionEarlier); });
+  el.secLater.addEventListener("click", () => { if (canAct()) act(ACT.sectionLater); });
+
+  // A tile chooses its section; the chosen one (dashed) tapped again cancels the choice.
+  function tapTile(index) {
+    if (!canAct() || !Array.isArray(state.tiles)) return;
+    const tile = state.tiles[index];
+    if (!tile || !tile.choosable || index >= SECTION_ACTIONS.length) return;
+    act(tile.kind === "next" ? ACT.cancel : SECTION_ACTIONS[index]);
+  }
+
+  // ---- drawing ----
+
+  function plural(n, one, many) { return n === 1 ? one : many; }
+  function num(v) { return typeof v === "number" && isFinite(v) ? v : 0; }
+  function str(v) { return typeof v === "string" ? v : ""; }
+
+  // Keeps a container's children at count, made by make(index); returns them.
+  function children(container, count, make) {
+    while (container.children.length > count) container.removeChild(container.lastChild);
+    while (container.children.length < count) container.appendChild(make(container.children.length));
+    return container.children;
+  }
+
+  function setClass(node, name) { if (node.className !== name) node.className = name; }
+
+  function render() {
+    const screen = !token ? "join"
+      : !access ? "connecting"
+      : access === "waiting" ? "waiting"
+      : !state ? "connecting"
+      : !state.show ? "notShow"
+      : "show";
+    show(el.join, screen === "join");
+    show(el.waiting, screen === "waiting");
+    show(el.connecting, screen === "connecting");
+    show(el.notShow, screen === "notShow");
+    show(el.show, screen === "show");
+    if (screen === "show") renderShow();
+    else endPress();
+  }
+
+  function songLine(s, full) {
+    const bpm = str(s.bpm) ? " · " + str(s.bpm) + " BPM" : "";
+    if (!s.playing) {
+      if (s.interrupted) return "Stopped at bar " + num(s.bar) + bpm;
+      return str(s.left) ? str(s.left) + bpm : bpm.replace(/^ · /, "");
+    }
+    if (s.countIn) return "Count-in" + bpm;
+    const section = str(s.section);
+    if (full) {
+      if (section) return section + " · " + num(s.barsLeft) + plural(num(s.barsLeft), " bar left", " bars left") + bpm;
+      return "Bar " + num(s.bar) + (str(s.left) ? " · " + str(s.left) + " left" : "") + bpm;
+    }
+    const then = str(s.then).replace(/^then\s+/, "");
+    if (section) return section + (then && !s.looping ? " " + then : s.looping ? " · looping" : "") + " · bar " + num(s.bar);
+    return "Bar " + num(s.bar) + (str(s.left) ? " · " + str(s.left) + " left" : "");
+  }
+
+  function renderShow() {
+    const s = state, full = access === "full";
+    const tiles = Array.isArray(s.tiles) ? s.tiles : [], setlist = Array.isArray(s.setlist) ? s.setlist : [];
+    const song = s.song && typeof s.song === "object" ? s.song : null;
+    const next = s.next && typeof s.next === "object" ? s.next : null;
+    if (!full) endPress();                                     // the laptop made this phone view only
+    else if (press && press.button.disabled) endPress();       // a disabled button never hears its release
+
+    setClass(el.show, full ? "full" : "view");
+    setText(el.badge, full ? "Full control" : "View only");
+    el.badge.classList.toggle("warn", !full);
+
+    if (song) {
+      setText(el.now, song.number ? "NOW · " + num(song.number) + " OF " + num(song.of) : "NOW");
+      setText(el.title, str(song.title));
+    } else if (next) {
+      setText(el.now, "UP NEXT · " + num(next.number) + " OF " + setlist.length);
+      setText(el.title, str(next.title));
+    } else {
+      setText(el.now, "THE SETLIST IS DONE");
+      setText(el.title, "");
+    }
+    setText(el.line, songLine(s, full));
+
+    if (!full) {
+      el.prog.style.width = (Math.max(0, Math.min(1, num(s.progress))) * 100).toFixed(1) + "%";
+      const rows = children(el.setlist, setlist.length, () => {
+        const row = document.createElement("div");
+        row.appendChild(document.createElement("b"));
+        row.appendChild(document.createElement("span"));
+        return row;
+      });
+      setlist.forEach((entry, i) => {
+        const row = rows[i];
+        setClass(row, ["done", "playing", "next"].indexOf(entry.kind) >= 0 ? entry.kind : "");
+        setText(row.firstChild, (i + 1) + " " + str(entry.title));
+        setText(row.lastChild, str(entry.note));
+      });
+      return;
+    }
+
+    // The beat lights.
+    const beats = Math.max(0, Math.min(16, num(s.beatsInBar)));
+    const lights = children(el.beats, beats, () => document.createElement("i"));
+    for (let i = 0; i < beats; ++i) lights[i].classList.toggle("on", !!s.playing && num(s.beat) === i + 1);
+
+    // The section tiles, the loop and the next section.
+    const songPlays = tiles.length > 0 && !!tiles[0].choosable;
+    show(el.tiles, tiles.length > 0);
+    show(el.loop, tiles.length > 0);
+    show(el.secRow, tiles.length > 0);
+    const buttons = children(el.tiles, tiles.length, (index) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.addEventListener("click", () => tapTile(index));
+      return b;
+    });
+    tiles.forEach((tile, i) => {
+      const b = buttons[i];
+      setText(b, str(tile.name));
+      const colour = /^[0-9a-f]{6}$/i.test(str(tile.colour)) ? "#" + tile.colour : "";
+      if (b.dataset.colour !== colour) { b.dataset.colour = colour; b.style.backgroundColor = colour; }
+      setClass(b, ["past", "now", "next"].indexOf(tile.kind) >= 0 ? tile.kind : "");
+      b.disabled = !(tile.choosable && i < SECTION_ACTIONS.length);
+    });
+    el.loop.classList.toggle("on", !!s.looping);
+    el.loop.disabled = !songPlays;
+    el.secEarlier.disabled = !songPlays;
+    el.secLater.disabled = !songPlays;
+    setText(el.then, str(s.then) || "Next section");             // the next section's buttons keep their places
+    el.then.classList.toggle("idle", !str(s.then));
+
+    // The next song, while one plays (stopped, it is the title above).
+    show(el.nextBox, !!s.playing);
+    if (next) {
+      const ready = str(next.ready);
+      setText(el.nextLbl, ready === "ready" ? "NEXT SONG · ✓ READY" : ready === "failed" ? "NEXT SONG · CAN'T BE PLAYED"
+                                                                    : "NEXT SONG · LOADING…");
+      setClass(el.nextLbl, ready === "ready" ? "lbl" : ready === "failed" ? "lbl bad" : "lbl wait");
+      setText(el.nextName, num(next.number) + " · " + str(next.title));
+    } else {
+      setText(el.nextLbl, "NEXT SONG");
+      setClass(el.nextLbl, "lbl wait");
+      setText(el.nextName, "This is the last song.");
+    }
+
+    // The three big buttons.
+    const mode = middleMode();
+    const labels = { stop: "■ Hold to stop", start: "▶ Start", loading: "Loading…", failed: "Can't play", none: "▶ Start", off: "▶ Start" };
+    setText(middleLab, labels[mode]);
+    setClass(el.middle, (mode === "stop" ? "stop" : mode === "start" ? "go" : "grey") + (el.middle.classList.contains("holding") ? " holding" : ""));
+    el.middle.disabled = mode !== "stop" && mode !== "start";
+
+    // A hold stops filling for good once it can't act: the song it was for has ended, or the laptop can't go on.
+    if (hold && hold.button === el.middle && !s.playing) endPress();
+    if (hold && hold.button === el.later && !s.canGoOn) endPress();
+  }
+
+  render();
+  if (token) connect();
+})();
+</script>
 </body>
 </html>

@@ -25,11 +25,16 @@ namespace sqlive::app {
 // Every band folder that opens is noted in the settings, which are saved.
 // With --screenshots <folder> it draws every screen to a PNG there (ui::renderScreens), prints the folder, and opens no
 // window, so wantsWindow() is false and the app quits (with exit code 1 when the pictures couldn't be made).
+// With --remote-demo it runs the phone remote on its own, to try the page in a browser on this computer: the demo band in a
+// fresh folder in the temp folder, with settings of its own there (the user's are never read), a session in Show mode with
+// no audio device, its first song playing, and the server on 127.0.0.1 (port 8080, else the next free one) with one phone
+// let in as full control. It prints the address and that phone's token, also writes them to remote-demo.txt in that
+// folder, and runs with no window until the process is ended (wantsWindow() stays true). Exit code 1 if it can't start.
 class App {
 public:
     App(juce::File settingsFile, const juce::StringArray& commandLine);
-    ~App();                                                       // the window, the MIDI dispatcher and ports, the device, then
-                                                                  // the session (flushed)
+    ~App();                                                       // the remote demo; the window, the MIDI dispatcher and ports,
+                                                                  // the device, then the session (flushed)
 
     bool wantsWindow() const;                                     // false: nothing is on screen and nothing will be; quit
     std::function<void()> onQuit;                                 // the app should quit (the window was closed)
@@ -41,11 +46,13 @@ public:
 
 private:
     class StartWindow;                                            // the window the Welcome and New computer pages show in
+    class RemoteDemo;                                             // --remote-demo's session and server
 
     void showWelcome();
     void showNewComputer();
     void showMainWindow();
     void openDemoBand();
+    void startRemoteDemo();
     void closeStartWindow();                                      // later, as it is often asked from inside the window
     void closeBand();
     void quit();
@@ -57,6 +64,7 @@ private:
     std::unique_ptr<MidiDispatcher> dispatcher_;                  // the engine's one MIDI consumer: sends through midi_ by host_'s clock
     std::unique_ptr<ui::MainWindow> window_;
     std::unique_ptr<StartWindow> start_;
+    std::unique_ptr<RemoteDemo> demo_;
     juce::ScopedMessageBox message_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);       // what posted calls check, so none runs after this has gone
 };

@@ -1,11 +1,15 @@
 #include "app/App.h"
 
+#include <algorithm>
 #include <iostream>
 
+#include "app/RemoteAccess.h"
+#include "app/RemoteServer.h"
 #include "model/BandFolder.h"
 #include "model/DemoBand.h"
 #include "ui/MainWindow.h"
 #include "ui/NewComputerPage.h"
+#include "ui/RemoteState.h"
 #include "ui/Screens.h"
 #include "ui/Theme.h"
 #include "ui/WelcomePage.h"
@@ -34,7 +38,96 @@ void makeScreenshots(juce::File folder) {
         if (auto* app = juce::JUCEApplicationBase::getInstance()) app->setApplicationReturnValue(1);   // a script can tell
 }
 
+constexpr const char* kRemoteDemo = "--remote-demo";
+constexpr int kRemoteDemoPort = 8080;
+
+// --remote-demo's folder in the temp folder; fresh() empties it first, as App's settings are made from a file in it.
+juce::File remoteDemoFolder(bool fresh) {
+    const auto folder = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Smart Q Live remote demo");
+    if (fresh) {
+        folder.deleteRecursively();
+        folder.createDirectory();
+    }
+    return folder;
+}
+
+// The user's settings, except for --remote-demo, which never reads them.
+juce::File settingsFileFor(const juce::StringArray& commandLine, juce::File settingsFile) {
+    return commandLine.contains(kRemoteDemo) ? remoteDemoFolder(true).getChildFile("settings.json") : std::move(settingsFile);
+}
+
 }  // namespace
+
+// --remote-demo: the demo band's first song plays in Show mode with no audio device, the engine driven in real time by a
+// timer, and the phone remote serves it on this computer only, with one phone already let in as full control.
+class App::RemoteDemo : private juce::Timer {
+public:
+    RemoteDemo(Settings& settings, const juce::File& folder) {
+        const auto root = folder.getChildFile("Demo band");
+        if (const auto made = model::createDemoBand(root); made.failed()) { failure_ = made.getErrorMessage();  return; }
+        session_ = std::make_unique<Session>(settings, root);
+        session_->setDevice(kRate, 2);                            // never opened: advanceWithoutDevice drives the engine
+        if (model::addDemoMidi(session_->commands()).wasOk()) model::addDemoSections(session_->commands());
+        session_->commands().clearHistory();
+        session_->cache().waitUntilIdle(20000);
+        session_->cues().waitUntilIdle(20000);
+
+        // One phone, let in while the laptop is still in Edit mode, as only there can a waiting phone be let in.
+        access_ = std::make_unique<RemoteAccess>(settings, root);
+        const auto joined = access_->join("Demo phone", access_->pin(), "127.0.0.1", juce::Time::getMillisecondCounterHiRes() * 0.001);
+        if (joined.status != 200 || !access_->decide(access_->phoneIdFor(joined.token), PhoneAccess::FullControl, true)) {
+            failure_ = "The demo phone couldn't be let in: " + joined.message;
+            return;
+        }
+        token_ = joined.token;
+
+        session_->enterShow();
+        session_->perform(Action::Start);
+        server_ = std::make_unique<RemoteServer>(*session_, *access_, [s = session_.get()] { return ui::makeRemoteStateJson(*s); });
+        if (const auto started = server_->start(kRemoteDemoPort, "127.0.0.1"); started.failed()) {
+            failure_ = started.getErrorMessage();
+            return;
+        }
+        lastMs_ = juce::Time::getMillisecondCounterHiRes();
+        startTimerHz(60);
+    }
+
+    ~RemoteDemo() override {
+        stopTimer();
+        server_.reset();                                          // ends the streams before the access and the session go
+        access_.reset();
+        if (session_ != nullptr) session_->flushForClose();
+        session_.reset();
+    }
+
+    bool running() const { return failure_.isEmpty(); }
+    const juce::String& failure() const { return failure_; }
+    juce::String address() const { return server_ != nullptr ? server_->address() : juce::String(); }
+    const juce::String& token() const { return token_; }
+
+private:
+    static constexpr double kRate = 48000.0;
+
+    // The engine, as far as the clock has gone since the last tick (at most a quarter of a second at once). No one sends its
+    // MIDI anywhere, so it is taken and dropped.
+    void timerCallback() override {
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        owed_ += std::min(nowMs - lastMs_, 250.0) * kRate / 1000.0;
+        lastMs_ = nowMs;
+        if (const int frames = static_cast<int>(owed_); frames > 0) {
+            owed_ -= frames;
+            session_->advanceWithoutDevice(frames);
+        }
+        engine::OutMidi midi;
+        while (session_->engine().popMidi(midi)) {}
+    }
+
+    std::unique_ptr<Session> session_;
+    std::unique_ptr<RemoteAccess> access_;
+    std::unique_ptr<RemoteServer> server_;
+    juce::String token_, failure_;
+    double lastMs_ = 0.0, owed_ = 0.0;
+};
 
 // A plain window around one page (Welcome, or New computer); closing it asks the app.
 class App::StartWindow : public juce::DocumentWindow {
@@ -52,10 +145,15 @@ public:
     std::function<void()> onClose;
 };
 
-App::App(juce::File settingsFile, const juce::StringArray& commandLine) : settings_(std::move(settingsFile)) {
+App::App(juce::File settingsFile, const juce::StringArray& commandLine)
+    : settings_(settingsFileFor(commandLine, std::move(settingsFile))) {
     if (commandLine.contains("--screenshots")) {
         makeScreenshots(folderAfter(commandLine, "--screenshots"));
         return;                                                   // wantsWindow() is false: the app quits
+    }
+    if (commandLine.contains(kRemoteDemo)) {
+        startRemoteDemo();
+        return;
     }
     auto band = folderAfter(commandLine, "--band");
     if (band == juce::File()) {
@@ -67,12 +165,30 @@ App::App(juce::File settingsFile, const juce::StringArray& commandLine) : settin
 }
 
 App::~App() {
+    demo_.reset();
     message_.close();
     start_.reset();
     closeBand();
 }
 
-bool App::wantsWindow() const { return window_ != nullptr || start_ != nullptr; }
+bool App::wantsWindow() const { return window_ != nullptr || start_ != nullptr || demo_ != nullptr; }
+
+// Prints the address and the phone's token, and writes them to remote-demo.txt beside the demo band; or why it couldn't
+// start, with exit code 1.
+void App::startRemoteDemo() {
+    const auto folder = remoteDemoFolder(false);
+    demo_ = std::make_unique<RemoteDemo>(settings_, folder);
+    if (!demo_->running()) {
+        std::cout << "The remote demo couldn't start: " << demo_->failure() << std::endl;
+        demo_.reset();                                            // wantsWindow() is false: the app quits
+        if (auto* app = juce::JUCEApplicationBase::getInstance()) app->setApplicationReturnValue(1);
+        return;
+    }
+    const auto text = "Address: " + demo_->address() + "\nToken: " + demo_->token()
+                      + "\nIn the browser's console: localStorage.setItem(\"sqlive.remote.token\", \"" + demo_->token() + "\")\n";
+    folder.getChildFile("remote-demo.txt").replaceWithText(text);
+    std::cout << text << std::flush;
+}
 
 void App::openBand(const juce::File& root) {
     closeBand();
