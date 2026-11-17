@@ -725,7 +725,8 @@ juce::String MidiSetupPage::getTooltip() {
         if (r.learn.contains(at))
             return c.learning ? "Press the pedal or pad now, or click again to stop."
                               : "Click, then press the pedal or pad. A latching switch or a toggling pad should be set to "
-                                "momentary, or it acts on every other tap.";
+                                "momentary, or it acts on every other tap. A pedal that sends the same value when pressed and "
+                                "when let go counts as two taps: set it to momentary, 127 when pressed and 0 when let go.";
         if (r.pedal.contains(at) && c.action == "stop")
             return "A pedal stops the song when tapped twice, 150 ms to 1 s apart. Only a key can be held to stop.";
         if (r.key.contains(at)) {

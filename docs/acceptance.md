@@ -270,7 +270,7 @@ Plug your pedalboard into the laptop by USB (or through a USB MIDI interface) be
 
 ## 15. Pedals as controls
 
-Set a latching footswitch to momentary on the footswitch itself before you learn it.
+Set a latching footswitch to momentary on the footswitch itself before you learn it. A pedal that sends the same value when pressed and when let go counts as two taps: set it to momentary, 127 when pressed and 0 when let go.
 
 - [ ] On **MIDI & controls**, under **CONTROLS**, click **Learn** on **Start the song**. It says **Press a pedal…** and pulses, and the row says **Set a latching switch to momentary.** Press the footswitch. Its control shows under **PEDAL OR PAD** (like **CC 64, ch 10**), with **✕** to forget it (its tip says **Forget this pedal**).
 - [ ] Learn another footswitch for **Stop**. It shows with **· tap twice**. Hover over it: the tip says **A pedal stops the song when tapped twice, 150 ms to 1 s apart. Only a key can be held to stop.**
