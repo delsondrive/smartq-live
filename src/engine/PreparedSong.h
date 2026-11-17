@@ -112,7 +112,8 @@ PreparedSong prepareSong(std::string id, TempoMap, int countInBars, SamplePos au
 // Fills in whatever is missing: one section for the whole song, [0, end), when there are none; every section in order
 // when the arrangement is empty (or names no section the song has: steps out of range are removed first); the bar
 // starts, from the tempo map; and, unless they have one entry per section, sectionCue (all nullptr) and announceAt (each
-// section's end, which a step never reaches), so a song without cues announces nothing.
+// section's end, which a step never reaches), so a song without cues announces nothing; and it sorts the cues by time
+// (stably).
 void finishSections(PreparedSong&);
 
 } // namespace sqlive::engine

@@ -48,7 +48,11 @@ void CuePlayer::releaseSilent(Voice& v) noexcept {
 }
 
 void CuePlayer::say(std::shared_ptr<const PartAudio> clip) noexcept {
-    if (sounds(speaking_)) {
+    if (sounds(speaking_) && sounds(fading_) && gainOf(speaking_) < gainOf(fading_)) {
+        // Both voices sound and the speaking one is the quieter (it has barely faded in): it is the one dropped, and the
+        // fading one carries on, so two says close together never cut a loud voice dead.
+        if (!release(speaking_)) return;
+    } else if (sounds(speaking_)) {
         // The speaking voice fades out under the new one, in place of whatever was fading.
         if (!release(fading_)) return;
         const double from = gainOf(speaking_);

@@ -175,3 +175,120 @@ TEST_CASE("a voice fading out past the song's end into the next song doesn't cha
     }
 }
 
+
+namespace {
+bool silent(const std::vector<float>& channel, std::size_t from, std::size_t to) {
+    for (std::size_t i = from; i < to; ++i)
+        if (channel[i] != 0.0f) return false;
+    return true;
+}
+}
+TEST_CASE("a count-in, pre-roll and a startAtStep count-off say nothing, manual cues in them included", "[cue]") {
+    SECTION("a count-in") {
+        Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+        auto song = testSong("c", 3 * 96000, 0.1f, 1);             // one bar of count-in: song time starts at -96000
+        song.cues = {{-48000, clip(0.5f)}, {1000, clip(0.6f)}};
+        e.cue(share(std::move(song)));  e.start();
+        auto out = renderOffline(e, 2, 2 * 96000, 512);
+        CHECK(silent(out[1], 0, 96000));
+        CHECK(out[1][96000 + 1000 + 100] == Catch::Approx(0.6f));   // the body's cue is said
+    }
+    SECTION("pre-roll") {
+        Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+        auto song = prepareSong("p", TempoMap{}, 0, 48000, {{constantAudio(4 * 96000, 0.1f, NAN), 0}}, ClickSetup{.enabled = false}, 48000.0);
+        song.cues = {{-10000, clip(0.5f)}, {1000, clip(0.6f)}};
+        e.cue(share(std::move(song)));  e.start();
+        auto out = renderOffline(e, 2, 96000, 512);
+        CHECK(silent(out[1], 0, 48000));
+        CHECK(out[1][48000 + 1000 + 100] == Catch::Approx(0.6f));
+    }
+    SECTION("a count-off, over section 0's announcement moment") {
+        Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+        auto song = cueSong();  song.cues = {{96000 + 5000, clip(0.9f)}};   // in the bar before step 1
+        e.cue(share(std::move(song)));  e.startAtStep(1);                    // the count-off is song time [96000, 192000)
+        auto out = renderOffline(e, 2, 2 * 96000 + 3000, 512);
+        CHECK(silent(out[1], 0, 96000));
+        CHECK(out[1][2 * 96000 + 1000] == Catch::Approx(0.3f));    // step 1 announces step 2 at its own moment
+    }
+}
+TEST_CASE("a loop turned off before the boundary says the next step at once", "[cue]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+    auto s = e.cue(share(cueSong()));  e.start();
+    auto out = renderOffline(e, 2, 96000 + 40000, 512, {{96000 + 10000, [&](Engine& en) { en.setLoop(s, true); }},
+                                                       {96000 + 30000, [&](Engine& en) { en.setLoop(s, false); }}});
+    CHECK(silent(out[1], 96000 + 2000, 96000 + 30000));
+    CHECK(out[1][96000 + 30000 + 1000] == Catch::Approx(0.2f));
+}
+TEST_CASE("a NextBar choice is said at once; cancelled before the moment, the moment says the natural step", "[cue]") {
+    auto nextBar = [] { auto s = cueSong();  s.jumpTiming = JumpTiming::NextBar;  return s; };
+    {
+        Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+        auto s = e.cue(share(nextBar()));  e.start();
+        auto out = renderOffline(e, 2, 3000, 512, {{1000, [&](Engine& en) { en.chooseNextStep(s, 3); }}});
+        CHECK(silent(out[1], 0, 1000));
+        CHECK(out[1][2000] == Catch::Approx(0.4f));
+    }
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+    auto s = e.cue(share(nextBar()));  e.start();
+    auto out = renderOffline(e, 2, 96000 + 3000, 512, {{1000, [&](Engine& en) { en.chooseNextStep(s, 3); }},
+                                                      {1500, [&](Engine& en) { en.chooseNextStep(s, -1); }}});
+    CHECK(out[1][1400] == Catch::Approx(0.4f));
+    CHECK(silent(out[1], 1500 + 240, 96000));                       // faded out, and nothing said in its place
+    CHECK(out[1][96000 + 1000] == Catch::Approx(0.2f));
+}
+TEST_CASE("a step entered past its announcement moment says nothing, but a later choice is said at once", "[cue]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+    auto s = e.cue(share(cueSong()));  e.startAt(96000 + 10000);
+    auto out = renderOffline(e, 2, 22000, 512, {{20000, [&](Engine& en) { en.chooseNextStep(s, 3); }}});
+    CHECK(silent(out[1], 0, 20000));
+    CHECK(out[1][21000] == Catch::Approx(0.4f));
+}
+TEST_CASE("a preview plays while stopped with a song cued, and is ignored in a gap", "[cue]") {
+    {
+        Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+        e.cue(share(cueSong()));  e.previewCue(clip(0.6f), 1.0f);
+        CHECK(renderOffline(e, 2, 3000, 512)[1][1000] == Catch::Approx(0.6f));
+    }
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());  e.setFollowOn({FollowKind::Gap, 1.0});
+    e.cue(share(testSong("a", 4000, 0.1f)));  e.start();  e.cue(share(testSong("b", 4000, 0.1f)));
+    renderOffline(e, 2, 10000, 512);
+    REQUIRE(e.status().inGap);
+    e.previewCue(clip(0.6f), 1.0f);
+    auto out = renderOffline(e, 2, 3000, 512);
+    CHECK(silent(out[1], 0, 3000));
+}
+TEST_CASE("through a jump's crossfade the cue is mixed once, at its level", "[cue]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+    auto song = rampSong("r", 3, {1, 1, 1});
+    song.cues = {{96000 - 1000, clip(0.5f)}};                       // speaking from 1000 before the jump to 1000 after
+    auto s = e.cue(share(std::move(song)));  e.start();
+    auto out = renderOffline(e, 2, 96000 + 2000, 512, {{10, [&](Engine& en) { en.chooseNextStep(s, 2); }}});
+    int wrong = 0;
+    for (int i = 96000 - 500; i < 96000 + 240 + 500; ++i) wrong += out[1][i] == 0.5f ? 0 : 1;
+    CHECK(wrong == 0);
+    CHECK(out[0][96000 + 240] == float(2 * 96000 + 240));           // the crossfade was there: section 2 plays after it
+}
+TEST_CASE("a manual cue on the announcement moment wins over the announcement", "[cue]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+    auto song = cueSong();  song.cues = {{96000, clip(0.9f)}};
+    e.cue(share(std::move(song)));  e.start();
+    auto out = renderOffline(e, 2, 3 * 96000 + 2000, 512);
+    CHECK(out[1][96000 + 1000] == Catch::Approx(0.9f));
+    CHECK(out[1][3 * 96000 + 1000] == Catch::Approx(0.3f));         // the next boundary is announced as ever
+}
+TEST_CASE("manual cues out of order never stall the audio thread", "[cue]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(cueMix());
+    auto song = cueSong();  song.cues = {{1000, clip(0.5f)}, {5000, clip(0.6f)}, {3000, clip(0.7f)}};   // after finishSections
+    e.cue(share(std::move(song)));  e.start();
+    auto out = renderOffline(e, 2, 96000, 512);
+    CHECK(out[0][95999] == 95999.0f);                               // played on to here
+}
+TEST_CASE("two cues said together drop the quieter voice, never a click", "[cue]") {
+    CuePlayer p; p.prepare(48000.0, 512);
+    std::vector<float> out(2000, 0.0f);
+    p.say(clip(1.0f, 48000));  p.render(500, out.data());
+    p.say(clip(0.3f, 48000));  p.say(clip(0.5f, 48000));           // two in one block: the first barely started
+    p.render(1500, out.data() + 500);
+    for (int i = 500; i < 2000; ++i) CHECK(std::abs(out[i] - out[i - 1]) < 0.01f);
+    CHECK(out[1999] == Catch::Approx(0.5f));
+}

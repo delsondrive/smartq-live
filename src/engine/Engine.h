@@ -8,6 +8,7 @@
 
 #include "engine/Arrangement.h"
 #include "engine/CuePlayer.h"
+#include "engine/CueSchedule.h"
 #include "engine/Midi.h"
 #include "engine/MidiOut.h"
 #include "engine/MixSetup.h"
@@ -71,9 +72,11 @@ inline constexpr int kMaxDeviceChannels = 256;
 // past that moment (startAt) says nothing then, but counts it as passed. Once it has passed, a change of what plays next (a
 // choice, a cancel, a loop turned on or off) says the new section's cue at once, or, when that is nothing, silences the
 // announcement if it is still speaking; with the song's jump timing NextBar a choice is said at once, before that moment
-// too. A manual cue is said when song time reaches it; a jump skips those it jumps over. A new clip cuts the one speaking
-// with a 5 ms fade. The song's last step ending, a stop, and a start all silence the voice with that fade. Cues sound at
-// the band's cue level (setCueGain) × the song's cuesAutomation at each sample.
+// too, and one cancelled before the moment is silenced, leaving the moment to say the natural next step. A manual cue is
+// said when song time reaches it; a jump skips those it jumps over. A manual cue on the announcement moment wins: the band
+// placed it there, so that boundary's announcement is skipped. The schedule is CueSchedule's. A new clip cuts the one
+// speaking with a 5 ms fade. The song's last step ending, a stop, and a start all silence the voice with that fade. Cues
+// sound at the band's cue level (setCueGain) × the song's cuesAutomation at each sample.
 class Engine {
 public:
     Engine();
@@ -207,13 +210,6 @@ private:
     // The voice's next frames into cue_buffer_ (null when silent); sounding, if given: how many of the first it sounded in.
     const float* renderCue(std::int64_t frames, std::int64_t* sounding = nullptr) noexcept;
     bool cuesLive() const noexcept;                              // a step plays, so cues are said
-    void fireCues() noexcept;                                    // says what falls at song_time_
-    std::int64_t untilNextCue() const noexcept;                  // samples from song_time_ to the next thing to say
-    void announce() noexcept;                                    // the announcement moment: says what plays next
-    void reannounce() noexcept;                                  // after the moment, what plays next may have changed
-    int sectionIndex(int step) const noexcept;                   // the playing song's section a step plays; -1: none
-    int sectionToAnnounce() const noexcept;                      // the section of what plays next; -1: nothing to say
-    const std::shared_ptr<const PartAudio>& sectionClip(int section) const noexcept;   // null: none
     double stopGain(std::int64_t k) const noexcept;   // the stop fade's gain k samples on from where it stands
     void settle(std::int64_t streamTime) noexcept;
     bool handOver(std::int64_t streamTime) noexcept;
@@ -283,10 +279,7 @@ private:
     int retired_ = 0;                        // objects retired since this block's commands were taken
     CuePlayer cue_player_;
     std::vector<float> cue_buffer_;          // max_block_: the voice's mono audio for one render
-    SamplePos announce_at_ = 0;              // when the playing step announces what plays next
-    bool announced_ = false;                 // that moment has passed (or, with NextBar, a choice was said)
-    int announced_section_ = -1;             // the section announced for the coming boundary; -1: nothing
-    std::size_t manual_next_ = 0;            // the first of the playing song's cues not yet said, as of song_time_
+    CueSchedule cue_schedule_;               // what the playing step says, and when
 };
 
 } // namespace sqlive::engine

@@ -11,7 +11,8 @@
 namespace sqlive::engine {
 
 // The cue voice: speaks one clip at a time, mono. Two voices: the clip speaking, and the one it cut, fading out under it.
-// A new clip fades in over 1 ms; the one it cuts fades out in a straight line over 5 ms from the level it had. A stereo
+// A new clip fades in over 1 ms; the one it cuts fades out in a straight line over 5 ms from the level it had. With both
+// voices sounding, a new clip drops the quieter of the two (by its level now) and the louder fades out under it. A stereo
 // clip is spoken as the mean of its sides.
 //
 // Audio thread only, after prepare (which allocates nothing either, and frees what it held: call it only while the audio

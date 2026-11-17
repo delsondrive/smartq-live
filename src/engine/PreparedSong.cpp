@@ -81,6 +81,8 @@ void finishSections(PreparedSong& s) {
     std::erase_if(s.arrangement, [&](std::uint16_t step) { return step >= count; });
     if (s.arrangement.empty())
         for (std::size_t i = 0; i < count && i <= 0xFFFF; ++i) s.arrangement.push_back(static_cast<std::uint16_t>(i));
+    // In time order, as the audio thread assumes: cues at the same time keep their order.
+    std::stable_sort(s.cues.begin(), s.cues.end(), [](const CueEvent& a, const CueEvent& b) { return a.at < b.at; });
     if (s.sectionCue.size() != count) s.sectionCue.assign(count, nullptr);
     if (s.announceAt.size() != count) {
         s.announceAt.clear();
