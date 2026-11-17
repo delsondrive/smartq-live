@@ -12,6 +12,7 @@
 #include "model/CommandParams.h"
 #include "model/DocumentsJson.h"
 #include "model/MidiFileImport.h"
+#include "model/SectionCommands.h"
 
 namespace sqlive::model {
 
@@ -62,12 +63,6 @@ MarkerDoc readMarker(const var& fields) {
     return marker;
 }
 
-void sortLane(std::vector<MarkerDoc>& lane) {
-    std::stable_sort(lane.begin(), lane.end(), [](const MarkerDoc& a, const MarkerDoc& b) {
-        return std::tie(a.bar, a.beat) < std::tie(b.bar, b.beat);
-    });
-}
-
 std::vector<MarkerDoc>& laneOf(SongDoc& song, const Params& p) {
     auto it = song.midiLanes.find(p.id("deviceId"));
     return found(it == song.midiLanes.end() ? nullptr : &it->second, "marker");
@@ -100,6 +95,12 @@ String quoted(const juce::StringArray& titles) {
 }
 
 }  // namespace
+
+void commands::sortLane(std::vector<MarkerDoc>& lane) {
+    std::stable_sort(lane.begin(), lane.end(), [](const MarkerDoc& a, const MarkerDoc& b) {
+        return std::tie(a.bar, a.beat) < std::tie(b.bar, b.beat);
+    });
+}
 
 void registerMidiCommands(CommandLayer& layer) {
     auto add = [&layer](const char* name, auto fn) { addCommand(layer, name, fn); };
@@ -309,7 +310,9 @@ void registerMidiCommands(CommandLayer& layer) {
             sections.push_back(std::move(section));
         }
         orderSections(sections);
+        keepSectionIdentities(*m.song(p.id("songId")), m.band(), sections);
         songOf(m, p).sections = std::move(sections);
+        dropGoneArrangementSteps(m, p.id("songId"));
         return CommandResult::success();
     });
 
@@ -336,10 +339,12 @@ void registerMidiCommands(CommandLayer& layer) {
             sections = content.sections;
             for (auto& s : sections) s.id = newId();
             orderSections(sections);
+            keepSectionIdentities(*m.song(p.id("songId")), m.band(), sections);
         }
         auto& song = songOf(m, p);
         if (choice.tempo) song.tempo = content.tempo;
         if (choice.sections) song.sections = std::move(sections);
+        if (choice.sections) dropGoneArrangementSteps(m, song.id);
         for (auto& [deviceId, lane] : lanes) {
             sortLane(lane);
             if (lane.empty()) song.midiLanes.erase(deviceId);

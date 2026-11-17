@@ -132,4 +132,25 @@ void readSections(Reader& r, SetlistEntry& out) { out.arrangementId = r.text("ar
 
 }  // namespace detail
 
+// A cue or an automation point read on its own: false when the var isn't an object.
+juce::var toVar(const CueMarkerDoc& c) { return write(c); }
+juce::var toVar(const AutomationPoint& p) { return write(p); }
+bool fromVar(const juce::var& v, CueMarkerDoc& out, ParseNotes& notes) {
+    Reader r(v, {}, notes);
+    if (! r.valid()) return false;
+    std::set<juce::String> seen;
+    CueMarkerDoc cue;
+    read(r, cue, seen);
+    out = std::move(cue);
+    return true;
+}
+bool fromVar(const juce::var& v, AutomationPoint& out, ParseNotes& notes) {
+    Reader r(v, {}, notes);
+    if (! r.valid()) return false;
+    AutomationPoint point;
+    read(r, point);
+    out = std::move(point);
+    return true;
+}
+
 }  // namespace sqlive::model

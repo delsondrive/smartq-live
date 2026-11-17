@@ -20,6 +20,10 @@ juce::var toVar(const MidiMessageDoc&); bool fromVar(const juce::var&, MidiMessa
 juce::var toVar(const MarkerDoc&);      bool fromVar(const juce::var&, MarkerDoc&, ParseNotes&);
 juce::var toVar(const SectionDoc&);     bool fromVar(const juce::var&, SectionDoc&, ParseNotes&);
 juce::var toVar(const ControlBinding&); bool fromVar(const juce::var&, ControlBinding&, ParseNotes&);
+// A cue and an automation point on their own, limited as inside a document (bars 1 to 99999, beats 1 to 32, dB -60 to +6);
+// a cue's clip outside the band folder is ignored.
+juce::var toVar(const CueMarkerDoc&);   bool fromVar(const juce::var&, CueMarkerDoc&, ParseNotes&);
+juce::var toVar(const AutomationPoint&); bool fromVar(const juce::var&, AutomationPoint&, ParseNotes&);
 
 // fromVar and fromJson return false only when the text is not a JSON object; anything else is repaired and noted.
 template <typename Doc> juce::String toJson(const Doc& doc) { return juce::JSON::toString(toVar(doc), false); }

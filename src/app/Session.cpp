@@ -10,6 +10,7 @@
 #include "model/CoreCommands.h"
 #include "model/DocumentSet.h"
 #include "model/MidiCommands.h"
+#include "model/SectionCommands.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
 #include "model/Units.h"
@@ -37,6 +38,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     load_report_ = folder_.load(model_);
     model::registerCoreCommands(commands_);
     model::registerMidiCommands(commands_);
+    model::registerSectionCommands(commands_);
     OutsideChanges::registerReloadCommand(commands_);
     // Going back to a snapshot (SnapshotStore::restore): every document at once. Show mode never changes the band folder.
     commands_.registerCommand("snapshot.apply", [this](model::BandModel& m, const juce::var& params) {
@@ -865,7 +867,8 @@ engine::FollowOn Session::followOn() const {
     switch (transition.kind) {
     case model::TransitionKind::Gap: return {engine::FollowKind::Gap, transition.seconds};
     case model::TransitionKind::Seamless: return {engine::FollowKind::Seamless, 0.0};
-    case model::TransitionKind::Stop: break;
+    case model::TransitionKind::Stop:
+    case model::TransitionKind::Crossfade: break;                // plays as Stop until crossfades are built
     }
     return {};
 }

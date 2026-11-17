@@ -255,9 +255,15 @@ void registerCoreCommands(CommandLayer& layer) {
     add("setlist.setTransition", [](BandModel& m, const Params& p) {
         auto& entry = entryOf(setlistOf(m, p), p);
         static const Named<TransitionKind> kinds[] = {
-            {TransitionKind::Stop, "stop"}, {TransitionKind::Gap, "gap"}, {TransitionKind::Seamless, "seamless"}};
-        auto kind = pick(p, "kind", kinds, "A transition is stop, gap or seamless.");
-        const double seconds = p.given("seconds") ? p.number("seconds", 0.0, 60.0) : entry.transition.seconds;
+            {TransitionKind::Stop, "stop"}, {TransitionKind::Gap, "gap"}, {TransitionKind::Seamless, "seamless"},
+            {TransitionKind::Crossfade, "crossfade"}};
+        auto kind = pick(p, "kind", kinds, "A transition is stop, gap, seamless or crossfade.");
+        double seconds = p.given("seconds") ? p.number("seconds", 0.0, 60.0) : entry.transition.seconds;
+        if (kind == TransitionKind::Crossfade) {
+            // Given none, a crossfade keeps the seconds it had when they fit, else 4.
+            if (!p.given("seconds") && (seconds < 1.0 || seconds > 30.0)) seconds = 4.0;
+            if (seconds < 1.0 || seconds > 30.0) refuse("A crossfade is 1 to 30 seconds.");
+        }
         entry.transition.kind = kind;
         entry.transition.seconds = seconds;
         return CommandResult::success();

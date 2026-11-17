@@ -67,6 +67,7 @@ juce::Result AudioHost::open(const DeviceChoice& choice) {
         return juce::Result::fail("This computer has no " + choice.type + " devices.");
     }
     const bool wasRunning = running_;
+    const bool playing = engine_.status().playingSerial != 0;    // the old device closes under a song that may be playing
     if (running_) session_.audioInterrupted();                   // the old device stops now
     running_ = false;
     closeDevice();
@@ -90,6 +91,9 @@ juce::Result AudioHost::open(const DeviceChoice& choice) {
     auto* device = manager_.getCurrentAudioDevice();
     if (error.isNotEmpty() || device == nullptr || device->getTypeName() != choice.type) {
         closeDevice();
+        // The old device was closed under a song that may have been playing and no new one started to prepare the engine:
+        // its MIDI is ended here, as close() does, so no note is left sounding and the gear following start and stop stops.
+        if (playing) engine_.deviceStopped();
         session_.setDeviceRunning(false);
         if (wasRunning && onChanged) onChanged();
         return juce::Result::fail("Can't open " + choice.name + "." + (error.isNotEmpty() ? " " + error : juce::String()));

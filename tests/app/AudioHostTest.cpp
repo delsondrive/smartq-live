@@ -198,3 +198,18 @@ TEST_CASE("a rig that no longer names a device here stops the search for the old
     CHECK(host.openFromRig().getErrorMessage() == "This rig hasn't been set up on this computer yet.");
     CHECK_FALSE(host.isRetrying());
 }
+TEST_CASE("opening a device that fails mid-song stops the gear that follows start and stop at once", "[audiohost]") {
+    DemoSession d; app::AudioHost host(*d.session); auto& s = *d.session;
+    const auto types = host.deviceTypes();
+    if (types.isEmpty()) return;                                  // a machine with no audio system at all has nothing to try
+    auto g1 = s.commands().run("device.add", params({{"name", "Drum machine"}})).value.toString();
+    s.commands().run("device.set", params({{"deviceId", g1}, {"startStop", true}}));
+    d.settle();  s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000);
+    REQUIRE(s.now().playing);
+    engine::OutMidi m; bool started = false;
+    while (s.engine().popMidi(m)) started = started || m.data[0] == 0xFA;
+    REQUIRE(started);
+    CHECK(host.open({types[0], "No such interface here"}).failed());   // the old device is closed, the new one won't open
+    std::vector<engine::OutMidi> out; while (s.engine().popMidi(m)) out.push_back(m);
+    REQUIRE(out.size() == 1);  CHECK(out[0].data[0] == 0xFC);
+}

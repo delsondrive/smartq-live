@@ -42,7 +42,8 @@ juce::String counted(int n, const juce::String& one, const juce::String& many) {
 
 juce::String transitionText(const model::Transition& t) {
     switch (t.kind) {
-        case model::TransitionKind::Stop: break;
+        case model::TransitionKind::Stop:
+        case model::TransitionKind::Crossfade: break;            // plays as Stop until crossfades are built
         case model::TransitionKind::Gap: return "Gap " + formatSeconds(t.seconds) + " s";
         case model::TransitionKind::Seamless: return "Seamless";
     }

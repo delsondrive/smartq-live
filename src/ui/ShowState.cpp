@@ -69,7 +69,8 @@ juce::String transitionNote(const model::SetlistDoc& list, std::size_t index) {
     switch (transition.kind) {
     case model::TransitionKind::Gap: return arrow + "gap " + formatSeconds(transition.seconds) + " s";
     case model::TransitionKind::Seamless: return arrow + "seamless";
-    case model::TransitionKind::Stop: break;
+    case model::TransitionKind::Stop:
+    case model::TransitionKind::Crossfade: break;                // plays as Stop until crossfades are built
     }
     return arrow + "stop";
 }
@@ -81,7 +82,8 @@ juce::String followText(const model::SetlistDoc* list, int playingIndex) {
     switch (transition.kind) {
     case model::TransitionKind::Gap: return "after a " + formatSeconds(transition.seconds) + " s gap";
     case model::TransitionKind::Seamless: return "straight after this song";
-    case model::TransitionKind::Stop: break;
+    case model::TransitionKind::Stop:
+    case model::TransitionKind::Crossfade: break;                // plays as Stop until crossfades are built
     }
     return "after this song stops";
 }
