@@ -256,6 +256,18 @@ void registerMidiCommands(CommandLayer& layer) {
         const auto& info = found(actionInfo(name), "action");
         if (! p.present("binding")) refuse("A control needs a binding, or void to go back to the default.");
         if (! p.given("binding")) {
+            // Back to its default, unless another control has taken that key or pedal since: two would answer to it.
+            juce::StringArray keyTaken, pedalTaken;
+            for (auto& other : actionInfos()) {
+                if (other.name == name) continue;
+                auto it = m.band().controls.find(other.name);
+                const ControlBinding& had = it != m.band().controls.end() ? it->second : other.defaultBinding;
+                if (sameKey(info.defaultBinding, had)) keyTaken.add(other.title);
+                if (samePedal(info.defaultBinding, had)) pedalTaken.add(other.title);
+            }
+            if (! keyTaken.isEmpty()) refuse("Its default key is used for " + quoted(keyTaken) + " now. Give that one another key first.");
+            if (! pedalTaken.isEmpty())
+                refuse("Its default pedal is used for " + quoted(pedalTaken) + " now. Give that one another pedal first.");
             if (m.band().controls.count(name) > 0) m.editBand().controls.erase(name);
             return CommandResult::success();
         }

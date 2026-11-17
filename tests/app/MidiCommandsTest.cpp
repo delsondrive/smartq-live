@@ -50,6 +50,19 @@ TEST_CASE("MIDI devices, changes and controls are edited through commands", "[mi
           == "Esc is kept for stopping the song: press it twice.");
 }
 
+TEST_CASE("a control can't go back to its default while another control uses it", "[midicmd]") {
+    DemoSession d; auto& s = *d.session; const auto& model = s.model();
+    auto run = [&](const char* name, const juce::var& p) { return s.commands().run(name, p); };
+    REQUIRE(run("controls.set", params({{"action", "nextSongLater"}, {"binding", binding(juce::KeyPress::spaceKey)}})).ok);
+    REQUIRE(model.band().controls.at("start").keyCode == 0);                  // Start lost Space to it
+    auto back = run("controls.set", params({{"action", "start"}, {"binding", juce::var()}}));
+    CHECK_FALSE(back.ok);
+    CHECK(back.message == juce::String::fromUTF8("Its default key is used for “Next song: later” now. Give that one another key first."));
+    CHECK(model.band().controls.at("start").keyCode == 0);                    // nothing changed
+    REQUIRE(run("controls.set", params({{"action", "nextSongLater"}, {"binding", juce::var()}})).ok);   // Right again
+    CHECK(run("controls.set", params({{"action", "start"}, {"binding", juce::var()}})).ok);
+    CHECK(model.band().controls.count("start") == 0);                         // Space again
+}
 TEST_CASE("the actions are the mockup's rows", "[midicmd]") {
     REQUIRE(model::actionInfos().size() == 5);
     CHECK(model::actionInfos()[0].title == "Start the song");
