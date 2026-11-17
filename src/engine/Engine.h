@@ -54,8 +54,8 @@ inline constexpr int kMaxDeviceChannels = 256;
 // ends, the next step plays: straight on when its section starts there, otherwise as a jump, which lands on the section's
 // start with a crossfade of 240 samples (scaled by sampleRate / 48000) from the audio running on past the line (parts
 // only) to the incoming audio. The song ends when its last step does; when that is not where its audio ends, the audio
-// running on fades out over the same 240 samples before Ended. Each step entered is reported (StepChanged), except in a
-// song without sections, whose one step is the whole song.
+// running on fades out over the same 240 samples before Ended. Each step entered is reported (StepChanged), the first
+// included, a song without sections too (its one step, 0, is the whole song).
 class Engine {
 public:
     Engine();

@@ -99,9 +99,9 @@ TEST_CASE("stream time keeps counting up across a second prepare", "[engine]") {
     renderOffline(e, 2, 3000, 512);
     CHECK(e.status().streamTime == 3000);
     EngineEvent first;
-    REQUIRE(e.popEvent(first)); CHECK(first.type == EngineEvent::Type::Started); CHECK(first.streamTime == 0);
+    REQUIRE(popSongEvent(e, first)); CHECK(first.type == EngineEvent::Type::Started); CHECK(first.streamTime == 0);
     EngineEvent ended;
-    REQUIRE(e.popEvent(ended)); CHECK(ended.type == EngineEvent::Type::Ended); CHECK(ended.streamTime == 1000);
+    REQUIRE(popSongEvent(e, ended)); CHECK(ended.type == EngineEvent::Type::Ended); CHECK(ended.streamTime == 1000);
 
     e.prepare(48000.0, 256);                     // a device restart
     CHECK(e.status().streamTime == 3000);
@@ -110,8 +110,8 @@ TEST_CASE("stream time keeps counting up across a second prepare", "[engine]") {
     CHECK(out[0][0] == 0.5f);
     CHECK(e.status().streamTime == 5000);
     EngineEvent ev;
-    REQUIRE(e.popEvent(ev)); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 3000);
-    REQUIRE(e.popEvent(ev)); CHECK(ev.type == EngineEvent::Type::Ended); CHECK(ev.streamTime == 4000);
+    REQUIRE(popSongEvent(e, ev)); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 3000);
+    REQUIRE(popSongEvent(e, ev)); CHECK(ev.type == EngineEvent::Type::Ended); CHECK(ev.streamTime == 4000);
 }
 TEST_CASE("process allocates and frees nothing, and finished songs are freed by collectGarbage", "[engine]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());

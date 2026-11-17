@@ -46,12 +46,6 @@ int Arrangement::stepCount() const noexcept {
     return usesVectors() ? static_cast<int>(song_->arrangement.size()) : 1;
 }
 
-bool Arrangement::wholeSong() const noexcept {
-    if (song_ == nullptr || stepCount() != 1) return false;
-    const Section& s = sectionOf(0);
-    return s.start == 0 && s.end == whole_.end;
-}
-
 bool Arrangement::usesVectors() const noexcept {
     return song_ != nullptr && !song_->sections.empty() && !song_->arrangement.empty();
 }

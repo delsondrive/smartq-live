@@ -69,11 +69,26 @@ inline std::shared_ptr<const engine::PreparedSong> share(engine::PreparedSong so
     return std::make_shared<const engine::PreparedSong>(std::move(song));
 }
 
-// Pops every event the engine has reported so far and returns their types, oldest first.
-inline std::vector<engine::EngineEvent::Type> drainEvents(engine::Engine& e) {
+// Pops the next event that is not a StepChanged (passing over those): for tests of a song's start, end and stop.
+inline bool popSongEvent(engine::Engine& e, engine::EngineEvent& ev) {
+    while (e.popEvent(ev))
+        if (ev.type != engine::EngineEvent::Type::StepChanged) return true;
+    return false;
+}
+
+// Pops every event the engine has reported so far and returns their types, oldest first, StepChanged included.
+inline std::vector<engine::EngineEvent::Type> drainAllEvents(engine::Engine& e) {
     std::vector<engine::EngineEvent::Type> types;
     engine::EngineEvent ev;
     while (e.popEvent(ev)) types.push_back(ev.type);
+    return types;
+}
+
+// The same, leaving out StepChanged: the song's start, end and stop.
+inline std::vector<engine::EngineEvent::Type> drainEvents(engine::Engine& e) {
+    std::vector<engine::EngineEvent::Type> types;
+    engine::EngineEvent ev;
+    while (popSongEvent(e, ev)) types.push_back(ev.type);
     return types;
 }
 

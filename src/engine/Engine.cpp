@@ -287,10 +287,10 @@ void Engine::playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix,
     }
 }
 
-// The playing song is in `step` from streamTime on. A song without sections announces no step: its one step is the song.
+// The playing song is in `step` from streamTime on, and says so: every step entered is reported, the first included.
 void Engine::enterStep(int step, std::int64_t streamTime) noexcept {
     arrangement_.enter(step);
-    if (!arrangement_.wholeSong()) report(EngineEvent::Type::StepChanged, playing_.serial, streamTime, false, step);
+    report(EngineEvent::Type::StepChanged, playing_.serial, streamTime, false, step);
 }
 
 // Renders out[offset, offset + frames), at most max_block_ frames, which already hold silence. The song can end, the stop

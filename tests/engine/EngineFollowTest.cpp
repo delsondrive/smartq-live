@@ -25,9 +25,9 @@ TEST_CASE("seamless: the next song starts on the very next sample", "[follow]") 
         auto out = renderOffline(e, 2, 3000, block, {{10, [&](Engine& en) { b = en.cue(share(testSong("b", 1000, 0.5f))); }}});
         CHECK(out[0][999] == 0.25f);  CHECK(out[0][1000] == 0.5f);  CHECK(out[0][1999] == 0.5f);  CHECK(out[0][2000] == 0.0f);
         EngineEvent ev;
-        REQUIRE(e.popEvent(ev)); CHECK(ev.serial == a); CHECK(ev.type == EngineEvent::Type::Started);
-        REQUIRE(e.popEvent(ev)); CHECK(ev.serial == a); CHECK(ev.type == EngineEvent::Type::Ended); CHECK(ev.streamTime == 1000);
-        REQUIRE(e.popEvent(ev)); CHECK(ev.serial == b); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 1000);
+        REQUIRE(popSongEvent(e, ev)); CHECK(ev.serial == a); CHECK(ev.type == EngineEvent::Type::Started);
+        REQUIRE(popSongEvent(e, ev)); CHECK(ev.serial == a); CHECK(ev.type == EngineEvent::Type::Ended); CHECK(ev.streamTime == 1000);
+        REQUIRE(popSongEvent(e, ev)); CHECK(ev.serial == b); CHECK(ev.type == EngineEvent::Type::Started); CHECK(ev.streamTime == 1000);
     }
 }
 TEST_CASE("seamless skips the next song's count-in; a gap keeps it", "[follow]") {
@@ -132,7 +132,7 @@ TEST_CASE("a gap reports what ended, what started and a stop inside it; a gap ru
         struct Seen { T type; std::uint64_t serial; std::int64_t streamTime; bool inGap = false; };
         std::vector<Seen> seen;
         EngineEvent ev;
-        while (e.popEvent(ev)) seen.push_back({ev.type, ev.serial, ev.streamTime, ev.inGap});
+        while (popSongEvent(e, ev)) seen.push_back({ev.type, ev.serial, ev.streamTime, ev.inGap});
         const std::vector<Seen> expected{{T::Started, a, 0}, {T::Ended, a, 1000}, {T::Started, b, 5800}, {T::Ended, b, 6800},
                                          {T::Stopped, b, 7000, true}, {T::Started, c, 8000}, {T::Ended, c, 9000}};
         REQUIRE(seen.size() == expected.size());

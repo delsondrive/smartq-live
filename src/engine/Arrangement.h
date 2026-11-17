@@ -22,8 +22,6 @@ public:
                                                    // section starts after it; -1 when none
     const Section& sectionOf(int step) const noexcept;   // a step out of range: the whole song
     int stepCount() const noexcept;                // 0 without a song
-    // One step that plays the whole song, [0, end): a song without sections, whose step changes are not announced.
-    bool wholeSong() const noexcept;
 
 private:
     bool usesVectors() const noexcept;             // the song's own sections and arrangement, rather than whole_

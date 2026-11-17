@@ -86,6 +86,22 @@ TEST_CASE("a jump during a mix glide is still block-size independent", "[section
     for (int block : {1, 64, 333, 4096}) CHECK(run(block) == reference);
 }
 
+TEST_CASE("a song with no stored sections reports its one step once, as it starts", "[sections]") {
+    for (bool countIn : {false, true}) {
+        CAPTURE(countIn);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        auto plain = testSong("p", 30000, 0.3f, countIn ? 1 : 0);
+        plain.sections.clear();  plain.arrangement.clear();          // nothing stored: the engine plays it as one step
+        auto serial = e.cue(share(plain));  e.start();
+        renderOffline(e, 2, 96000 + 40000, 512);
+        std::vector<EngineEvent> seen; EngineEvent ev; while (e.popEvent(ev)) seen.push_back(ev);
+        REQUIRE(seen.size() == 3);
+        CHECK(seen[0].type == EngineEvent::Type::Started);
+        CHECK(seen[1].type == EngineEvent::Type::StepChanged);  CHECK(seen[1].step == 0);  CHECK(seen[1].serial == serial);
+        CHECK(seen[1].streamTime == (countIn ? 96000 : 0));      // at bar 1, after the count-in
+        CHECK(seen[2].type == EngineEvent::Type::Ended);
+    }
+}
 TEST_CASE("finishSections fills in what is missing and drops steps out of range", "[sections]") {
     auto song = rampSong("r", 3, {1, 2}, {1, 7, 0, 2});
     CHECK(song.arrangement == std::vector<std::uint16_t>{1, 0});
@@ -147,8 +163,8 @@ TEST_CASE("a stop during a crossfade fades both sides out, and a stop during a s
         auto out = renderOffline(e, 2, 96000 + 3000, block, {{96000 + 100, [](Engine& en) { en.stop(); }}});
         CHECK(out[0][96000 + 100] == Catch::Approx((96100.0 * 140 + 192100.0 * 100) / 240.0));   // the stop fade starts at 1
         CHECK(out[0][96000 + 2400 + 100] == 0.0f);
-        CHECK(drainEvents(e) == std::vector{EngineEvent::Type::Started, EngineEvent::Type::StepChanged,
-                                            EngineEvent::Type::StepChanged, EngineEvent::Type::Stopped});
+        CHECK(drainAllEvents(e) == std::vector{EngineEvent::Type::Started, EngineEvent::Type::StepChanged,
+                                               EngineEvent::Type::StepChanged, EngineEvent::Type::Stopped});
 
         e.cue(share(rampSong("r", 4, {1, 1, 1, 1}, {1})));  e.start();   // section 1 alone: a tail at 96000
         const auto base = e.status().streamTime;
