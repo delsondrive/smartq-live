@@ -64,7 +64,9 @@ TEST_CASE("a control can't go back to its default while another control uses it"
     CHECK(model.band().controls.count("start") == 0);                         // Space again
 }
 TEST_CASE("the actions are the mockup's rows", "[midicmd]") {
-    REQUIRE(model::actionInfos().size() == 5);
+    REQUIRE(model::actionInfos().size() == 20);                       // the stage-2 five, the sections, the loop, the early move
+    CHECK(model::actionInfo("section10")->defaultBinding.keyCode == '0');
+    CHECK(model::actionInfo("goToNextSongNow")->defaultBinding.keyCode == 0);   // holding Next song: later's key does it
     CHECK(model::actionInfos()[0].title == "Start the song");
     CHECK(model::actionInfo("toggleView")->title == juce::String::fromUTF8("Main view ⇄ stage view"));
     CHECK(model::actionInfo("start")->defaultBinding.keyCode == juce::KeyPress::spaceKey);

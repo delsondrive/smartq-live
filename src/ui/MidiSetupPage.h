@@ -34,19 +34,26 @@ struct MidiSetupState {
     };
     struct Control {
         juce::String action, title, key, midi;
-            // key "Space", "hold Space · Esc Esc" (Stop: held, or Esc twice); midi "CC 64, ch 10", or "" (none: "Learn").
+            // key "Space", "hold Space · Esc Esc" (Stop: held, or Esc twice), "hold →" (Go to the next song now), "1–9, 0"
+            // (the sections); midi "CC 64, ch 10", or "" (none: "Learn").
             // Stop has a pedal only when one is learned for it: no pedal can be held to stop (a tap never stops a song)
         bool learning = false;                                    // input != nullptr && input->learning() == this row's action
         juce::String hint;
-            // said after the pedal, in dim: "tap twice" for Stop's own pedal; while learning, "Set a latching switch to
-            // momentary." (its tooltip adds toggling pads: either acts only on every other tap)
+            // said after the pedal, in dim: "tap twice" for Stop's and Go to the next song now's; while learning, "Set a
+            // latching switch to momentary." (its tooltip adds toggling pads: either acts only on every other tap)
         juce::String keyNote;
             // the key cell's tooltip adds it: for Stop with a key of its own, that Start's key held stops too
         bool operator==(const Control&) const = default;
     };
     juce::String rigName;
     std::vector<Device> devices;                                  // the band's, in its order
-    std::vector<Control> controls;                                // one per app::allActions(), titled with actionTitle
+    // One per app::allActions(), in its order, titled with actionTitle; except that Section1 … Section10 share one row
+    // (action "section1"), "Choose section 1–10": its key "1–9, 0" while the ten keep their default keys (else each one's
+    // key, joined by ", "; a click on it chooses none), its pedal the first one's, with the number as a range when the ten
+    // are consecutive on one channel ("Note 36–45, ch 10"). Its Learn takes one note or controller and binds it and the
+    // next nine numbers on the same channel, ten controls.set in one undo step; its ✕ forgets all ten, in one too.
+    // "Go to the next song now" reads "hold →" (its own key, held, first when it has one), and its pedal "tap twice".
+    std::vector<Control> controls;
     juce::StringArray ports;                                      // this computer's MIDI outputs (none without MidiPorts)
     bool operator==(const MidiSetupState&) const = default;
 };
@@ -160,6 +167,7 @@ private:
         controls_columns_;
     std::vector<ControlRow> control_rows_;
     int action_width_ = 0, key_width_ = 0;
+    int control_row_ = 36;                                        // a control row's height, as laid out
 };
 
 }  // namespace sqlive::ui

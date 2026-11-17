@@ -3,8 +3,13 @@
 
 #include "app/ShowController.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/MidiParams.h"
+#include "tests/support/Params.h"
 
+using namespace sqlive;
 using namespace sqlive::app;
+using sqlive::test::binding;
+using sqlive::test::params;
 using sqlive::test::DemoSession;
 
 namespace {
@@ -90,4 +95,54 @@ TEST_CASE("two Esc presses closer than 150 ms are one press (a bounce)", "[keys]
     CHECK(r.seen.size() == 1);
     r.c.keyDown(ShowKey::Escape, 1.5);
     CHECK(r.seen.back() == Action::Stop);
+}
+TEST_CASE("holding the right arrow during a song goes to the next song now; a tap still only chooses", "[keys]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); };
+    c.keyDown(ShowKey::Right, 0.0);  c.tick(0.5);  CHECK(seen.empty());
+    CHECK(c.nextSongHoldProgress() == Catch::Approx(0.5).margin(0.02));  CHECK(c.holdProgress() == 0.0);   // not a hold toward a stop
+    c.keyUp(ShowKey::Right, 0.6);
+    CHECK(seen == std::vector{Action::NextSongLater});
+    c.keyDown(ShowKey::Right, 2.0);  c.tick(3.01);  c.tick(3.5);  c.keyUp(ShowKey::Right, 4.0);
+    CHECK(seen == std::vector{Action::NextSongLater, Action::GoToNextSongNow});
+}
+TEST_CASE("going to the next song now needs two taps or a hold, never one", "[keys]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); };
+    c.buttonDown(Action::GoToNextSongNow, 10.0, app::PedalKind::Tap);
+    CHECK(seen.empty());                                           // one pedal tap does nothing
+    c.buttonDown(Action::GoToNextSongNow, 10.5, app::PedalKind::Tap);
+    CHECK(seen == std::vector{Action::GoToNextSongNow});           // the second, half a second later, goes
+    REQUIRE(s.commands().run("controls.set", params({{"action", "goToNextSongNow"}, {"binding", binding('N')}})).ok);
+    c.keyDown('N', 0, 20.0);  c.tick(20.5);  c.keyUp('N', 20.5);
+    CHECK(seen.size() == 1);                                       // a half-second press of its own key does nothing
+    c.keyDown('N', 0, 30.0);  c.tick(30.5);  c.tick(31.01);  c.keyUp('N', 31.2);
+    CHECK(seen.size() == 2);  CHECK(seen.back() == Action::GoToNextSongNow);   // a one-second hold goes
+}
+TEST_CASE("going to the next song now does nothing with no song playing, and its taps are its own", "[keys]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); s.perform(a); };
+    c.keyDown(ShowKey::Right, 0.0);  c.tick(1.5);
+    CHECK(c.nextSongHoldProgress() == 0.0);                        // nothing plays: no hold toward going on
+    c.keyUp(ShowKey::Right, 2.0);
+    CHECK(seen == std::vector{Action::NextSongLater});             // only the choice of the next song, on the release
+    c.buttonDown(Action::GoToNextSongNow, 3.0, app::PedalKind::Tap);  c.buttonDown(Action::GoToNextSongNow, 3.5, app::PedalKind::Tap);
+    CHECK(seen.size() == 1);
+    s.chooseNext(0);  s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    c.buttonDown(Action::Stop, 5.0, app::PedalKind::Tap);          // a Stop tap, then a GoToNextSongNow tap: neither is a second
+    c.buttonDown(Action::GoToNextSongNow, 5.4, app::PedalKind::Tap);
+    CHECK(seen.size() == 1);
+    CHECK(s.now().playing);
+}
+TEST_CASE("the hold on the right arrow sends the engine on to the next song", "[keys]") {
+    DemoSession d; auto& s = *d.session;
+    s.commands().run("setlist.setTransition",
+                     params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"kind", "seamless"}}));
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    d.settle();  s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 4);   // past the count-in: a step plays
+    app::ShowController c(s);
+    c.keyDown(ShowKey::Right, 0.0);  c.tick(1.01);  c.keyUp(ShowKey::Right, 1.2);
+    s.advanceWithoutDevice(48000 * 3);                             // the bar line, the fade, the next song
+    CHECK(s.now().playingIndex == 1);
+    CHECK(s.now().lastPlayedIndex == 0);
 }

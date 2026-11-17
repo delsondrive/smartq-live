@@ -38,6 +38,9 @@ namespace sqlive::app {
 //
 // Everything but send runs on the message thread. send runs on the MIDI dispatcher's thread: it takes a lock the message
 // thread holds only briefly (sendNow, and swapping in what refresh and noteSong worked out), and never allocates.
+//
+// send and sendNow note every message they send, with its port's name, in Session::midiEcho, just before sending it: a
+// device that echoes it back through its MIDI Thru isn't taken for a pedal (ControlInput).
 class MidiPorts : private juce::Timer, private juce::ChangeListener {
 public:
     struct Output {

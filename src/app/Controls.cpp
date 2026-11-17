@@ -11,8 +11,11 @@ namespace {
 using model::MidiKind;
 
 const std::vector<Action>& actions() {
-    static const std::vector<Action> all = {Action::Start, Action::Stop, Action::NextSongLater, Action::NextSongEarlier,
-                                            Action::ToggleView};
+    static const std::vector<Action> all = [] {
+        std::vector<Action> every;
+        for (int a = 0; a <= static_cast<int>(Action::ToggleView); ++a) every.push_back(static_cast<Action>(a));
+        return every;
+    }();
     return all;
 }
 

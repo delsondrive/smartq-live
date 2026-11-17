@@ -3,8 +3,11 @@
 
 #include "app/ControlInput.h"
 #include "app/Controls.h"
+#include "app/MidiEcho.h"
+#include "app/MidiPorts.h"
 #include "app/ShowController.h"
 #include "model/ActionNames.h"
+#include "tests/support/AllocGuard.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/MidiParams.h"
 #include "tests/support/Params.h"
@@ -321,4 +324,64 @@ TEST_CASE("a learned key works, and a held button is watched like a held key", "
     CHECK_FALSE(show.isWatching());
     show.buttonDown(Action::Start, 6.0, PedalKind::Tap);            // a tap is never held
     CHECK_FALSE(show.isWatching());
+}
+TEST_CASE("a pedalboard echoing the app's own MIDI back through Thru presses nothing", "[controls]") {
+    DemoSession d; auto& s = *d.session;
+    // Note 37, any channel.
+    REQUIRE(s.commands().run("controls.set", params({{"action", "section2"}, {"binding", binding('2', 2, 0, 37)}})).ok);
+    s.enterShow();
+    app::ShowController show(s); std::vector<Action> seen; show.onAction = [&](Action a) { seen.push_back(a); };
+    app::ControlInput input(s, show, [] { return juce::StringArray(); }, {});
+    const std::uint8_t note[3] = {0x90, 37, 100};
+    s.midiEcho().sent("Pedalboard", note, 3, 1.000);               // the app sent it to a device on the port "Pedalboard"
+    input.handle(juce::MidiMessage(0x90, 37, 100), 1.010, "Pedalboard");   // back through that device's Thru 10 ms later
+    CHECK(seen.empty());
+    input.handle(juce::MidiMessage(0x80, 37, 0), 1.100, "Pedalboard");
+    input.handle(juce::MidiMessage(0x90, 37, 100), 1.200, "Pedalboard");   // 200 ms later: a real press
+    CHECK(seen == std::vector{Action::Section2});
+    input.handle(juce::MidiMessage(0x80, 37, 0), 1.900, "Pads");
+    s.midiEcho().sent("Pedalboard", note, 3, 2.000);
+    input.handle(juce::MidiMessage(0x90, 37, 100), 2.005, "Pads");         // the same bytes on another input: a real press
+    CHECK(seen.size() == 2);
+}
+TEST_CASE("what the app sends to a port is noted, so its echo is no press", "[controls]") {
+    DemoSession d; auto& s = *d.session;
+    // Program 4, any channel.
+    REQUIRE(s.commands().run("controls.set", params({{"action", "stop"}, {"binding", binding(0, 3, 0, 4)}})).ok);
+    const auto g1 = s.commands().run("device.add", params({{"name", "Pedalboard"}})).value.toString();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"channel", 1},
+                                            {"computerId", s.settings().computerName()}, {"port", "Pedalboard"}}));
+    struct Quiet : app::MidiPorts::Output { void send(const std::uint8_t*, int) override {} };
+    app::MidiPorts ports(s, [] { return juce::StringArray{"Pedalboard"}; },
+                         [](const juce::String&) { return std::unique_ptr<app::MidiPorts::Output>(std::make_unique<Quiet>()); });
+    s.attachMidi(&ports);  ports.refresh();
+    s.enterShow();
+    app::ShowController show(s); std::vector<Action> seen; show.onAction = [&](Action a) { seen.push_back(a); };
+    app::ControlInput input(s, show, [] { return juce::StringArray(); }, {});
+    model::MidiMessageDoc program;  program.program = 4;
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);
+    ports.sendNow(g1, {program});                                  // "Send now": program 4 on channel 1
+    const double sentAt = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    input.handle(juce::MidiMessage::programChange(1, 4), sentAt + 0.005, "Pedalboard");   // the Thru's echo
+    input.handle(juce::MidiMessage::programChange(1, 4), sentAt + 0.4, "Pedalboard");     // a real tap
+    CHECK(seen.empty());                                           // one tap of Stop: nothing yet
+    input.handle(juce::MidiMessage::programChange(1, 4), sentAt + 0.8, "Pedalboard");     // and a second
+    CHECK(seen == std::vector{Action::Stop});                      // the echo wasn't the first of the two
+    s.attachMidi(nullptr);
+}
+TEST_CASE("the MIDI echo allocates nothing once made", "[controls]") {
+    app::MidiEcho echo;
+    const juce::String port("Pedalboard"), other("Pads");
+    const juce::MidiMessage message(0xB0, 64, 127);
+    const std::uint8_t bytes[3] = {0xB0, 64, 127};
+    bool echoed = false, elsewhere = true, late = true;
+    {
+        test::AllocGuard guard;
+        for (int i = 0; i < 200; ++i) echo.sent(port, bytes, 3, 1.0 + i * 0.001);   // round the ring several times
+        echoed = echo.isEcho(port, message, 1.205);
+        elsewhere = echo.isEcho(other, message, 1.205);
+        late = echo.isEcho(port, message, 1.3);
+    }
+    CHECK(test::allocationCount() == 0);  CHECK(test::deallocationCount() == 0);
+    CHECK(echoed);  CHECK_FALSE(elsewhere);  CHECK_FALSE(late);
 }

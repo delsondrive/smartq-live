@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
@@ -64,7 +65,7 @@ TEST_CASE("the MIDI set-up page describes devices and controls in the mockup's w
     CHECK(state.devices[0].port == juce::String::fromUTF8("Choose a port…"));
     CHECK(state.devices[0].channel == "1");  CHECK(state.devices[0].timing == "20 ms early");
     CHECK(state.devices[0].patches == "Name them");  CHECK(state.devices[0].clock);  CHECK(state.devices[0].status == "No port");
-    REQUIRE(state.controls.size() == 5);
+    REQUIRE(state.controls.size() == 11);                         // the ten sections are one row
     CHECK(state.controls[0].title == "Start the song");  CHECK(state.controls[0].key == "Space");  CHECK(state.controls[0].midi == "CC 64, ch 10");
     CHECK(state.controls[1].title == "Stop");   CHECK(state.controls[1].key == juce::String::fromUTF8("hold Space · Esc Esc"));
     CHECK(state.controls[1].keyNote.isEmpty());                   // Space is what it names: nothing more to say
@@ -72,7 +73,10 @@ TEST_CASE("the MIDI set-up page describes devices and controls in the mockup's w
     // anything and Stop has a pedal only once one is learned for it (the brief's "hold CC 64, ch 10" would be untrue).
     CHECK(state.controls[1].midi.isEmpty());
     CHECK(state.controls[2].title == "Next song: later");  CHECK(state.controls[3].title == "Next song: earlier");
-    CHECK(state.controls[4].title == juce::String::fromUTF8("Main view ⇄ stage view"));  CHECK(state.controls[4].key == "Tab");
+    CHECK(state.controls[4].title == "Next section: later");  CHECK(state.controls[4].key == juce::String::fromUTF8("↓"));
+    CHECK(state.controls[6].title == juce::String::fromUTF8("Choose section 1–10"));
+    CHECK(state.controls[9].title == "Go to the next song now");  CHECK(state.controls[9].key == juce::String::fromUTF8("hold →"));
+    CHECK(state.controls[10].title == juce::String::fromUTF8("Main view ⇄ stage view"));  CHECK(state.controls[10].key == "Tab");
     CHECK_FALSE(state.controls[0].learning);
     CHECK(state.ports.isEmpty());                                 // no MidiPorts: no port listed
 }
@@ -319,7 +323,7 @@ TEST_CASE("Setup switches between its sub-tabs and lays out the MIDI page at eve
         CHECK(midi.getX() >= page.subTabsBounds().getRight());
         CHECK(midi.deviceRows().getHeight() >= 3 * 42);            // the three devices, without scrolling
         CHECK(midi.controlsBounds().getY() >= midi.devicesBounds().getBottom());
-        for (int row = 0; row < 5; ++row) CHECK(midi.controlsBounds().contains(midi.keyCell(row)));
+        for (int row = 0; row < (int) midi.state().controls.size(); ++row) CHECK(midi.controlsBounds().contains(midi.keyCell(row)));
         CHECK(midi.controlsBounds().getBottom() <= midi.getHeight());
     }
     page.mouseDown(eventOn(page, page.subTabBounds(SetupPage::SubTab::Audio).getCentre().toFloat()));
@@ -339,7 +343,7 @@ TEST_CASE("many devices scroll, and the controls stay whole at the smallest wind
     CHECK(childrenInside(page));
     CHECK(midi.deviceRows().getViewedComponent()->getHeight() == 20 * 42);
     CHECK(midi.deviceRows().getHeight() < 20 * 42);               // it scrolls
-    for (int row = 0; row < 5; ++row) CHECK(midi.controlsBounds().contains(midi.keyCell(row)));
+    for (int row = 0; row < (int) midi.state().controls.size(); ++row) CHECK(midi.controlsBounds().contains(midi.keyCell(row)));
 }
 
 TEST_CASE("the window's ControlInput reaches the Setup page, and leaving Setup stops learning", "[midisetup][shell]") {
@@ -362,4 +366,50 @@ TEST_CASE("the window's ControlInput reaches the Setup page, and leaving Setup s
     page->midi().learn(2);
     shell.showPage(Page::Setlists);                               // leaving Setup
     CHECK_FALSE(input.learning().has_value());
+}
+
+TEST_CASE("the ten sections are one row, and learning it binds ten pads in one undo step", "[midisetup]") {
+    DemoSession d; auto& s = *d.session;
+    app::ShowController show(s);  show.onAction = [](Action) {};
+    app::ControlInput input(s, show, [] { return juce::StringArray(); }, {});
+    ScopedLook look;
+    ui::MidiSetupPage page(s, &input);  page.setVisible(true);  snapshot(page, 1044, 620);
+    const auto& rows = page.state().controls;
+    CHECK(std::count_if(rows.begin(), rows.end(), [](auto& c) { return c.title.startsWith("Choose section"); }) == 1);
+    auto at = std::find_if(rows.begin(), rows.end(), [](auto& c) { return c.title == juce::String::fromUTF8("Choose section 1–10"); });
+    REQUIRE(at != rows.end());
+    CHECK(at->key == juce::String::fromUTF8("1–9, 0"));
+    const int row = int(at - rows.begin());
+    page.mouseDown(eventOn(page, page.learnButton(row).getCentre().toFloat()));
+    input.handle(juce::MidiMessage::noteOn(10, 36, 1.0f), 1.0);
+    for (int i = 0; i < 10; ++i) {
+        const auto& b = s.model().band().controls.at("section" + juce::String(i + 1));
+        CHECK(b.midiKind == model::MidiKind::Note);  CHECK(b.midiNumber == 36 + i);  CHECK(b.midiChannel == 10);
+    }
+    CHECK(page.state().controls[size_t(row)].midi == juce::String::fromUTF8("Note 36–45, ch 10"));
+    s.commands().undo();                                           // one step undoes all ten
+    CHECK(s.model().band().controls.count("section1") == 0);  CHECK(s.model().band().controls.count("section10") == 0);
+}
+
+TEST_CASE("the section row's keys and pedals read as the band has them, and its ✕ forgets all ten at once", "[midisetup]") {
+    DemoSession d; auto& s = *d.session;
+    for (int i = 0; i < 10; ++i)
+        s.commands().run("controls.set", params({{"action", "section" + juce::String(i + 1)},
+                                                 {"binding", binding(i < 9 ? '1' + i : '0', 1, 1, 20 + 2 * i)}}));   // not in a row
+    ScopedLook look;
+    ui::MidiSetupPage page(s, nullptr);  snapshot(page, 1044, 620);
+    const auto& section = page.state().controls[6];
+    CHECK(section.key == juce::String::fromUTF8("1–9, 0"));
+    CHECK(section.midi == "CC 20, ch 1");                          // not consecutive: the first one's alone
+    s.commands().run("controls.set", params({{"action", "section3"}, {"binding", binding('Q', 1, 1, 24)}}));
+    page.refreshNow();
+    CHECK(page.state().controls[6].key == "1, 2, Q, 4, 5, 6, 7, 8, 9, 0");
+    page.chooseKey(6);
+    CHECK_FALSE(page.choosingKey().has_value());                  // the ten keep their own keys
+    REQUIRE_FALSE(page.clearButton(6).isEmpty());
+    page.mouseDown(eventOn(page, page.clearButton(6).getCentre().toFloat()));
+    for (int i = 0; i < 10; ++i) CHECK(s.model().band().controls.at("section" + juce::String(i + 1)).midiKind == model::MidiKind::None);
+    CHECK(page.state().controls[6].midi.isEmpty());
+    s.commands().undo();                                           // one step brings all ten back
+    for (int i = 0; i < 10; ++i) CHECK(s.model().band().controls.at("section" + juce::String(i + 1)).midiKind == model::MidiKind::Control);
 }

@@ -32,6 +32,13 @@ namespace sqlive::app {
 // stop: Start only starts, and Stop needs two taps. Presses act in Show mode only; in Edit mode controls do nothing, except
 // while learning. MIDI doesn't need the keyboard, so pedals work whichever window has it.
 //
+// MIDI Thru. A pedalboard that is also one of the band's devices may echo what the app sends it straight back. A message
+// that matches one the app sent, within the last 20 ms, to an output port named as the input it came in on
+// (Session::midiEcho, which MidiPorts tells of every message it sends) is ignored before anything else: it is no press, and
+// it changes no control's state. The pre-flight ruling (F-I23), with what it costs: a genuine press identical to a message
+// the app sent to that port within those 20 ms is lost. Which inputs a control listens to (per-input bindings) is a later
+// design question.
+//
 // Threads. JUCE's MIDI threads call receive: it works out the press or release under a spin lock (the threads take turns)
 // and queues only presses, with their time, for the message thread (AsyncUpdater); a release only moves the control's
 // state on (nothing is held, so there is nothing to let go), and a stream of values that crosses nothing queues nothing.
@@ -51,8 +58,9 @@ public:
     ControlInput(Session&, ShowController&, InputLister, InputOpener);   // tests: an empty lister and a null opener, so no port is opened
     ~ControlInput() override;
 
-    void handle(const juce::MidiMessage&, double nowSeconds);           // message thread; public for tests
-    void receive(const juce::MidiMessage&);                             // a MIDI thread, as the inputs call it; public for tests
+    // A message with the name of the input it came in on (the real inputs pass MidiInput::getName(); tests pass one).
+    void handle(const juce::MidiMessage&, double nowSeconds, const juce::String& inputName = {});   // message thread; for tests
+    void receive(const juce::MidiMessage&, const juce::String& inputName = {});   // a MIDI thread, as the inputs call it; for tests
     // The next press (see ControlMap::bindingFromMidi) goes to the callback instead of acting: the action's binding as it is
     // now, its key kept, with that control as its MIDI, ready for controls.set. A pedal on the move teaches nothing, nor does
     // a note pressed again while still down; a switch that only sends 127 is learned on its next press. Opens the inputs at

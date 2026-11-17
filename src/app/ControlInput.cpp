@@ -83,7 +83,8 @@ ControlInput::Edge ControlInput::edgeOf(const juce::MidiMessage& m, double now) 
     return edge;
 }
 
-void ControlInput::handle(const juce::MidiMessage& m, double now) {
+void ControlInput::handle(const juce::MidiMessage& m, double now, const juce::String& inputName) {
+    if (session_.midiEcho().isEcho(inputName, m, now)) return;   // the app's own message, back through a MIDI Thru
     Edge edge;
     {
         const juce::SpinLock::ScopedLockType turn(writers_);
@@ -113,9 +114,11 @@ void ControlInput::act(const juce::MidiMessage& m, Edge edge, double now) {
     if (const auto hit = controls().actionForMidi(m)) show_.buttonDown(hit->action, now, PedalKind::Tap);
 }
 
-void ControlInput::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& m) { receive(m); }
+void ControlInput::handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& m) {
+    receive(m, source != nullptr ? source->getName() : juce::String());
+}
 
-void ControlInput::receive(const juce::MidiMessage& m) {
+void ControlInput::receive(const juce::MidiMessage& m, const juce::String& inputName) {
     const int size = m.getRawDataSize();
     if (size < 2 || size > 3) return;
     const int status = m.getRawData()[0] & 0xF0;
@@ -125,6 +128,7 @@ void ControlInput::receive(const juce::MidiMessage& m) {
     item.size = size;
     for (int i = 0; i < size; ++i) item.bytes[(std::size_t) i] = m.getRawData()[i];
     item.at = wallClockSeconds();
+    if (session_.midiEcho().isEcho(inputName, m, item.at)) return;   // the app's own message, back through a MIDI Thru
     bool queued = false;
     {
         const juce::SpinLock::ScopedLockType turn(writers_);

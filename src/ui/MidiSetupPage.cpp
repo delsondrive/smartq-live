@@ -28,7 +28,7 @@ namespace {
 // hairline border, 6 px corners, padding 3 8, semibold text on the right, at least 80 wide), .learn (12 px bold on a field
 // with a hairline border, padding 2 8, 6 px corners) and .learn.wait (ember on its tint, pulsing to 40% every 1.2 s).
 constexpr int kBoxGap = 12, kHeaderTop = 10, kHeaderHeight = 18, kPadX = 12, kCellPad = 8;
-constexpr int kHeadRow = 29, kDeviceRow = 42, kControlRow = 36;
+constexpr int kHeadRow = 29, kDeviceRow = 42, kControlRow = 36, kControlRowMin = 30;
 constexpr int kChoiceHeight = 24, kButtonHeight = 28, kSwitchW = 34, kSwitchH = 18, kValueHeight = 24, kValueMin = 80;
 constexpr int kLearnHeight = 20, kLearnPadX = 8, kClearSize = 16, kActionWidth = 240, kKeyWidth = 240, kMessageGap = 16;
 constexpr double kMessageSeconds = 4.0, kPulseSeconds = 1.2;
@@ -97,6 +97,48 @@ void drawLearnPill(juce::Graphics& g, juce::Rectangle<float> pill, const juce::S
 
 int learnPillWidth(const juce::String& text) { return static_cast<int>(std::ceil(textWidth(learnFont(), text))) + 2 * kLearnPadX + 2; }
 
+// The ten "Choose section" actions share one row, Section1's.
+constexpr int kSections = 10;
+app::Action sectionAction(int i) { return static_cast<app::Action>(static_cast<int>(app::Action::Section1) + i); }
+bool isSection(app::Action a) { return a >= app::Action::Section1 && a <= app::Action::Section10; }
+
+// The table's rows, in app::allActions() order: Section2 … Section10 are Section1's row.
+const std::vector<app::Action>& rowActions() {
+    static const std::vector<app::Action> rows = [] {
+        std::vector<app::Action> all;
+        for (const auto a : app::allActions())
+            if (!isSection(a) || a == app::Action::Section1) all.push_back(a);
+        return all;
+    }();
+    return rows;
+}
+
+// "1–9, 0" while the ten have their default keys; otherwise each one's key, in order ("" for none).
+juce::String sectionKeys(const app::ControlMap& map) {
+    bool defaults = true;
+    juce::StringArray keys;
+    for (int i = 0; i < kSections; ++i) {
+        const auto binding = map.bindingFor(sectionAction(i));
+        const auto standard = app::ControlMap::defaultFor(sectionAction(i));
+        defaults = defaults && binding.keyCode == standard.keyCode && binding.keyModifiers == standard.keyModifiers;
+        if (const auto key = app::ControlMap::describeKey(binding); key.isNotEmpty()) keys.add(key);
+    }
+    return defaults ? utf8("1\xe2\x80\x93" "9, 0") : keys.joinIntoString(", ");
+}
+
+// The first one's pedal, its number as a range when the ten are consecutive on one channel: "Note 36–45, ch 10".
+juce::String sectionPedals(const app::ControlMap& map) {
+    const auto first = map.bindingFor(app::Action::Section1);
+    auto text = app::ControlMap::describeMidi(first);
+    if (text.isEmpty()) return text;
+    for (int i = 1; i < kSections; ++i) {
+        const auto b = map.bindingFor(sectionAction(i));
+        if (b.midiKind != first.midiKind || b.midiChannel != first.midiChannel || b.midiNumber != first.midiNumber + i) return text;
+    }
+    const juce::String number(" " + juce::String(first.midiNumber));
+    return text.replaceFirstOccurrenceOf(number, number + utf8("\xe2\x80\x93") + juce::String(first.midiNumber + kSections - 1));
+}
+
 }  // namespace
 
 // ---- The state ---------------------------------------------------------------------------------------------------------
@@ -142,13 +184,26 @@ MidiSetupState makeMidiSetupState(const app::Session& session, const app::Contro
 
     const app::ControlMap map(model.band().controls);
     const auto learning = input != nullptr ? input->learning() : std::nullopt;
-    for (const auto action : app::allActions()) {
+    for (const auto action : rowActions()) {
         const auto binding = map.bindingFor(action);
         MidiSetupState::Control control;
         control.action = app::actionName(action);
         control.title = app::actionTitle(action);
         control.key = app::ControlMap::describeKey(binding);
         control.midi = app::ControlMap::describeMidi(binding);
+        if (action == app::Action::Section1) {
+            control.title = utf8("Choose section 1\xe2\x80\x93" "10");
+            control.key = sectionKeys(map);
+            control.midi = sectionPedals(map);
+        }
+        if (action == app::Action::GoToNextSongNow) {
+            // Held for a second during a song: its own key, and Next song: later's. A pedal, tapped twice.
+            juce::StringArray held;
+            for (const auto& key : {control.key, app::ControlMap::describeKey(map.bindingFor(app::Action::NextSongLater))})
+                if (key.isNotEmpty()) held.add("hold " + key);
+            control.key = held.joinIntoString(kDot);
+            if (control.midi.isNotEmpty()) control.hint = kTapTwice;
+        }
         if (action == app::Action::Stop) {
             // A key on Stop, or else Start's, held for a second; Esc twice always. A pedal only when one is learned for
             // Stop, and then tapped twice: no pedal is ever held to stop.
@@ -494,7 +549,7 @@ int MidiSetupPage::rowOf(const juce::String& deviceId) const {
 }
 
 std::optional<app::Action> MidiSetupPage::actionOf(int row) const {
-    const auto actions = app::allActions();
+    const auto& actions = rowActions();
     if (!juce::isPositiveAndBelow(row, static_cast<int>(actions.size()))) return std::nullopt;
     return actions[static_cast<std::size_t>(row)];
 }
@@ -610,7 +665,7 @@ void MidiSetupPage::deviceMenu(int row) {
 
 void MidiSetupPage::chooseKey(int row) {
     const auto action = actionOf(row);
-    if (!action || !editable()) return;
+    if (!action || !editable() || *action == app::Action::Section1) return;   // the ten keep their number keys
     const bool again = choosing_key_ == action;
     stopWaiting();
     if (!again) {
@@ -637,19 +692,43 @@ void MidiSetupPage::learn(int row) {
 
 void MidiSetupPage::learned(app::Action action, model::ControlBinding binding) {
     takeKeyboard(false);
-    run("controls.set", jsonObject({{"action", app::actionName(action)}, {"binding", model::toVar(binding)}}), true);
+    if (action != app::Action::Section1) {
+        run("controls.set", jsonObject({{"action", app::actionName(action)}, {"binding", model::toVar(binding)}}), true);
+        refresh(true);
+        return;
+    }
+    // The section row: that note or controller and the next nine, on its channel, each keeping its key; one undo step.
+    if (binding.midiNumber + kSections - 1 > 127) {
+        say("That is too high for ten in a row: choose one numbered " + juce::String(128 - kSections) + " or lower.", true, true);
+        refresh(true);
+        return;
+    }
+    const auto key = juce::Uuid().toString();                     // fresh, so the ten never merge into an earlier step
+    for (int i = 0; i < kSections; ++i) {
+        auto each = bindingOf(sectionAction(i));
+        each.midiKind = binding.midiKind;
+        each.midiChannel = binding.midiChannel;
+        each.midiNumber = binding.midiNumber + i;
+        if (!run("controls.set", jsonObject({{"action", app::actionName(sectionAction(i))}, {"binding", model::toVar(each)}}), true, key))
+            break;
+    }
     refresh(true);
 }
 
 void MidiSetupPage::clearPedal(int row) {
     const auto action = actionOf(row);
     if (!action || !editable()) return;
-    auto binding = bindingOf(*action);
-    if (binding.midiKind == model::MidiKind::None) return;
-    binding.midiKind = model::MidiKind::None;
-    binding.midiChannel = 0;
-    binding.midiNumber = 0;
-    run("controls.set", jsonObject({{"action", app::actionName(*action)}, {"binding", model::toVar(binding)}}), true);
+    const bool sections = *action == app::Action::Section1;      // the section row forgets all ten, as one undo step
+    const auto key = sections ? juce::Uuid().toString() : juce::String();
+    for (int i = 0; i < (sections ? kSections : 1); ++i) {
+        const auto each = sections ? sectionAction(i) : *action;
+        auto binding = bindingOf(each);
+        if (binding.midiKind == model::MidiKind::None) continue;
+        binding.midiKind = model::MidiKind::None;
+        binding.midiChannel = 0;
+        binding.midiNumber = 0;
+        run("controls.set", jsonObject({{"action", app::actionName(each)}, {"binding", model::toVar(binding)}}), true, key);
+    }
 }
 
 bool MidiSetupPage::pressKey(const juce::KeyPress& key) {
@@ -719,6 +798,9 @@ juce::String MidiSetupPage::getTooltip() {
         const auto& c = state_.controls[static_cast<std::size_t>(row)];
         if (r.clear.contains(at)) return "Forget this pedal";
         if (r.learn.contains(at) && input_ == nullptr) return {};
+        if (r.learn.contains(at) && c.action == "section1" && !c.learning)
+            return "Click, then press the pad for section 1. The next nine notes or controllers on its channel become "
+                   "sections 2 to 10.";
         if (r.learn.contains(at))
             return c.learning ? "Press the pedal or pad now, or click again to stop."
                               : "Click, then press the pedal or pad. A latching switch or a toggling pad should be set to "
@@ -726,6 +808,9 @@ juce::String MidiSetupPage::getTooltip() {
                                 "when let go counts as two taps: set it to momentary, 127 when pressed and 0 when let go.";
         if (r.pedal.contains(at) && c.action == "stop")
             return "A pedal stops the song when tapped twice, 150 ms to 1 s apart. Only a key can be held to stop.";
+        if (r.pedal.contains(at) && c.action == "goToNextSongNow")
+            return "A pedal goes to the next song when tapped twice, 150 ms to 1 s apart. Only a key can be held.";
+        if (r.key.contains(at) && c.action == "section1") return "The number keys choose sections 1 to 10: 1 to 9, then 0.";
         if (r.key.contains(at)) {
             const juce::String edit = editable() ? "Click, then press the key. Esc cancels." : "";
             return c.keyNote.isEmpty() ? edit : (edit + " " + c.keyNote).trim();
@@ -749,9 +834,12 @@ juce::Rectangle<int> MidiSetupPage::clearButton(int row) const {
 void MidiSetupPage::resized() {
     auto area = getLocalBounds();
     const int controls = static_cast<int>(state_.controls.size());
-    const int controlsHeight = kHeaderTop + kHeaderHeight + kHeadRow + controls * kControlRow;
     const int devicesFixed = kHeaderTop + kHeaderHeight + kHeadRow;
     const int rowsWanted = static_cast<int>(state_.devices.size()) * kDeviceRow;
+    // The control rows at the mockup's height when they fit, closer together (down to 30) so three device rows show unscrolled.
+    const int spare = area.getHeight() - devicesFixed - std::min(rowsWanted, 3 * kDeviceRow) - 1 - kBoxGap - devicesFixed;
+    control_row_ = std::clamp(spare / std::max(1, controls), kControlRowMin, kControlRow);
+    const int controlsHeight = kHeaderTop + kHeaderHeight + kHeadRow + controls * control_row_;
     // As many device rows as fit above the controls (at least two, when there are), the rest scrolled to.
     const int room = area.getHeight() - controlsHeight - kBoxGap - devicesFixed - 1;
     const int rowsHeight = std::min(rowsWanted, std::max(room, std::min(rowsWanted, 2 * kDeviceRow)));
@@ -785,11 +873,11 @@ void MidiSetupPage::layoutControls() {
     key_width_ = std::min(kKeyWidth, width / 3);
     for (int i = 0; i < static_cast<int>(state_.controls.size()); ++i) {
         const auto& c = state_.controls[static_cast<std::size_t>(i)];
-        const int y = controls_columns_.getBottom() + i * kControlRow;
+        const int y = controls_columns_.getBottom() + i * control_row_;
         ControlRow row;
-        row.key = {x + action_width_, y, key_width_, kControlRow};
-        row.pedal = {x + action_width_ + key_width_, y, std::max(0, width - action_width_ - key_width_), kControlRow};
-        const int left = row.pedal.getX() + kCellPad, centreY = y + kControlRow / 2;
+        row.key = {x + action_width_, y, key_width_, control_row_};
+        row.pedal = {x + action_width_ + key_width_, y, std::max(0, width - action_width_ - key_width_), control_row_};
+        const int left = row.pedal.getX() + kCellPad, centreY = y + control_row_ / 2;
         if (c.learning || c.midi.isEmpty()) {
             const auto text = c.learning ? pressAPedal() : kLearn;
             row.learn = {left, centreY - kLearnHeight / 2, learnPillWidth(text), kLearnHeight};
@@ -856,7 +944,9 @@ void MidiSetupPage::paintControls(juce::Graphics& g) {
     for (int i = 0; i < static_cast<int>(state_.controls.size()) && i < static_cast<int>(control_rows_.size()); ++i) {
         const auto& c = state_.controls[static_cast<std::size_t>(i)];
         const auto& r = control_rows_[static_cast<std::size_t>(i)];
-        const auto rowArea = r.key.isEmpty() ? juce::Rectangle<int>() : juce::Rectangle<int>(controls_box_.getX(), r.key.getY(), controls_box_.getWidth(), kControlRow);
+        const auto rowArea = r.key.isEmpty() ? juce::Rectangle<int>()
+                                             : juce::Rectangle<int>(controls_box_.getX(), r.key.getY(),
+                                                                    controls_box_.getWidth(), control_row_);
         if (rowArea.isEmpty()) continue;
         g.setColour(theme::rowLine);
         g.fillRect(rowArea.getX(), rowArea.getBottom() - 1, rowArea.getWidth(), 1);
@@ -866,7 +956,7 @@ void MidiSetupPage::paintControls(juce::Graphics& g) {
         g.setColour(theme::text);
         g.setFont(nameFont());
         g.drawText(shorten(c.title, nameFont(), static_cast<float>(action_width_ - 2 * kCellPad)),
-                   juce::Rectangle<int>(rowArea.getX() + kCellPad, rowArea.getY(), action_width_ - 2 * kCellPad, kControlRow),
+                   juce::Rectangle<int>(rowArea.getX() + kCellPad, rowArea.getY(), action_width_ - 2 * kCellPad, control_row_),
                    juce::Justification::centredLeft, false);
 
         // KEY: its keys as the mockup's kbd, "hold" and "·" as words; or "Press a key…" while one is awaited.
@@ -886,26 +976,35 @@ void MidiSetupPage::paintControls(juce::Graphics& g) {
                 g.drawText(text, juce::Rectangle<float>(x, centreY - 10.0f, w + 1.0f, 20.0f), juce::Justification::centredLeft, false);
                 x += w + 4.0f;
             };
-            juce::StringArray parts;                              // Stop's "hold Space · Esc Esc" in its parts
+            // Stop's "hold Space · Esc Esc" and "hold →" in their parts; the sections' "1–9, 0" as keys, "–" and "," words.
+            const bool held = c.action == "stop" || c.action == "goToNextSongNow";
+            const bool sections = c.action == "section1";
+            const auto separator = held ? kDot : sections ? juce::String(", ") : juce::String();
+            juce::StringArray parts;
             for (auto rest = c.key;;) {
-                const int at = c.action == "stop" ? rest.indexOf(kDot) : -1;
+                const int at = separator.isNotEmpty() ? rest.indexOf(separator) : -1;
                 if (at < 0) {
                     parts.add(rest);
                     break;
                 }
                 parts.add(rest.substring(0, at));
-                rest = rest.substring(at + kDot.length());
+                rest = rest.substring(at + separator.length());
             }
+            const auto range = utf8("\xe2\x80\x93");                // "–"
             for (int p = 0; p < parts.size(); ++p) {
-                if (p > 0) word(kMiddleDot);
+                if (p > 0) word(sections ? juce::String(",") : kMiddleDot);
                 auto part = parts[p].trim();
-                if (c.action == "stop" && part.startsWith("hold ")) {
+                if (held && part.startsWith("hold ")) {
                     word("hold");
                     part = part.fromFirstOccurrenceOf("hold ", false, false);
                 }
                 if (c.action == "stop" && part == "Esc Esc") {
                     x += drawKey(g, "Esc", x, centreY) + 3.0f;
                     x += drawKey(g, "Esc", x, centreY) + 4.0f;
+                } else if (sections && part.length() > 2 && part.contains(range)) {
+                    x += drawKey(g, part.upToFirstOccurrenceOf(range, false, false), x, centreY) + 4.0f;
+                    word(range);
+                    x += drawKey(g, part.fromFirstOccurrenceOf(range, false, false), x, centreY) + 4.0f;
                 } else {
                     x += drawKey(g, part, x, centreY) + 4.0f;
                 }

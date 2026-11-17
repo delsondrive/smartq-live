@@ -37,7 +37,10 @@ ShowController::ShowController(Session& s) : session_(s) {
 ShowController::~ShowController() { stopTimer(); }
 
 void ShowController::act(Action a) {
-    if (a == Action::Start) tapped_stop_.reset();   // a Stop tap from before this song never counts toward stopping it
+    if (a == Action::Start) {                      // a tap from before this song never counts toward ending it
+        tapped_stop_.reset();
+        tapped_next_.reset();
+    }
     if (onAction) onAction(a);
 }
 
@@ -53,38 +56,50 @@ void ShowController::press(Source source, Action a, double now) {
         case Action::Stop:
             if (playing) stop_holds_[{source, a}] = now;
             break;
+        case Action::NextSongLater:                // sent on the release, unless held into the next song
+        case Action::GoToNextSongNow:              // only ever held into it
+            if (playing) next_holds_[{source, a}] = now;
+            break;
         default: act(a); break;
     }
 }
 
 void ShowController::release(Source source, Action a, double now) {
     last_time_ = now;
-    held_.erase({source, a});
+    const bool wasHeld = held_.erase({source, a}) > 0;
+    const bool wentOn = next_done_.erase({source, a}) > 0;
     stop_holds_.erase({source, a});
+    next_holds_.erase({source, a});
+    if (a == Action::NextSongLater && wasHeld && !wentOn) act(Action::NextSongLater);
+}
+
+bool ShowController::doubleTap(DoublePress& presses, TappedIn& in, double now) {
+    const auto song = session_.now();
+    if (!song.playing) {
+        presses.reset();                           // only taps during a song count
+        return false;
+    }
+    // Only taps in the same song: one started since the first tap, wherever from, forgets it.
+    const bool sameSong = song.playingIndex == in.index && song.playingSongId == in.songId && song.seconds >= in.seconds;
+    if (presses.armed && !sameSong) presses.reset();
+    if (presses.press(now)) return true;
+    if (presses.armed && presses.at == now) in = {song.playingIndex, song.playingSongId, song.seconds};
+    return false;
 }
 
 // A button whose release can't be trusted: nothing is held, so a tap never stops a song by being "held".
 void ShowController::tap(Action a, double now) {
     last_time_ = now;
-    const auto song = session_.now();
-    const bool playing = song.playing;
     switch (a) {
         case Action::Start:
-            if (!playing) act(Action::Start);
+            if (!session_.now().playing) act(Action::Start);
             break;
-        case Action::Stop: {
-            if (!playing) {
-                tapped_stop_.reset();              // only taps during a song count
-                break;
-            }
-            // Only taps in the same song: one started since the first tap, wherever from, forgets it.
-            const bool sameSong = song.playingIndex == tapped_in_.index && song.playingSongId == tapped_in_.songId
-                                  && song.seconds >= tapped_in_.seconds;
-            if (tapped_stop_.armed && !sameSong) tapped_stop_.reset();
-            if (tapped_stop_.press(now)) act(Action::Stop);
-            else if (tapped_stop_.armed && tapped_stop_.at == now) tapped_in_ = {song.playingIndex, song.playingSongId, song.seconds};
+        case Action::Stop:
+            if (doubleTap(tapped_stop_, tapped_in_, now)) act(Action::Stop);
             break;
-        }
+        case Action::GoToNextSongNow:
+            if (doubleTap(tapped_next_, tapped_next_in_, now)) act(Action::GoToNextSongNow);
+            break;
         default: act(a); break;
     }
 }
@@ -133,6 +148,13 @@ void ShowController::tick(double now) {
             act(Action::Stop);
             return;
         }
+    for (auto& [holder, since] : next_holds_)
+        if (now - since >= holdSeconds) {
+            for (auto& [used, at] : next_holds_) next_done_.insert(used);   // once only; their releases send nothing
+            next_holds_.clear();
+            if (session_.now().playing) act(Action::GoToNextSongNow);
+            return;
+        }
 }
 
 void ShowController::keyboardLost() {
@@ -140,6 +162,8 @@ void ShowController::keyboardLost() {
         if (action) {
             held_.erase({Source::Keys, *action});
             stop_holds_.erase({Source::Keys, *action});
+            next_holds_.erase({Source::Keys, *action});
+            next_done_.erase({Source::Keys, *action});
         }
     keys_.clear();                                 // a held button stays held: it doesn't need the keyboard
 }
@@ -147,6 +171,12 @@ void ShowController::keyboardLost() {
 double ShowController::holdProgress() const {
     double progress = 0.0;
     for (auto& [holder, since] : stop_holds_) progress = std::max(progress, std::clamp((last_time_ - since) / holdSeconds, 0.0, 1.0));
+    return progress;
+}
+
+double ShowController::nextSongHoldProgress() const {
+    double progress = 0.0;
+    for (auto& [holder, since] : next_holds_) progress = std::max(progress, std::clamp((last_time_ - since) / holdSeconds, 0.0, 1.0));
     return progress;
 }
 

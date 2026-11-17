@@ -36,9 +36,10 @@ struct DemoSession {
         settle();
     }
 
-    // Waits for the cache, then runs pending message-thread work.
+    // Waits for the cache, then for the cue clips the songs it loaded asked for, then runs pending message-thread work.
     void settle() {
         session->cache().waitUntilIdle(20000);
+        session->cues().waitUntilIdle(20000);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
     }
 

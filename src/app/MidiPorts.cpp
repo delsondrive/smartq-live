@@ -6,6 +6,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include "app/WallClock.h"
 #include "model/SongMidi.h"
 
 namespace sqlive::app {
@@ -327,7 +328,11 @@ void MidiPorts::send(const engine::OutMidi& m) {
     auto& table = song->second;
     table.played = true;
     if (m.device >= table.ids.size() || m.device >= table.outputs.size()) return;
-    if (auto* out = table.outputs[m.device]) out->send(m.data, m.size);
+    if (auto* out = table.outputs[m.device]) {
+        // Noted first, so an echo back through the device's MIDI Thru always comes after it (ControlInput ignores it).
+        if (m.device < table.ports.size()) session_.midiEcho().sent(table.ports[m.device], m.data, m.size, wallClockSeconds());
+        out->send(m.data, m.size);
+    }
 }
 
 void MidiPorts::sendNow(const juce::String& deviceId, const std::vector<model::MidiMessageDoc>& messages) {
@@ -348,7 +353,12 @@ void MidiPorts::sendNow(const juce::String& deviceId, const std::vector<model::M
     const juce::ScopedLock sl(lock_);
     auto* out = outputFor(deviceId);
     if (out == nullptr) return;
-    for (const auto& b : bytes) out->send(b.data, b.size);
+    const auto device = std::find_if(devices_.begin(), devices_.end(), [&](const Device& d) { return d.id == deviceId; });
+    const auto port = device != devices_.end() ? device->port : juce::String();
+    for (const auto& b : bytes) {
+        session_.midiEcho().sent(port, b.data, b.size, wallClockSeconds());   // for ControlInput, as in send
+        out->send(b.data, b.size);
+    }
 }
 
 }  // namespace sqlive::app

@@ -12,9 +12,13 @@
 namespace sqlive::app {
 
 // The names and titles of the actions: those in model::actionInfos(), in the same order as the Action enum.
-juce::String actionName(Action);                     // "start", "stop", "nextSongLater", "nextSongEarlier", "toggleView"
+juce::String actionName(Action);                     // "start", "stop", "nextSongLater", "nextSongEarlier", "nextSectionLater",
+                                                     // "nextSectionEarlier", "section1" … "section10", "loopSection",
+                                                     // "cancelSection", "goToNextSongNow", "toggleView"
 juce::String actionTitle(Action);                    // "Start the song", "Stop", "Next song: later", "Next song: earlier",
-                                                     // "Main view ⇄ stage view"
+                                                     // "Next section: later", "Next section: earlier", "Choose section 1"
+                                                     // … "Choose section 10", "Loop this section", "Cancel the choice or
+                                                     // loop", "Go to the next song now", "Main view ⇄ stage view"
 std::optional<Action> actionFromName(const juce::String&);
 std::vector<Action> allActions();                    // in the enum's order
 

@@ -10,7 +10,9 @@
 
 #include <juce_events/juce_events.h>
 
+#include "app/CueLibrary.h"
 #include "app/FolderWatch.h"
+#include "app/MidiEcho.h"
 #include "app/OutsideChanges.h"
 #include "app/Settings.h"
 #include "app/SongCache.h"
@@ -27,9 +29,14 @@
 namespace sqlive::app {
 
 class MidiPorts;
+class ShowArrangement;
+struct ArrangementNow;
 
 enum class Mode { Edit, Show };
-enum class Action { Start, Stop, NextSongLater, NextSongEarlier, ToggleView };
+// In model::actionInfos()'s order. What the section actions and GoToNextSongNow do: ShowArrangement and Session::perform.
+enum class Action { Start, Stop, NextSongLater, NextSongEarlier, NextSectionLater, NextSectionEarlier,
+                    Section1, Section2, Section3, Section4, Section5, Section6, Section7, Section8, Section9, Section10,
+                    LoopSection, CancelSection, GoToNextSongNow, ToggleView };
 enum class Readiness { None, Loading, Ready, Failed };
 enum class SaveState { Saved, Saving, Waiting, Failed };          // Waiting: an edit is held back for the user's answer
 
@@ -43,6 +50,26 @@ struct NowPlaying {
     bool countIn = false;  int bar = 1;  double beat = 1.0;
     double seconds = 0.0, lengthSeconds = 0.0;                   // from bar 1; negative during the count-in
     double bpm = 120.0;  int numerator = 4, denominator = 4;
+    // countIn is also true during startAtStep's bar of click (EngineStatus::countOff).
+    double arrangedSeconds = 0.0;           // along the arrangement as played: from the first step's start (negative in the
+                                            // lead-in); a repeated step counts each time round
+    double arrangedLengthSeconds = 0.0;     // what has played plus the playing step's rest plus the steps still to come; with
+                                            // nothing playing, the next entry's arrangement (model::arrangementSeconds).
+                                            // `seconds`/`lengthSeconds` stay the song-time ones (the bar and beat come from them)
+};
+
+// One step of an arrangement, as the views show it.
+struct StepView {
+    juce::String name, typeId;
+    juce::Colour colour;                    // the section type's; transparent for none (the views colour that `mid`, in one place)
+    int bars = 0;
+};
+struct ArrangementView {                    // the song that is playing, or the next one when nothing plays
+    std::vector<StepView> steps;
+    int current = -1, pending = -1;         // steps; pending is what will play next when it isn't simply current + 1
+    bool looping = false;
+    int barsLeft = 0;                       // in the playing section, counting the bar that is playing
+    juce::String then;                      // "then → Verse 2", "then → Chorus again", "then → the end", "" when nothing plays
 };
 
 // The hub on the message thread: it owns the band (model, command layer, autosaver), the song cache and the engine, keeps
@@ -97,7 +124,11 @@ public:
     void clearInterrupted();                                     // called by the next Start or song choice
 
     NowPlaying now() const;
+    ArrangementView arrangement() const;    // the playing song's (ShowArrangement), or the next entry's steps once it is ready
     void chooseNext(int index);                                  // clamped to the setlist; never interrupts
+    // Start, Stop, the next song, ToggleView; and, with a song playing, the section actions (ShowArrangement) and
+    // GoToNextSongNow (Engine::goToNext, at once: the hold or the two taps are ShowController's). Stopped, Section1 is a
+    // plain Start and Section2 … Section10 start the next entry from that step, after a bar of count-off (startAtStep).
     void perform(Action);
     bool stageView() const;                                      // toggled by Action::ToggleView
     void playSong(const juce::String& songId, double fromSeconds);   // Edit mode: play one song from a place
@@ -107,6 +138,13 @@ public:
     // here on is noted with them (MidiPorts::noteSong), and attaching notes the playing and cued songs the session holds.
     void attachMidi(MidiPorts*);
     MidiPorts* midi() const;                                     // nullptr when none is attached: tests, screenshots
+    MidiEcho& midiEcho();                                        // what MidiPorts sent lately, for ControlInput (any thread)
+
+    // The cue clips, at the device's rate. A clip arriving builds the prepared songs that use it again.
+    CueLibrary& cues();                     const CueLibrary& cues() const;
+    // Stopped: says the clip through the cues' outputs at the band's cue level (Engine::previewCue). False while a song plays
+    // (a gap included), and until the clip has loaded (asking for it starts the load, so pressing again works).
+    bool hearCue(const juce::String& pathInBandFolder);
 
     Mode mode() const;
     void enterShow();                                            // views run the pre-show check first (Task 18). Stops a
@@ -167,14 +205,19 @@ public:
     juce::Result resolveConflict(const model::ConflictCopy&, bool keepTheCopy);
 
 private:
-    // A song as the engine plays it, with what it was built from, so a change to either builds it again.
+    // A song as the engine plays it, with what it was built from, so a change to any of it builds it again.
     struct Prepared {
         std::shared_ptr<const engine::PreparedSong> song;
         std::map<juce::String, int> partIndex;                   // the engine's index of each part; a part left out has none
         model::SongDoc doc;                                      // as heard: tonight's changes applied
+        juce::String arrangementId;                              // "" = the sections in order
+        std::uint64_t cueRevision = 0;                           // CueLibrary::revision() when built: its clips are in it
         float clickDb = 0.0f;                                    // the band's click level plus the song's offset, as built
+        float cuesDb = 0.0f;                                     // the band's cue level, as built
         std::shared_ptr<const LoadedSong> loaded;
+        std::vector<StepView> steps;                             // ShowArrangement::stepsOf the song
     };
+    using PreparedKey = std::pair<juce::String, juce::String>;   // a song id and an arrangement id
     // A cue the engine took: the entry it is for ("" for Edit-mode playback) and its serial.
     struct Cue {
         juce::String entryId;
@@ -203,15 +246,19 @@ private:
     int indexOf(const juce::String& entryId) const;              // -1 when it isn't in the setlist
     juce::String entryIdAt(int index) const;                     // "" when out of range
     juce::String songIdOf(const juce::String& entryId) const;
+    juce::String arrangementIdOf(const juce::String& entryId) const;   // the entry's arrangement; "" = the sections in order
     void setNext(const juce::String& entryId);
-    Readiness readinessOf(const juce::String& songId) const;
+    Readiness readinessOf(const juce::String& songId, const juce::String& arrangementId) const;
+    // Start, or (step > 0) startAtStep: the next entry, once its cue is in the engine. A step it doesn't have: nothing.
+    void startNext(int step);
+    ArrangementNow playingNow() const;                           // the playing song, for ShowArrangement
 
     void refresh();                                              // after anything changed: works everything out again
     bool ensureChoices();                                        // a rig and a setlist that exist; true when either changed
     void rememberChoices();                                      // writes them to Settings and saves it
     bool saveSettings();                                         // settings_.save(), noting a failure for saveState; true when saved
     void resolveNext();                                          // a removed next entry: the one now in its place
-    std::shared_ptr<const Prepared> preparedFor(const juce::String& songId);
+    std::shared_ptr<const Prepared> preparedFor(const juce::String& songId, const juce::String& arrangementId);
     void refreshPrepared();
     void refreshWanted();
     void refreshMix(bool force);
@@ -228,6 +275,7 @@ private:
     // is still reported as playing (title unknown) so every stop gesture stops it.
     void adoptPlaying(std::uint64_t serial, std::int64_t streamTime, const Cue* known);
     void handleEvent(const engine::EngineEvent&);
+    bool notePlayed(std::uint64_t serial);                       // the fading entry ended or stopped: true when it was that
     bool engineLetGo(const engine::EngineStatus&);               // the playing song isn't playing, and no event will say so
     void forgetDeadCues(const engine::EngineStatus&);
     void noteSaveState();
@@ -266,6 +314,10 @@ private:
     juce::String last_played_entry_id_;                          // the setlist entry that last ended or was stopped; "" = none
     int next_hint_ = -1;                                         // where the next entry was, for when it is removed
     Playing playing_;
+    // The entry that was playing when the next one started before it ended (a crossfade, goToNext): its Ended or Stopped
+    // comes after that Started, and it counts as played then.
+    std::uint64_t fading_serial_ = 0;
+    juce::String fading_entry_id_;
     bool stop_requested_ = false;
     Cue cue_;                                                    // what the engine has cued, as far as the session knows
     std::map<std::uint64_t, Cue> recent_cues_;                   // by serial, so a follow-on's Started can be matched; only
@@ -277,7 +329,7 @@ private:
     std::atomic<bool> device_stopped_{false};                    // deviceStopping, until audioInterrupted or setDevice
     engine::FollowOn follow_on_;                                 // the last one sent
 
-    std::map<juce::String, std::shared_ptr<const Prepared>> prepared_;   // by song id
+    std::map<PreparedKey, std::shared_ptr<const Prepared>> prepared_;   // by song id and arrangement id
     model::BandDoc prepared_band_;                               // the band the prepared songs were built with
     model::RigDoc prepared_rig_;                                 // and the rig: only its MIDI channels are built into them
     std::vector<WantedSong> wanted_;                             // the last list handed to the cache
@@ -292,6 +344,7 @@ private:
     std::uint64_t levels_serial_ = 0;
     model::SongDoc levels_doc_;
     float levels_click_db_ = 0.0f;
+    float levels_cues_db_ = 0.0f;
 
     double last_change_ms_ = 0.0;                                // the last change to the band or to tonight's levels
     bool settings_pending_ = false;                              // the settings changed and the file isn't written yet
@@ -306,7 +359,11 @@ private:
     std::vector<std::vector<float>> scratch_;                    // advanceWithoutDevice's output channels
     std::vector<float*> scratch_channels_;
 
-    // Last: its loader thread stops first, and its onChanged reaches into the members above.
+    std::unique_ptr<ShowArrangement> arrangement_;               // the playing song's steps, choices and time along them
+    MidiEcho midi_echo_;
+
+    // Last: their loader threads stop first, and their onChanged reach into the members above.
+    CueLibrary cues_{folder_, sample_rate_};
     SongCache cache_;
 };
 

@@ -7,10 +7,12 @@
 #include <utility>
 
 #include "app/MidiPorts.h"
+#include "app/ShowArrangement.h"
 #include "model/CoreCommands.h"
 #include "model/DocumentSet.h"
 #include "model/MidiCommands.h"
 #include "model/SectionCommands.h"
+#include "model/Sections.h"
 #include "model/Routing.h"
 #include "model/SongAudio.h"
 #include "model/Units.h"
@@ -34,7 +36,8 @@ bool sameWanted(const std::vector<WantedSong>& a, const std::vector<WantedSong>&
 }  // namespace
 
 Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudgetBytes)
-    : settings_(settings), folder_(std::move(bandRoot)), cache_(cacheBudgetBytes) {
+    : settings_(settings), folder_(std::move(bandRoot)), arrangement_(std::make_unique<ShowArrangement>()),
+      cache_(cacheBudgetBytes) {
     load_report_ = folder_.load(model_);
     model::registerCoreCommands(commands_);
     model::registerMidiCommands(commands_);
@@ -69,6 +72,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
         outside_->noteMissingAudio(songId);
         refresh();
     };
+    cues_.onChanged = [this] { refresh(); };                     // a clip arrived: the songs that say it are built again
 
     // Until a device is chosen the engine runs at a default rate, so advanceWithoutDevice can drive it. With a device,
     // AudioHost prepares it instead, from audioDeviceAboutToStart.
@@ -90,6 +94,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
 Session::~Session() {
     stopTimer();
     cache_.onChanged = nullptr;
+    cues_.onChanged = nullptr;
     outside_->setClosing(true);
     autosaver_.flush();
     if (settings_pending_) settings_.save();
@@ -107,6 +112,9 @@ const SongCache& Session::cache() const { return cache_; }
 Settings& Session::settings() { return settings_; }
 const Settings& Session::settings() const { return settings_; }
 engine::Engine& Session::engine() { return engine_; }
+CueLibrary& Session::cues() { return cues_; }
+const CueLibrary& Session::cues() const { return cues_; }
+MidiEcho& Session::midiEcho() { return midi_echo_; }
 const model::LoadReport& Session::loadReport() const { return load_report_; }
 model::SnapshotStore& Session::snapshots() { return snapshots_; }
 const model::SnapshotStore& Session::snapshots() const { return snapshots_; }
@@ -155,6 +163,7 @@ void Session::setDevice(double sampleRate, int outputChannels) {
     if (sampleRate > 0.0 && sampleRate != sample_rate_) {
         sample_rate_ = sampleRate;
         cache_.setSampleRate(sample_rate_);                      // loads everything again at the new rate
+        cues_.setSampleRate(sample_rate_);                       // and the cue clips, as they are asked for
         prepared_.clear();
     }
     // The device has just prepared the engine, which dropped every command it hadn't taken (and, at another rate, its cue):
@@ -188,6 +197,7 @@ void Session::audioInterrupted() {
     // may take it for its own. A song started before the loss can't follow on after it either.
     last_finished_serial_ = std::max({last_finished_serial_, last_started_serial_, playing_.serial});
     playing_ = {};
+    fading_serial_ = 0;
     stop_requested_ = false;
     recent_cues_.clear();
     refresh();
@@ -231,28 +241,52 @@ void Session::chooseNext(int index) {
 
 // ---- Transport ---------------------------------------------------------------------------------------------------------
 
+void Session::startNext(int step) {
+    // With no device nothing would play it: the session would sit "playing" at bar 1, and the start would go off
+    // whenever a device came.
+    if (!deviceMayPlay()) return;
+    if (playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
+    refreshTransport(true);                                      // the cue is up to date, or retried if it wasn't taken
+    if (next_entry_id_.isEmpty() || cue_.serial == 0 || cue_.entryId != next_entry_id_) return;
+    if (readinessOf(songIdOf(next_entry_id_), arrangementIdOf(next_entry_id_)) != Readiness::Ready) return;
+    const auto& song = *cue_.prepared->song;
+    if (song.sampleRate != engine_.sampleRate()) return;         // the engine would ignore the start
+    if (step >= (int) cue_.prepared->steps.size()) return;      // a step the arrangement doesn't have
+    const auto from = step > 0 ? ShowArrangement::countOffStart(song, step) : song.start;
+    playing_ = {cue_.entryId, cue_.prepared->doc.id, false, cue_.prepared, cue_.serial, from};
+    stop_requested_ = false;
+    if (step > 0) engine_.startAtStep(step);
+    else engine_.start();
+    playing_.askedAt = engine_.status().streamTime;              // read after the push: see engineLetGo
+    arrangement_->started(playing_.serial, std::max(0, step), from);
+    cue_ = {};                                                   // the engine has taken it to play
+    const int playingAt = indexOf(playing_.entryId);
+    setNext(entryIdAt(playingAt + 1));
+    clearInterrupted();
+    refresh();
+}
+
 void Session::perform(Action action) {
-    switch (action) {
-    case Action::Start: {
-        // With no device nothing would play it: the session would sit "playing" at bar 1, and the start would go off
-        // whenever a device came.
-        if (!deviceMayPlay()) return;
-        if (playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
-        refreshTransport(true);                                  // the cue is up to date, or retried if it wasn't taken
-        if (next_entry_id_.isEmpty() || cue_.serial == 0 || cue_.entryId != next_entry_id_) return;
-        if (readinessOf(songIdOf(next_entry_id_)) != Readiness::Ready) return;
-        if (cue_.prepared->song->sampleRate != engine_.sampleRate()) return;   // the engine would ignore the start
-        playing_ = {cue_.entryId, cue_.prepared->doc.id, false, cue_.prepared, cue_.serial, cue_.prepared->song->start};
-        stop_requested_ = false;
-        engine_.start();
-        playing_.askedAt = engine_.status().streamTime;          // read after the push: see engineLetGo
-        cue_ = {};                                               // the engine has taken it to play
-        const int playingAt = indexOf(playing_.entryId);
-        setNext(entryIdAt(playingAt + 1));
-        clearInterrupted();
-        refresh();
-        break;
+    if (const int step = ShowArrangement::startStep(action); step >= 0 && !playing_.active()) {
+        startNext(step);                                         // Section1: a plain Start, with the song's own count-in
+        return;
     }
+    switch (action) {
+    case Action::Start: startNext(0); break;
+    case Action::NextSectionLater:
+    case Action::NextSectionEarlier:
+    case Action::Section1: case Action::Section2: case Action::Section3: case Action::Section4: case Action::Section5:
+    case Action::Section6: case Action::Section7: case Action::Section8: case Action::Section9: case Action::Section10:
+    case Action::LoopSection:
+    case Action::CancelSection:
+        if (!playing_.active() || playing_.prepared == nullptr) return;
+        arrangement_->perform(action, playingNow(), engine_);
+        changed();
+        break;
+    case Action::GoToNextSongNow:
+        if (playing_.active()) engine_.goToNext();               // ignored by the engine outside a step or while stopping
+        changed();
+        break;
     case Action::Stop: {
         const auto status = engine_.status();
         if (!playing_.active() && status.state == engine::PlayState::Stopped) return;
@@ -295,7 +329,7 @@ void Session::perform(Action action) {
 
 void Session::playSong(const juce::String& songId, double fromSeconds) {
     if (!deviceMayPlay() || playing_.active() || engine_.status().state != engine::PlayState::Stopped) return;
-    const auto prepared = preparedFor(songId);
+    const auto prepared = preparedFor(songId, {});                // one song alone: its sections in order
     if (prepared == nullptr || prepared->song->sampleRate != engine_.sampleRate()) return;   // the engine would ignore it
     const auto serial = engine_.cue(prepared->song);
     if (serial == 0) return;                                     // the queue is full: nothing was cued
@@ -311,9 +345,20 @@ void Session::playSong(const juce::String& songId, double fromSeconds) {
     if (engine_.setFollowOn({})) follow_on_ = {};                // one song alone: nothing follows it (or the next tick says so)
     engine_.startAt(at);
     playing_.askedAt = engine_.status().streamTime;              // read after the push: see engineLetGo
+    arrangement_->started(serial, 0, at);
     cue_ = {};                                                 // the setlist's cue was replaced; it is cued again once this ends
     clearInterrupted();
     refresh();
+}
+
+bool Session::hearCue(const juce::String& pathInBandFolder) {
+    // Never over a song (Show mode's rule too): the engine ignores a preview then, and the band would hear it.
+    const auto status = engine_.status();
+    if (playing_.active() || status.state != engine::PlayState::Stopped || status.inGap) return false;
+    const auto clip = cues_.clip(pathInBandFolder);              // asked for, when it isn't loaded yet
+    if (clip == nullptr) return false;
+    engine_.previewCue(clip, model::dbToGain(bandAsHeard().cuesDb));
+    return true;
 }
 
 // ---- Show mode and levels ----------------------------------------------------------------------------------------------
@@ -623,7 +668,7 @@ NowPlaying Session::now() const {
     n.playingSongId = playing_.active() ? playing_.songId : juce::String();
     n.nextSongId = songIdOf(next_entry_id_);
     if (n.nextSongId.isNotEmpty()) {
-        n.nextReadiness = readinessOf(n.nextSongId);
+        n.nextReadiness = readinessOf(n.nextSongId, arrangementIdOf(next_entry_id_));
         n.nextProgress = cache_.progress(n.nextSongId);
         n.nextProblems = cache_.problems(n.nextSongId);
     }
@@ -633,15 +678,18 @@ NowPlaying Session::now() const {
     if (playing_.active() && playing_.prepared == nullptr) {
         // A song nothing here knows (see adoptPlaying): it plays, and that is all that can be said.
     } else if (playing_.active()) {
-        const auto& song = *playing_.prepared->song;
-        const auto songTime = status.playingSerial == playing_.serial ? status.songTime : playing_.songTime;
+        const auto playing = playingNow();
+        const auto& song = *playing.song;
         tempo = song.tempo;
-        n.seconds = (double) songTime / song.sampleRate;
+        n.seconds = (double) playing.songTime / song.sampleRate;
         n.lengthSeconds = (double) song.end / song.sampleRate;
-        n.countIn = songTime < 0;
+        n.countIn = playing.songTime < 0 || (status.countOff && status.playingSerial == playing_.serial);
+        n.arrangedSeconds = arrangement_->arrangedSeconds(playing);
+        n.arrangedLengthSeconds = arrangement_->arrangedLengthSeconds(playing);
     } else if (const auto* doc = model_.song(n.nextSongId)) {
         tempo = model::tempoMapOf(*doc);
         n.lengthSeconds = doc->lengthSeconds;
+        n.arrangedLengthSeconds = model::arrangementSeconds(*doc, arrangementIdOf(next_entry_id_));
     }
     const auto at = tempo.barBeatAt(n.seconds);
     n.bar = at.bar;
@@ -654,6 +702,23 @@ NowPlaying Session::now() const {
         n.beat = interrupted_beat_;
     }
     return n;
+}
+
+ArrangementNow Session::playingNow() const {
+    ArrangementNow playing;
+    playing.status = engine_.status();
+    if (!playing_.active() || playing_.prepared == nullptr) return playing;
+    playing.serial = playing_.serial;
+    playing.song = playing_.prepared->song.get();
+    playing.steps = &playing_.prepared->steps;
+    playing.songTime = playing.status.playingSerial == playing_.serial ? playing.status.songTime : playing_.songTime;
+    return playing;
+}
+
+ArrangementView Session::arrangement() const {
+    if (playing_.active()) return playing_.prepared != nullptr ? arrangement_->view(playingNow()) : ArrangementView{};
+    const auto found = prepared_.find({songIdOf(next_entry_id_), arrangementIdOf(next_entry_id_)});
+    return found != prepared_.end() ? ShowArrangement::idle(found->second->steps) : ArrangementView{};
 }
 
 const model::SetlistDoc* Session::setlist() const { return model_.setlist(setlist_id_); }
@@ -677,14 +742,19 @@ juce::String Session::songIdOf(const juce::String& entryId) const {
     return at >= 0 ? setlist()->entries[(std::size_t) at].songId : juce::String();
 }
 
+juce::String Session::arrangementIdOf(const juce::String& entryId) const {
+    const int at = indexOf(entryId);
+    return at >= 0 ? setlist()->entries[(std::size_t) at].arrangementId : juce::String();
+}
+
 void Session::setNext(const juce::String& entryId) {
     next_entry_id_ = entryId;
     next_hint_ = indexOf(entryId);
 }
 
-Readiness Session::readinessOf(const juce::String& songId) const {
+Readiness Session::readinessOf(const juce::String& songId, const juce::String& arrangementId) const {
     switch (cache_.state(songId)) {
-    case SongCache::State::Ready: return prepared_.count(songId) > 0 ? Readiness::Ready : Readiness::Loading;
+    case SongCache::State::Ready: return prepared_.count({songId, arrangementId}) > 0 ? Readiness::Ready : Readiness::Loading;
     case SongCache::State::Failed: return Readiness::Failed;
     case SongCache::State::NotLoaded:
     case SongCache::State::Loading: break;
@@ -746,46 +816,54 @@ void Session::resolveNext() {
     setNext(count > 0 ? entryIdAt(std::clamp(next_hint_, 0, count - 1)) : juce::String());
 }
 
-std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String& songId) {
+std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String& songId, const juce::String& arrangementId) {
+    const PreparedKey key{songId, arrangementId};
     const auto* doc = model_.song(songId);
     const auto loaded = cache_.loaded(songId);                   // nullptr unless Ready
     if (doc == nullptr || loaded == nullptr || loaded->sampleRate != sample_rate_) {
-        prepared_.erase(songId);
+        prepared_.erase(key);
         return nullptr;
     }
     auto heard = tonight_.apply(*doc);
-    if (const auto found = prepared_.find(songId);
-        found != prepared_.end() && found->second->loaded == loaded && found->second->doc == heard)
+    // The cue clips are built into it too: one that arrived since builds it again.
+    if (const auto found = prepared_.find(key); found != prepared_.end() && found->second->loaded == loaded
+                                                && found->second->doc == heard && found->second->cueRevision == cues_.revision())
         return found->second;
 
     auto prepared = std::make_shared<Prepared>();
     prepared->doc = std::move(heard);
+    prepared->arrangementId = arrangementId;
+    prepared->cueRevision = cues_.revision();                    // read before the clips are asked for
     prepared->clickDb = prepared_band_.clickDb + prepared->doc.click.offsetDb;
+    prepared->cuesDb = prepared_band_.cuesDb;
     prepared->loaded = loaded;
+    const model::PrepareOptions options{arrangementId, [this](const juce::String& path) { return cues_.clip(path); }};
     prepared->song = std::make_shared<const engine::PreparedSong>(
-        model::buildPreparedSong(prepared->doc, prepared_band_, prepared_rig_, loaded->audio, sample_rate_));
+        model::buildPreparedSong(prepared->doc, prepared_band_, prepared_rig_, loaded->audio, sample_rate_, options));
     for (std::size_t i = 0; i < prepared->song->parts.size(); ++i)
         prepared->partIndex[juce::String(prepared->song->parts[i].partId)] = (int) i;
-    prepared_[songId] = prepared;
+    prepared->steps = ShowArrangement::stepsOf(prepared->doc, prepared_band_, *prepared->song);
+    prepared_[key] = prepared;
     return prepared;
 }
 
 void Session::refreshPrepared() {
-    // Roles, the click level and the MIDI devices are built into every song, and so are the rig's MIDI channels. The rig's
-    // levels are not: a change to them alone keeps the songs (and the cue) as they are.
+    // Roles, the click level, the cue level and lead, the section types and the MIDI devices are built into every song, and
+    // so are the rig's MIDI channels. The rig's levels are not: a change to them alone keeps the songs (and the cue) as they are.
     auto band = bandAsHeard();
     auto rig = rigAsHeard();
     if (band != prepared_band_ || rig.midiChannels != prepared_rig_.midiChannels) prepared_.clear();
     prepared_band_ = std::move(band);
     prepared_rig_ = std::move(rig);
-    // The songs near the playhead: the next, the entries either side of it, and the song open in an Edit page.
-    std::set<juce::String> near;
+    // The songs near the playhead, each with its entry's arrangement: the next, the entries either side of it, and the song
+    // open in an Edit page (its sections in order).
+    std::set<PreparedKey> near;
     const int next = indexOf(next_entry_id_);
     if (next >= 0)
         for (int i = next - 1; i <= next + 1; ++i)
-            if (const auto id = songIdOf(entryIdAt(i)); id.isNotEmpty()) near.insert(id);
-    if (edit_focus_.isNotEmpty()) near.insert(edit_focus_);
-    for (const auto& id : near) preparedFor(id);
+            if (const auto entry = entryIdAt(i); entry.isNotEmpty()) near.insert({songIdOf(entry), arrangementIdOf(entry)});
+    if (edit_focus_.isNotEmpty()) near.insert({edit_focus_, {}});
+    for (const auto& [songId, arrangementId] : near) preparedFor(songId, arrangementId);
     for (auto it = prepared_.begin(); it != prepared_.end();)    // the playing song keeps its own while it plays
         it = near.count(it->first) > 0 ? std::next(it) : prepared_.erase(it);
 }
@@ -841,6 +919,7 @@ void Session::refreshPlayingLevels() {
         levels_serial_ = playing_.serial;
         levels_doc_ = prepared.doc;
         levels_click_db_ = prepared.clickDb;
+        levels_cues_db_ = prepared.cuesDb;
     }
     const auto heard = songAsHeard(playing_.songId);
     for (const auto& part : heard.parts) {
@@ -848,14 +927,21 @@ void Session::refreshPlayingLevels() {
         const auto sent = std::find_if(levels_doc_.parts.begin(), levels_doc_.parts.end(),
                                        [&](const model::PartDoc& p) { return p.id == part.id; });
         if (index == prepared.partIndex.end() || sent == levels_doc_.parts.end()) continue;   // not in what the engine plays
-        if (part.gainDb != sent->gainDb) engine_.setPartGain(playing_.serial, index->second, model::dbToGain(part.gainDb));
+        if (part.gainDb != sent->gainDb) {
+            // A fader moved by hand during the show: its part stops following its automation for the rest of the song.
+            if (mode_ == Mode::Show) engine_.setPartOverride(playing_.serial, index->second, true);
+            engine_.setPartGain(playing_.serial, index->second, model::dbToGain(part.gainDb));
+        }
         if (part.mute != sent->mute) engine_.setPartMute(playing_.serial, index->second, part.mute);
         sent->gainDb = part.gainDb;
         sent->mute = part.mute;
     }
-    const float clickDb = bandAsHeard().clickDb + heard.click.offsetDb;
+    const auto band = bandAsHeard();
+    const float clickDb = band.clickDb + heard.click.offsetDb;
     if (clickDb != levels_click_db_) engine_.setClickGain(playing_.serial, model::dbToGain(clickDb));
     levels_click_db_ = clickDb;
+    if (band.cuesDb != levels_cues_db_) engine_.setCueGain(playing_.serial, model::dbToGain(band.cuesDb));
+    levels_cues_db_ = band.cuesDb;
 }
 
 engine::FollowOn Session::followOn() const {
@@ -867,8 +953,8 @@ engine::FollowOn Session::followOn() const {
     switch (transition.kind) {
     case model::TransitionKind::Gap: return {engine::FollowKind::Gap, transition.seconds};
     case model::TransitionKind::Seamless: return {engine::FollowKind::Seamless, 0.0};
-    case model::TransitionKind::Stop:
-    case model::TransitionKind::Crossfade: break;                // plays as Stop until crossfades are built
+    case model::TransitionKind::Crossfade: return {engine::FollowKind::Crossfade, transition.seconds};   // 0 s: seamless
+    case model::TransitionKind::Stop: break;
     }
     return {};
 }
@@ -882,8 +968,8 @@ void Session::refreshTransport(bool force) {
     // The next entry, once it is ready; nothing while one song plays alone in Edit mode.
     Cue wanted;
     if (!playing_.single && next_entry_id_.isNotEmpty()) {
-        const auto songId = songIdOf(next_entry_id_);
-        if (readinessOf(songId) == Readiness::Ready) wanted = {next_entry_id_, prepared_.at(songId), 0};
+        const PreparedKey key{songIdOf(next_entry_id_), arrangementIdOf(next_entry_id_)};
+        if (readinessOf(key.first, key.second) == Readiness::Ready) wanted = {next_entry_id_, prepared_.at(key), 0};
     }
     if (wanted.entryId == cue_.entryId && wanted.prepared == cue_.prepared) return;
     if (wanted.prepared == nullptr) {
@@ -1014,11 +1100,17 @@ void Session::handleEvent(const engine::EngineEvent& event) {
         }
         // A song the session let go of when the device went (its stop is on the way), or one it has already seen end.
         if (event.serial <= last_finished_serial_) return;
+        // The one playing still fades out under this one (a crossfade, goToNext): it counts as played when it ends.
+        if (playing_.active() && !playing_.single && playing_.entryId.isNotEmpty()) {
+            fading_serial_ = playing_.serial;
+            fading_entry_id_ = playing_.entryId;
+        }
         adoptPlaying(event.serial, event.streamTime, &taken);
         break;
     }
     case Type::Ended:
         last_finished_serial_ = std::max(last_finished_serial_, event.serial);
+        if (notePlayed(event.serial)) return;
         if (playing_.serial != event.serial) return;
         if (!playing_.single && playing_.entryId.isNotEmpty()) last_played_entry_id_ = playing_.entryId;
         playing_ = {};                                           // the next entry stays as it is
@@ -1026,6 +1118,7 @@ void Session::handleEvent(const engine::EngineEvent& event) {
         break;
     case Type::Stopped:
         last_finished_serial_ = std::max(last_finished_serial_, event.serial);
+        if (notePlayed(event.serial)) return;
         // During a gap the song it names had already ended, and the next entry is already the one after it.
         if (event.inGap || playing_.serial != event.serial) return;
         if (!playing_.single && playing_.entryId.isNotEmpty()) last_played_entry_id_ = playing_.entryId;
@@ -1033,9 +1126,15 @@ void Session::handleEvent(const engine::EngineEvent& event) {
         playing_ = {};
         stop_requested_ = false;
         break;
-    case Type::StepChanged:   // nothing here yet: the step playing is in the engine's status
-        break;
+    case Type::StepChanged: arrangement_->stepEntered(event.serial, event.step, event.streamTime); break;
     }
+}
+
+bool Session::notePlayed(std::uint64_t serial) {
+    if (fading_serial_ == 0 || serial != fading_serial_) return false;
+    last_played_entry_id_ = fading_entry_id_;                    // the song after it plays on
+    fading_serial_ = 0;
+    return true;
 }
 
 void Session::noteSaveState() {
