@@ -51,6 +51,15 @@ inline juce::Font font(float size, bool bold = false) {
 #endif
 }
 
+// The UI typeface's weight 300 (Segoe UI Light), for the stage view's big figures; the regular weight elsewhere.
+inline juce::Font light(float size) {
+#if JUCE_WINDOWS
+    return juce::Font(juce::FontOptions(typefaceName(), "Light", size).withPointHeight(size));
+#else
+    return font(size);
+#endif
+}
+
 // A font with the CSS letter-spacing given in pixels.
 inline juce::Font tracked(const juce::Font& f, float letterSpacing) {
     return f.withExtraKerningFactor(letterSpacing / f.getHeight());

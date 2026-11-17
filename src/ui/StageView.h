@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Session.h"
+#include "ui/SectionTiles.h"
 #include "ui/ShowState.h"
 #include "ui/Widgets.h"
 
@@ -12,27 +13,29 @@ class ShowController;
 
 namespace sqlive::ui {
 
-// The mockup's screens 2 and 3, the Show-mode stage view, read from the drum throne, as far as stage 1 goes.
+// The mockup's screens 2 and 3, the Show-mode stage view, read from the drum throne.
 //
 // While a song plays: the label and the title (72 px; a title that doesn't fit is made smaller, to 44 px at least, then
-// shortened with "…"), the bar, BPM and time left on the right; the beat lights and the song's progress; the next-song
-// box ("END OF THE SET" while the last song plays); the key hints along the bottom. While Space is held to stop, a ring
-// around the beat lights fills with ShowController::holdProgress() and "Keep holding to stop" takes the progress bar's
-// place. Between songs: "UP NEXT", the title, its BPM, key (when it has one) and length; the call to action (Start's
-// key, what it does and the pill) on a mint panel when the song is ready, a grey one with a progress bar while it loads,
-// a red one when it can't play; the row of songs around it; the hints. After a song was cut off (the device went away):
-// "PAUSED · 1 OF 3" in mint, the title and the bar it reached, and nothing else (the mockup's screen 5; the shell's box
-// says what Space does).
-// Once the last song has ended: the setlist's name and "That was the last song." Sections, cues and the pad are later
-// stages' and are left out.
+// shortened with "…"), the bar, BPM and time left on the right; the beat lights and the song's progress; for a song with
+// sections, the line ("Chorus  6 bars left … then → Verse 2") and the section tiles under it (sectionTiles); the
+// next-song box ("END OF THE SET" while the last song plays); the key hints along the bottom. While Space is held to stop,
+// a ring around the beat lights fills with ShowController::holdProgress() and "Keep holding to stop" takes the progress
+// bar's place; while → (or Go to the next song now's key) is held toward the next song, "Keep holding to go to the next
+// song" takes it in ember (ShowController::nextSongHoldProgress()), with no ring. Between songs: "UP NEXT", the title,
+// its BPM, key (when it has one) and length; the call to action (Start's key, what it does and the pill) on a mint panel
+// when the song is ready, a grey one with a progress bar while it loads, a red one when it can't play; the song's section
+// tiles, quiet, each with its number; the row of songs around it; the hints. After a song was cut off (the device went
+// away): "PAUSED · 1 OF 3" in mint, the title and the bar it reached, and nothing else (the mockup's screen 5; the
+// shell's box says what Space does).
+// Once the last song has ended: the setlist's name and "That was the last song." Cues and the pad are left out.
 //
 // Everything is drawn at the mockup's sizes for a 1280 x 698 area, scaled by min(width / 1280, height / 698).
 //
 // It refreshes on Session::changes(), and 30 times a second while a song plays, only while it is shown (a hidden one
 // catches up when shown again). A refresh makes the ShowState and repaints only the parts whose words or figures
 // changed; nothing is laid out again unless the size or the shape of the screen changes (which screen it is, the title,
-// the width of the figures, the beats in a bar, the hints). Nothing here takes the keyboard, so Space and the arrows
-// reach the window's Show-mode keys.
+// the width of the figures, the beats in a bar, the number of section tiles, the hints). Nothing here takes the keyboard,
+// so Space and the arrows reach the window's Show-mode keys.
 class StageView : public juce::Component, private juce::ChangeListener, private juce::Timer {
 public:
     StageView(app::Session&, app::ShowController*);              // nullptr: no hold ring (tests)
@@ -40,7 +43,11 @@ public:
 
     juce::String drawnTitle() const { return title_; }           // for tests: the title as last laid out
     float drawnTitleSize() const { return titleSize_ * scale_; } // for tests: its font size, in the window's pixels
-    bool holdRingShown() const { return hold_ > 0.0; }           // for tests
+    bool holdRingShown() const { return hold_ > 0.0; }           // for tests: the ring is for a hold toward a stop only
+    // For tests: what the progress row says while a key is held ("Keep holding to stop", "Keep holding to go to the next
+    // song"); "" otherwise.
+    juce::String drawnHoldText() const;
+    int tilesShown() const { return static_cast<int>(tileLayout_.boxes.size()); }   // for tests: the section tiles laid out
     int layoutsDone() const { return layouts_done_; }            // for tests: how many times anything was laid out
     // For tests: the repaints the view asked for since forgetRepaints(), how many and the area they cover together, in
     // its own pixels; and the area a change to the song's progress repaints.
@@ -72,6 +79,7 @@ private:
         juce::String title;
         juce::StringArray figures;
         int beats = 0;
+        std::size_t tiles = 0;                                    // the section tiles: none, one row or two
         bool endOfSet = false, noSongs = false;
         std::vector<KeyHint> hints;
         bool operator==(const Shape&) const = default;
@@ -89,7 +97,7 @@ private:
     bool labelIsNow() const;                                      // the label is the song playing, or cut off: mint
     void layout();
     void fitTitle(const juce::String&, float width);
-    void repaintChanges(const ShowState& next, double hold);
+    void repaintChanges(const ShowState& next, double hold, double nextHold);
     void repaintDesign(juce::Rectangle<float>);
     void repaintAll();
     juce::Rectangle<int> areaOf(juce::Rectangle<float>) const;   // a part's area in the view's pixels, with its antialiasing
@@ -104,7 +112,7 @@ private:
     app::Session& session_;
     app::ShowController* controller_;
     ShowState state_;
-    double hold_ = 0.0;
+    double hold_ = 0.0, nextHold_ = 0.0;                         // ShowController's holdProgress, nextSongHoldProgress
     Shape shape_;
     bool laidOut_ = false, fresh_ = false;
     double lastRefreshMs_ = 0.0;
@@ -119,7 +127,8 @@ private:
     float scale_ = 1.0f;
     juce::Rectangle<float> labelBox_, titleBox_, figuresBox_;
     std::vector<juce::Rectangle<float>> figureColumns_;
-    juce::Rectangle<float> lights_, ring_, bar_, barRow_, next_, cta_, after_, sentence_, hintsBox_;
+    juce::Rectangle<float> lights_, ring_, bar_, barRow_, line_, tiles_, next_, cta_, after_, sentence_, hintsBox_;
+    sectionTiles::Layout tileLayout_;                             // in tiles_, from its top left
     std::vector<std::vector<int>> hintLines_;
     juce::String title_;
     float titleSize_ = 72.0f;

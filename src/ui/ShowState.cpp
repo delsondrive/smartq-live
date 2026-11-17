@@ -6,8 +6,10 @@
 #include "app/Controls.h"
 #include "model/SongAudio.h"
 #include "model/SongMidi.h"
+#include "ui/CuesLane.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
+#include "ui/Theme.h"
 
 namespace sqlive::ui {
 
@@ -98,20 +100,40 @@ bool laneHasChanges(const model::SongDoc& song, const juce::String& deviceId) {
     return found != song.midiLanes.end() && !found->second.empty();
 }
 
-// The lanes of the song the map shows: a band device with a change in the song has one.
-std::vector<ShowState::Lane> lanesOf(const model::BandDoc& band, const model::SongDoc* song) {
+// The lanes of the song the map shows: its cues first, when it has any; then a lane for each band device with a change in
+// the song. A place in song time is across the map once (a single step: from the count-in to the end), or once in each
+// step that plays it (sections: along the steps laid end to end).
+std::vector<ShowState::Lane> lanesOf(const app::Session& session, const juce::String& songId, const StepSpans& spans) {
     std::vector<ShowState::Lane> lanes;
-    if (song == nullptr || song->midiLanes.empty()) return lanes;
+    const auto* song = session.model().song(songId);
+    if (song == nullptr) return lanes;
+    const auto& band = session.model().band();
     const auto tempo = model::tempoMapOf(*song);
     const auto [start, end] = model::songExtentSeconds(*song, tempo);
-    const double span = std::max(1.0e-9, end - start);
+    const double span = std::max(1.0e-9, end - start), total = std::max(1.0e-9, spans.total);
+    const auto placesOf = [&](double seconds) {
+        std::vector<double> places;
+        if (spans.steps.empty()) places.push_back(std::clamp((seconds - start) / span, 0.0, 1.0));
+        for (const auto& step : spans.steps)
+            if (seconds >= step.songStart && seconds < step.songEnd)
+                places.push_back(std::clamp((step.at + seconds - step.songStart) / total, 0.0, 1.0));
+        return places;
+    };
+    const auto byPlace = [](const ShowState::Lane::Chip& a, const ShowState::Lane::Chip& b) { return a.position01 < b.position01; };
+
+    ShowState::Lane cues{"Cues", theme::mid, {}};
+    for (const auto& chip : makeCuesLaneState(session, songId, EditorSelection{}).chips)
+        for (const double at : placesOf(tempo.secondsAt({chip.bar, chip.beat}))) cues.chips.push_back({at, chip.label, chip.automatic});
+    std::stable_sort(cues.chips.begin(), cues.chips.end(), byPlace);
+    if (!cues.chips.empty()) lanes.push_back(std::move(cues));
+
     for (const auto& device : band.midiDevices) {
         if (!laneHasChanges(*song, device.id)) continue;
         ShowState::Lane lane{device.name, device.colour, {}};
         for (const auto& marker : song->midiLanes.at(device.id))
-            lane.chips.push_back({std::clamp((tempo.secondsAt({marker.bar, marker.beat}) - start) / span, 0.0, 1.0),
-                                  model::markerLabel(marker, &device)});
-        std::stable_sort(lane.chips.begin(), lane.chips.end(), [](const auto& a, const auto& b) { return a.position01 < b.position01; });
+            for (const double at : placesOf(tempo.secondsAt({marker.bar, marker.beat})))
+                lane.chips.push_back({at, model::markerLabel(marker, &device)});
+        std::stable_sort(lane.chips.begin(), lane.chips.end(), byPlace);
         lanes.push_back(std::move(lane));
     }
     return lanes;
@@ -131,7 +153,7 @@ bool hasPatchChanges(const model::BandDoc& band, const model::SongDoc* song) {
 }
 
 // What makeShowState keeps between its calls, 30 a second, on the message thread: what it works out from documents alone,
-// with the revisions of the documents it was worked out from.
+// with the revisions of the documents (and the steps) it was worked out from. Revisions are never shared between models.
 struct Kept {
     bool haveKeys = false;
     std::uint64_t keysFor = 0;                                    // the band's revision
@@ -139,7 +161,12 @@ struct Kept {
     bool haveLanes = false;
     juce::String laneSong;
     std::uint64_t laneSongRevision = 0, laneBandRevision = 0;
+    StepSpans laneSpans;                                          // empty for a song with a single step
     std::vector<ShowState::Lane> lanes;
+    bool haveTiles = false;
+    std::uint64_t tileBandRevision = 0;
+    std::vector<app::StepView> tileSteps;                         // their names, types and bars are what the tiles show
+    std::vector<ShowState::Tile> tiles;                           // numbered "1" … "10", all Later
     ShowStateWork work;
 };
 
@@ -160,19 +187,44 @@ const ShowKeys& keptKeys(const model::BandModel& model) {
     return k.keys;
 }
 
-const std::vector<ShowState::Lane>& keptLanes(const model::BandModel& model, const juce::String& songId) {
+// The steps aren't known for a moment while a song is prepared again: the lanes worked out for the same documents stay.
+const std::vector<ShowState::Lane>& keptLanes(const app::Session& session, const juce::String& songId,
+                                              const std::vector<app::StepView>& steps) {
     auto& k = kept();
+    const auto& model = session.model();
     const auto song = model.revision({model::DocKind::Song, songId});
     const auto band = model.revision({model::DocKind::Band, {}});
-    if (!k.haveLanes || k.laneSong != songId || k.laneSongRevision != song || k.laneBandRevision != band) {
-        k.lanes = lanesOf(model.band(), model.song(songId));
-        k.laneSong = songId;
-        k.laneSongRevision = song;
-        k.laneBandRevision = band;
-        k.haveLanes = true;
-        ++k.work.lanes;
-    }
+    const bool sameDocuments = k.haveLanes && k.laneSong == songId && k.laneSongRevision == song && k.laneBandRevision == band;
+    auto spans = steps.size() > 1 ? stepSpansOf(steps) : StepSpans{};
+    if (sameDocuments && (steps.empty() || spans == k.laneSpans)) return k.lanes;
+    k.lanes = lanesOf(session, songId, spans);
+    k.laneSong = songId;
+    k.laneSongRevision = song;
+    k.laneBandRevision = band;
+    k.laneSpans = std::move(spans);
+    k.haveLanes = true;
+    ++k.work.lanes;
     return k.lanes;
+}
+
+bool sameLook(const app::StepView& a, const app::StepView& b) { return a.name == b.name && a.typeId == b.typeId && a.bars == b.bars; }
+
+// The tiles' names, colours and bars, for steps of a song with sections (two or more).
+const std::vector<ShowState::Tile>& keptTiles(const model::BandModel& model, const std::vector<app::StepView>& steps) {
+    auto& k = kept();
+    const auto band = model.revision({model::DocKind::Band, {}});
+    const bool same = k.haveTiles && k.tileBandRevision == band && k.tileSteps.size() == steps.size()
+                      && std::equal(steps.begin(), steps.end(), k.tileSteps.begin(), sameLook);
+    if (same) return k.tiles;
+    k.tiles.clear();
+    for (std::size_t i = 0; i < steps.size(); ++i)
+        k.tiles.push_back({i < 10 ? juce::String(static_cast<int>(i) + 1) : juce::String(), steps[i].name,
+                           theme::sectionColour(model.band(), steps[i].typeId), steps[i].bars, ShowState::Tile::Kind::Later});
+    k.tileSteps = steps;
+    k.tileBandRevision = band;
+    k.haveTiles = true;
+    ++k.work.tiles;
+    return k.tiles;
 }
 
 // "<keys> <what they do>"; nothing when the action has no key.
@@ -207,6 +259,18 @@ ShowKeys showKeysOf(const model::BandDoc& band) {
     keys.songKeys = {ControlMap::describeKey(map.bindingFor(Action::NextSongEarlier)), ControlMap::describeKey(map.bindingFor(Action::NextSongLater))};
     keys.songKeys.removeEmptyStrings();
     keys.viewKey = ControlMap::describeKey(map.bindingFor(Action::ToggleView));
+    keys.sectionKeys = {ControlMap::describeKey(map.bindingFor(Action::NextSectionEarlier)),
+                        ControlMap::describeKey(map.bindingFor(Action::NextSectionLater))};
+    keys.sectionKeys.removeEmptyStrings();
+    keys.loopKey = ControlMap::describeKey(map.bindingFor(Action::LoopSection));
+    keys.cancelKey = ControlMap::describeKey(map.bindingFor(Action::CancelSection));
+    keys.nextSongNowKey = ControlMap::describeKey(map.bindingFor(Action::GoToNextSongNow));
+    if (keys.nextSongNowKey.isEmpty()) keys.nextSongNowKey = ControlMap::describeKey(map.bindingFor(Action::NextSongLater));
+    keys.numberKeys = true;
+    for (int i = 0; i < 10; ++i) {
+        const auto action = static_cast<Action>(static_cast<int>(Action::Section1) + i);
+        keys.numberKeys = keys.numberKeys && ControlMap::describeKey(map.bindingFor(action)) == juce::String((i + 1) % 10);
+    }
     return keys;
 }
 
@@ -239,8 +303,13 @@ ShowState makeShowState(const app::Session& session) {
     st.playing = now.playing;
     st.countIn = now.countIn;
     st.interrupted = now.interrupted;
-    const double length = now.lengthSeconds;
-    if (now.playing && !now.inGap && length > 0.0) st.songProgress = std::clamp(now.seconds / length, 0.0, 1.0);
+    // A song with sections: along its arrangement as it plays (a loop or a jump lengthens or shortens it), else its song time.
+    const auto arrangement = session.arrangement();
+    const auto& steps = arrangement.steps;
+    const bool sections = steps.size() > 1;
+    const double playedSeconds = sections ? now.arrangedSeconds : now.seconds;
+    const double length = sections ? now.arrangedLengthSeconds : now.lengthSeconds;
+    if (now.playing && !now.inGap && length > 0.0) st.songProgress = std::clamp(playedSeconds / length, 0.0, 1.0);
 
     SongReadiness next;
     if (nextAt >= 0) next = readinessAt(session, now, nextAt, list->entries[static_cast<std::size_t>(nextAt)].songId);
@@ -280,7 +349,7 @@ ShowState makeShowState(const app::Session& session) {
         st.beat = now.countIn ? juce::String() : "." + juce::String(static_cast<int>(std::floor(now.beat)));
         st.bpm = formatBpm(now.bpm);
         st.bpmLabel = "BPM" + kDot + juce::String(now.numerator) + "/" + juce::String(now.denominator);
-        st.left = formatTime(std::max(0.0, length - std::max(0.0, now.seconds)));   // the count-in isn't part of the song
+        st.left = formatTime(std::max(0.0, length - std::max(0.0, playedSeconds)));   // the count-in (or lead-in) isn't part of it
         st.beatsInBar = now.numerator;
         if (now.playing && !now.inGap) st.beatNow = std::clamp(static_cast<int>(std::floor(now.beat)), 1, std::max(1, now.numerator));
     }
@@ -341,23 +410,78 @@ ShowState makeShowState(const app::Session& session) {
             st.after.push_back({juce::String(i + 1) + " " + titleAt(i), AfterKind::Later});
     }
 
-    // The hints, with the band's keys: an action with no key has no hint, and with no key to hold, Esc twice stops.
+    // The sections of the song the views show, and the line above them: the names, colours and bars kept, the rest now.
+    if (sections) {
+        using TileKind = ShowState::Tile::Kind;
+        st.tiles = keptTiles(model, steps);
+        const int stepCount = static_cast<int>(st.tiles.size()), current = arrangement.current;
+        // What plays after the step playing: the one chosen, else the one after it; nothing while it loops.
+        int upcoming = arrangement.pending;
+        if (current >= 0 && upcoming < 0 && !arrangement.looping) upcoming = current + 1;
+        if (arrangement.looping || upcoming >= stepCount) upcoming = -1;
+        for (int i = 0; i < stepCount; ++i) {
+            auto& tile = st.tiles[static_cast<std::size_t>(i)];
+            tile.kind = i == current ? TileKind::Now : i == upcoming ? TileKind::Next : i < current ? TileKind::Past : TileKind::Later;
+            if (tile.kind == TileKind::Now || tile.kind == TileKind::Next) {
+                const juce::String word = tile.kind == TileKind::Now ? "NOW" : "NEXT";
+                tile.number = tile.number.isEmpty() ? word : tile.number + kDot + word;
+            }
+        }
+        if (current >= 0 && current < stepCount && arrangement.barsLeft > 0) {
+            st.sectionName = steps[static_cast<std::size_t>(current)].name;
+            st.barsLeft = juce::String(arrangement.barsLeft);
+            st.barsLeftLabel = arrangement.barsLeft == 1 ? "bar left" : "bars left";
+        }
+        st.then = arrangement.then;
+        st.looping = arrangement.looping;
+    }
+
+    // The hints, with the band's keys: an action with no key has no hint, and with no key to hold, Esc twice stops. The
+    // section hints are only for a song with sections, while it plays (and, between songs, the number keys).
     const auto stop = keys.holdKey.isNotEmpty() ? KeyHint{"hold", {keys.holdKey}, "stop"} : KeyHint{{}, {"Esc", "Esc"}, "stop"};
-    if (!session.stageView() || now.playing) {
+    const bool sectionKeys = sections && now.playing;
+    const auto view = juce::StringArray(keys.viewKey);
+    if (!session.stageView()) {
         addHint(st.hints, keys.songKeys, "next song");
+        if (sectionKeys) {
+            addHint(st.hints, keys.sectionKeys, "next section");
+            addHint(st.hints, juce::StringArray(keys.loopKey), "loop");
+            addHint(st.hints, juce::StringArray(keys.cancelKey), "cancel");
+        }
         st.hints.push_back(stop);
-        addHint(st.hints, juce::StringArray(keys.viewKey), session.stageView() ? "main view" : "stage view");
+        addHint(st.hints, view, "stage view");
+    } else if (now.playing) {
+        if (sectionKeys) {
+            addHint(st.hints, keys.sectionKeys, "next section");
+            addHint(st.hints, juce::StringArray(keys.loopKey), "loop this section");
+            addHint(st.hints, juce::StringArray(keys.cancelKey), "cancel");
+        }
+        addHint(st.hints, keys.songKeys, "next song");
+        if (sectionKeys && keys.nextSongNowKey.isNotEmpty()) st.hints.push_back({"hold", {keys.nextSongNowKey}, "go to next song now"});
+        st.hints.push_back(stop);
+        addHint(st.hints, view, "main view");
     } else {
         st.hints.push_back({{}, {keys.startCap()}, "start"});
         addHint(st.hints, keys.songKeys, "choose a different song");
-        addHint(st.hints, juce::StringArray(keys.viewKey), "main view");
+        if (sections && keys.numberKeys) st.hints.push_back({{}, {"1", "9"}, "start from a section", true});
+        addHint(st.hints, view, "main view");
     }
 
     // The song the map shows: the one playing, else the next.
-    st.lanes = keptLanes(model, now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId);
+    st.lanes = keptLanes(session, now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId, steps);
     return st;
 }
 
 ShowStateWork showStateWork() { return kept().work; }
+
+StepSpans stepSpansOf(const std::vector<app::StepView>& steps) {
+    StepSpans spans;
+    for (const auto& step : steps) {
+        const double length = std::max(0.0, step.endSeconds - step.startSeconds);
+        spans.steps.push_back({step.startSeconds, step.startSeconds + length, spans.total});
+        spans.total += length;
+    }
+    return spans;
+}
 
 }  // namespace sqlive::ui

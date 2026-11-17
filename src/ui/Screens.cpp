@@ -251,8 +251,8 @@ std::pair<juce::String, juce::String> addMockupSections(app::Session& session, c
     return made.ok ? std::pair{made.value.toString(), ids[4]} : std::pair<juce::String, juce::String>{};
 }
 
-// As the mockup's screen 9 has them: "Watch me" said in the second Chorus, between the automatic cues, and the second part faded
-// in over the first Chorus (the mockup's Gtr FX lane).
+// As the mockup's screen 9 has them: "Watch me" said in the second Chorus, between the automatic cues, and the second part
+// faded in over the first Chorus (the mockup's Gtr FX lane).
 void addMockupCuesAndAutomation(app::Session& session, const juce::String& songId) {
     session.commands().run("cue.add", model::jsonObject({{"songId", songId}, {"bar", 10}, {"beat", 1.0},
                                                          {"clip", "cues/built-in/Watch me.wav"}, {"text", "Watch me"}}));
@@ -264,19 +264,38 @@ void addMockupCuesAndAutomation(app::Session& session, const juce::String& songI
                            model::jsonObject({{"songId", songId}, {"target", song->parts[1].id}, {"sectionId", chorus->id}}));
 }
 
+// The mockup's screen 3 has the next song in eight sections; on the second demo song's 12 bars.
+void addBetweenSections(app::Session& session, const juce::String& songId) {
+    struct Start { const char* name; int bar; };
+    const Start starts[] = {{"Intro", 1}, {"Verse 1", 2}, {"Pre-chorus", 4}, {"Chorus", 5},
+                            {"Verse 2", 7}, {"Chorus", 8}, {"Solo", 10}, {"Outro", 11}};
+    for (const auto& start : starts)
+        session.commands().run("section.add", model::jsonObject({{"songId", songId}, {"name", start.name}, {"startBar", start.bar}}));
+}
+
 juce::Image render(const juce::String& name, int width, int height) {
     Scene scene(name == "interrupted" || name == "new-computer" || name == "routing");
     if (!scene.ok()) return {};
     auto& session = scene.session();
     auto& shell = scene.shell();
 
-    if (name == "main-view" || name == "stage-playing") {
+    if (name == "main-view" || name == "stage-playing" || name == "stage-looping") {
+        // The first song with the mockup's sections and cues, played into its first Chorus; the second Chorus chosen to
+        // come next with ↓ (or, looping, the Chorus looped with L).
+        addMockupSections(session, scene.songIdAt(0));
+        addMockupCuesAndAutomation(session, scene.songIdAt(0));
+        scene.settle();
         session.enterShow();
-        scene.wantStageView(name == "stage-playing");
+        scene.wantStageView(name != "main-view");
         const auto* band = &session.model().band();
         session.setLevel({app::LevelTarget::Kind::BandClick, {}, {}, {}, {}}, band->clickDb + 2.0f, "screens");
-        scene.playUntil(12.0);
+        scene.playUntil(10.0);
+        session.perform(name == "stage-looping" ? Action::LoopSection : Action::NextSectionLater);
+        session.advanceWithoutDevice(kRate / 100);
+        pump();
     } else if (name == "stage-between" || name == "stage-loading") {
+        addBetweenSections(session, scene.songIdAt(1));
+        scene.settle();
         session.enterShow();
         scene.wantStageView(true);
         scene.playThrough();
@@ -356,9 +375,9 @@ juce::Image render(const juce::String& name, int width, int height) {
 }  // namespace
 
 juce::StringArray screenNames() {
-    return {"main-view", "stage-playing", "stage-between", "stage-loading", "preshow-check", "interrupted", "welcome",
-            "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing", "midi-setup",
-            "snapshots"};
+    return {"main-view", "stage-playing", "stage-looping", "stage-between", "stage-loading", "preshow-check", "interrupted",
+            "welcome", "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing",
+            "midi-setup", "snapshots"};
 }
 
 juce::Image renderScreen(const juce::String& name, int width, int height) {

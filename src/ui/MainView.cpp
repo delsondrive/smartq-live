@@ -94,7 +94,12 @@ void MainView::refresh() {
     const auto state = makeShowState(session_);
 
     strip_.set(state.cards);
-    if (map_.setLanes(state.lanes)) resized();                    // a lane more or less: the map's height follows them
+    // The playing block reads "Chorus · 6 bars left". A lane more or less, or the blocks coming or going: the map's height
+    // follows them.
+    const auto playingWords = state.sectionName.isEmpty() ? juce::String()
+                                                          : state.sectionName + kDot + state.barsLeft + " " + state.barsLeftLabel;
+    const bool sectionsReshaped = map_.setSections(state.tiles, playingWords);
+    if (map_.setLanes(state.lanes) || sectionsReshaped) resized();
     map_.refresh();
     if (map_.songId() != mixer_.songId()) mixer_.show(map_.songId(), outputId_);   // the mixer follows the song by itself
 
@@ -138,10 +143,10 @@ void MainView::resized() {
     ++layouts_done_;
     auto area = getLocalBounds();
     strip_.setBounds(area.removeFromTop(SetlistStrip::idealHeight));
-    area.removeFromTop(kMapTop);
+    area.removeFromTop(kMapTop - (map_.hasSections() ? SongMapView::sectionsTop : 0));   // the blocks 12 px down, as .map's
     // The map's lanes take what the bottom row can spare: a lane that doesn't fit whole is left out, never the next song's box.
     const int mapHeight = map_.heightWithin(area.getHeight() - kMinBottomRow);
-    map_.setBounds(area.removeFromTop(mapHeight).reduced(kPadX, 0));
+    map_.setBounds(area.removeFromTop(mapHeight).reduced(kPadX - SongMapView::sideBleed, 0));   // its outlines reach past it
     area.removeFromTop(kMapBottom + kBottomTop);
     area.removeFromBottom(kBottomBottom);
     area.reduce(kPadX, 0);

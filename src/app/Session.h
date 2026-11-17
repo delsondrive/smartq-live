@@ -68,6 +68,7 @@ struct StepView {
     juce::String name, typeId;
     juce::Colour colour;                    // the section type's; transparent for none (the views colour that `mid`, in one place)
     int bars = 0;
+    double startSeconds = 0.0, endSeconds = 0.0;   // its section in song time (seconds from bar 1), as the engine plays it
 };
 struct ArrangementView {                    // the song that is playing, or the next one when nothing plays
     std::vector<StepView> steps;

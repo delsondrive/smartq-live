@@ -55,6 +55,10 @@ std::vector<StepView> ShowArrangement::stepsOf(const model::SongDoc& doc, const 
         for (const auto& type : band.sectionTypes)
             if (view.typeId.isNotEmpty() && type.id == view.typeId) view.colour = type.colour;
         view.bars = std::max(1, barStartsIn(song, section.start, section.end));
+        if (song.sampleRate > 0.0) {
+            view.startSeconds = static_cast<double>(section.start) / song.sampleRate;
+            view.endSeconds = static_cast<double>(section.end) / song.sampleRate;
+        }
         steps.push_back(std::move(view));
     }
     return steps;

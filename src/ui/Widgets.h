@@ -220,7 +220,8 @@ struct KeyHint {
     juce::String before;                                          // "hold"; "" for none
     juce::StringArray keys;                                       // {"←", "→"}, {"Space"}, {"Esc", "Esc"}
     juce::String words;                                           // "next song"
-    juce::String text() const;                                    // the whole, as one line: "hold Space stop"
+    bool range = false;                                           // two keys and those between: "1–9", a dash between them
+    juce::String text() const;                                    // the whole, as one line: "hold Space stop", "1–9 start …"
     bool operator==(const KeyHint&) const = default;
 };
 juce::StringArray textsOf(const std::vector<KeyHint>&);

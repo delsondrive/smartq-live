@@ -13,19 +13,19 @@
 
 namespace sqlive::ui {
 
-// The mockup's screen 1, the Show-mode main view, as far as stage 1 goes: the setlist strip across the top, the song map
-// (the waveform of the song playing, or of the next, and under it a lane of pedal changes for each MIDI device that has
-// one in that song), then the bottom row: the compact MixerPanel under the caption
+// The mockup's screen 1, the Show-mode main view: the setlist strip across the top, the song map (SongMapView: the
+// section blocks of the song playing, or of the next, its waveform, and under it its Cues lane and a lane of pedal changes
+// for each MIDI device that has one in that song), then the bottom row: the compact MixerPanel under the caption
 // "LEVELS ARE LIVE · AMBER = CHANGED TONIGHT", with a small dropdown at the caption's right end that switches it
 // between "This song" (the song playing, or the next) and each output's mix; and a 250 px side column with the
-// "NEXT SONG" box (its title, then whether it is ready and how it follows) and the key hints. Sections, cues and the
-// pad are later stages' and are left out.
+// "NEXT SONG" box (its title, then whether it is ready and how it follows) and the key hints. The
+// pad is a later stage's and is left out.
 //
 // It refreshes on Session::changes(), and 30 times a second while a song plays, only while it is shown (a hidden one
 // catches up when shown again). A refresh makes the ShowState and hands each part only what it shows: the strip
 // repaints the cards that changed, the map the stretch its playhead crossed, the side column only when its words
-// change. Nothing is laid out again unless its size, the mixer's outputs or the number of MIDI lanes change. Nothing
-// here takes the keyboard, so Space and the arrows reach the window's Show-mode keys.
+// change. Nothing is laid out again unless its size, the mixer's outputs, the number of lanes or whether the song has
+// section blocks change. Nothing here takes the keyboard, so Space and the arrows reach the window's Show-mode keys.
 class MainView : public juce::Component, private juce::ChangeListener, private juce::Timer {
 public:
     explicit MainView(app::Session&);

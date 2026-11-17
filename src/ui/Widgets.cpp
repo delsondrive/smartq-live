@@ -679,6 +679,7 @@ float drawKey(juce::Graphics& g, const juce::String& key, float x, float centreY
 namespace {
 
 constexpr float kHintKeyGap = 3.0f, kHintWordGap = 4.0f;
+const juce::String kRangeDash = juce::String::fromUTF8("\xe2\x80\x93");   // "–"
 
 // Walks the hint's parts left to right: the word before, the keys, the words.
 template <typename Visit>
@@ -694,7 +695,13 @@ float walkHint(const KeyHint& hint, const juce::Font& font, Visit visit) {
     };
     word(hint.before);
     for (int i = 0; i < hint.keys.size(); ++i) {
-        if (!first) x += i > 0 ? kHintKeyGap : kHintWordGap;
+        if (i > 0 && hint.range) {                                // "1–9": the dash between the keys, as a word
+            x += kHintKeyGap;
+            visit(kRangeDash, false, x);
+            x += ui::widthOf(font, kRangeDash) + kHintKeyGap;
+        } else if (!first) {
+            x += i > 0 ? kHintKeyGap : kHintWordGap;
+        }
         visit(hint.keys[i], true, x);
         x += keyWidth(hint.keys[i]);
         first = false;
@@ -706,7 +713,7 @@ float walkHint(const KeyHint& hint, const juce::Font& font, Visit visit) {
 }  // namespace
 
 juce::String KeyHint::text() const {
-    juce::StringArray parts{before, keys.joinIntoString(" "), words};
+    juce::StringArray parts{before, keys.joinIntoString(range ? kRangeDash : juce::String(" ")), words};
     parts.removeEmptyStrings();
     return parts.joinIntoString(" ");
 }

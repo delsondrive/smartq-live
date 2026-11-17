@@ -31,15 +31,10 @@ constexpr float kCtaHeight = 162.0f, kCtaRadius = 18.0f, kCtaPad = 30.0f, kCtaGa
 constexpr float kActionLine = 56.0f, kDetailLine = 24.0f, kLoadGap = 8.0f, kLoadWidth = 520.0f;
 constexpr float kAfterHeight = 46.0f, kAfterGap = 8.0f, kAfterPadX = 14.0f, kAfterNumberGap = 6.0f;
 constexpr float kSentenceLine = 42.0f, kHintLine = 20.0f, kHintGap = 18.0f;
+constexpr float kTileBleed = 8.0f;                                // the playing tile's outline, 6 px out, and its antialiasing
 
 // The mockup's weight 300, for the big figures.
-juce::Font lightFont(float size) {
-#if JUCE_WINDOWS
-    return juce::Font(juce::FontOptions(theme::typefaceName(), "Light", size).withPointHeight(size));
-#else
-    return theme::font(size);
-#endif
-}
+juce::Font lightFont(float size) { return theme::light(size); }
 
 juce::Font labelFont() { return theme::tracked(theme::font(15.0f, true), 2.0f); }
 juce::Font titleFont(float size) { return theme::font(size, true); }
@@ -158,6 +153,14 @@ bool StageView::labelIsNow() const { return shape_.screen == Screen::Playing || 
 
 juce::String StageView::drawnLabel() const { return labelIsNow() ? state_.label : state_.upLabel; }
 
+// A hold toward a stop says so; one toward the next song says that instead (the ring stays for a stop).
+juce::String StageView::drawnHoldText() const {
+    if (shape_.screen != Screen::Playing) return {};
+    if (hold_ > 0.0) return "Keep holding to stop";
+    if (nextHold_ > 0.0) return "Keep holding to go to the next song";
+    return {};
+}
+
 StageView::Shape StageView::shapeOf(const ShowState& st) const {
     Shape shape;
     shape.screen = st.playing ? Screen::Playing : (st.endOfSet ? Screen::Ended : Screen::Between);
@@ -169,6 +172,7 @@ StageView::Shape StageView::shapeOf(const ShowState& st) const {
         shape.figures.add(figure.caption);
     }
     shape.beats = st.playing ? st.beatsInBar : 0;
+    shape.tiles = st.tiles.size();
     shape.endOfSet = st.endOfSet;
     shape.noSongs = st.cards.empty();
     if (!st.interrupted) shape.hints = st.hints;                 // cut off: the shell's box over the bottom says the keys
@@ -185,18 +189,21 @@ void StageView::refresh() {
     lastRefreshMs_ = juce::Time::getMillisecondCounterHiRes();
     auto state = makeShowState(session_);
     const double hold = controller_ != nullptr && state.playing ? controller_->holdProgress() : 0.0;
+    const double nextHold = controller_ != nullptr && state.playing ? controller_->nextSongHoldProgress() : 0.0;
     const auto shape = shapeOf(state);
 
     if (!laidOut_ || !(shape == shape_)) {
         state_ = std::move(state);
         hold_ = hold;
+        nextHold_ = nextHold;
         shape_ = shape;
         layout();
         repaintAll();
     } else {
-        repaintChanges(state, hold);
+        repaintChanges(state, hold, nextHold);
         state_ = std::move(state);
         hold_ = hold;
+        nextHold_ = nextHold;
         if (shape_.screen == Screen::Playing) beats_.set(state_.beatsInBar, state_.beatNow, kLight * scale_);
     }
 
@@ -225,15 +232,26 @@ int StageView::progressPixels(double progress) const {
     return juce::roundToInt(std::clamp(progress, 0.0, 1.0) * bar_.getWidth() * scale_);
 }
 
-void StageView::repaintChanges(const ShowState& st, double hold) {
+void StageView::repaintChanges(const ShowState& st, double hold, double nextHold) {
     const auto& was = state_;
+    const auto tilesChanged = [&] {
+        if (st.tiles == was.tiles && st.looping == was.looping) return;
+        tileLayout_ = sectionTiles::layoutTiles(st.tiles, tiles_.getWidth(), shape_.screen == Screen::Between);
+        repaintDesign(tiles_.expanded(kTileBleed));
+    };
     switch (shape_.screen) {
     case Screen::Playing:
         if (st.label != was.label) repaintDesign(labelBox_);
         if (st.bar != was.bar || st.beat != was.beat || st.bpm != was.bpm || st.bpmLabel != was.bpmLabel || st.left != was.left)
             repaintDesign(figuresBox_);
-        if ((hold > 0.0) != (hold_ > 0.0) || progressPixels(st.songProgress) != progressPixels(was.songProgress)) repaintDesign(barRow_);
+        if ((hold > 0.0) != (hold_ > 0.0) || (nextHold > 0.0) != (nextHold_ > 0.0)
+            || progressPixels(st.songProgress) != progressPixels(was.songProgress))
+            repaintDesign(barRow_);
         if (hold != hold_) repaintDesign(ring_.expanded(kRingStroke));
+        if (st.sectionName != was.sectionName || st.barsLeft != was.barsLeft || st.barsLeftLabel != was.barsLeftLabel
+            || st.then != was.then)
+            repaintDesign(line_);
+        tilesChanged();
         if (st.nextLabel != was.nextLabel || st.nextTitle != was.nextTitle || st.nextInfo != was.nextInfo || st.readiness != was.readiness)
             repaintDesign(next_);
         break;
@@ -242,6 +260,7 @@ void StageView::repaintChanges(const ShowState& st, double hold) {
         if (st.action != was.action || st.actionDetail != was.actionDetail || st.pill != was.pill || st.readiness != was.readiness
             || st.loadProgress != was.loadProgress || st.startKey != was.startKey)
             repaintDesign(cta_);
+        tilesChanged();
         if (st.after != was.after) repaintDesign(after_);
         break;
     case Screen::Ended:
@@ -291,18 +310,33 @@ void StageView::layout() {
         const float glow = (10.0f + (kLight * scale_ - 12.0f) * 14.0f / 22.0f) / scale_ + 2.0f;   // BeatLights' glow, and a little
         beats_.setBounds((lights_.expanded(glow) * scale_).getSmallestIntegerContainer().getIntersection(getLocalBounds()));
         y += kLight + kGap;
+        // A song with sections: the line, then the tiles.
+        line_ = tiles_ = {};
+        if (shape_.tiles > 0) {
+            line_ = {left, y, inner, sectionTiles::lineHeight};
+            y = line_.getBottom() + kGap;
+            tiles_ = {left, y, inner, sectionTiles::tilesHeight(shape_.tiles, false)};
+            y = tiles_.getBottom() + kGap;
+        }
         next_ = {left, y, inner, shape_.endOfSet ? kEndHeight : kNextHeight};
     } else {
-        lights_ = ring_ = bar_ = barRow_ = next_ = {};
+        lights_ = ring_ = bar_ = barRow_ = line_ = tiles_ = next_ = {};
     }
 
-    // Between songs: the call to action, then the row of songs.
+    // Between songs: the call to action, the song's sections (quiet), then the row of songs.
     if (shape_.screen == Screen::Between) {
         cta_ = {left, y, inner, kCtaHeight};
-        after_ = {left, cta_.getBottom() + kGap, inner, kAfterHeight};
+        y = cta_.getBottom() + kGap;
+        if (shape_.tiles > 0) {
+            tiles_ = {left, y, inner, sectionTiles::tilesHeight(shape_.tiles, true)};
+            y = tiles_.getBottom() + kGap;
+        }
+        after_ = {left, y, inner, kAfterHeight};
     } else {
         cta_ = after_ = {};
     }
+    tileLayout_ = tiles_.isEmpty() ? sectionTiles::Layout{}
+                                   : sectionTiles::layoutTiles(state_.tiles, tiles_.getWidth(), shape_.screen == Screen::Between);
     sentence_ = shape_.screen == Screen::Ended ? juce::Rectangle<float>(left, y, inner, kSentenceLine) : juce::Rectangle<float>();
 
     // The hints along the bottom, as many to a line as fit.
@@ -392,10 +426,10 @@ void StageView::paintPlaying(juce::Graphics& g) {
         g.strokePath(partOf(ring, static_cast<float>(hold_)), stroke);
     }
 
-    // The song's progress, or "Keep holding to stop".
+    // The song's progress, or what a key held is about to do.
     if (clip.intersects(barRow_)) {
-        if (hold_ > 0.0) {
-            drawFitted(g, "Keep holding to stop", holdFont(), theme::text, barRow_);
+        if (const auto holding = drawnHoldText(); holding.isNotEmpty()) {
+            drawFitted(g, holding, holdFont(), hold_ > 0.0 ? theme::text : theme::ember, barRow_);
         } else {
             const float radius = 0.5f * kBarHeight;
             g.setColour(theme::field);
@@ -411,6 +445,11 @@ void StageView::paintPlaying(juce::Graphics& g) {
             }
         }
     }
+
+    // A song with sections: the line, and the tiles under it.
+    if (!line_.isEmpty() && clip.intersects(line_)) sectionTiles::paintLine(g, line_, state_);
+    if (!tiles_.isEmpty() && clip.intersects(tiles_.expanded(kTileBleed)))
+        sectionTiles::paintTiles(g, tileLayout_, tiles_.getTopLeft(), state_.tiles, false, state_.looping);
 
     // The next song: "NEXT SONG · ✓ READY", its title, then on the right its BPM and key and how it follows.
     if (!clip.intersects(next_)) return;
@@ -484,6 +523,10 @@ void StageView::paintBetween(juce::Graphics& g) {
             }
         }
     }
+
+    // The song's sections, quiet: a number key starts from one.
+    if (!tiles_.isEmpty() && clip.intersects(tiles_))
+        sectionTiles::paintTiles(g, tileLayout_, tiles_.getTopLeft(), state_.tiles, true, false);
 
     // The row of songs: the one just played, the next (dashed in ember), and those after it.
     if (!clip.intersects(after_) || state_.after.empty()) return;

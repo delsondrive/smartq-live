@@ -40,7 +40,8 @@ struct ArrangementNow {
 class ShowArrangement {
 public:
     // The steps of a song as buildPreparedSong made it (its sections tiled, a too-short last one folded into the one before,
-    // its arrangement resolved): each step's section's name and type, the type's colour (transparent for none), and its bars.
+    // its arrangement resolved): each step's section's name and type, the type's colour (transparent for none), its bars, and
+    // where the section lies in song time.
     static std::vector<StepView> stepsOf(const model::SongDoc&, const model::BandDoc&, const engine::PreparedSong&);
     // Stopped: the step a section action starts the next song from (Section1 0 … Section10 9); -1 for any other action.
     static int startStep(Action);

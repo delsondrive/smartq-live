@@ -14,9 +14,11 @@ namespace sqlive::ui {
 // With no device, every picture but "interrupted" shows the top bar's red "No audio" pill, as the app does without one.
 //
 // The names, and what each shows:
-//   main-view      Show mode's main view: the first demo song 12 s in, the click raised 2 dB tonight
+//   main-view      Show mode's main view: the first demo song, in the mockup's sections and cues, 10 s in (its first
+//                  Chorus), the second Chorus chosen to come next, the click raised 2 dB tonight
 //   stage-playing  the stage view, the same moment
-//   stage-between  the stage view between songs: the first song played, the second up next
+//   stage-looping  the same, with the Chorus looping instead
+//   stage-between  the stage view between songs: the first song played, the second (in eight sections) up next
 //   stage-loading  the same, with the next song caught loading
 //   preshow-check  the pre-show check over the Setlists page
 //   interrupted    the stage view after the audio interface went away mid-song
