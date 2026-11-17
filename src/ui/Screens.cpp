@@ -324,6 +324,19 @@ juce::Image render(const juce::String& name, int width, int height) {
         NewComputerPage page(session, scene.host());
         return snapshot(page, width, height);
     } else if (name == "setlists") {
+        // The mockup's row 3: the first song on its "Long ending" arrangement, then a 4 s crossfade; the second, a gap.
+        const auto arrangementId = addMockupSections(session, scene.songIdAt(0)).first;
+        const auto* list = session.model().setlist(session.setlistId());
+        if (arrangementId.isNotEmpty() && list != nullptr && list->entries.size() > 1) {
+            const auto first = list->entries[0].id, second = list->entries[1].id, setlistId = session.setlistId();
+            session.commands().run("setlist.set", model::jsonObject({{"setlistId", setlistId}, {"playMode", "continuous"}}));
+            session.commands().run("setlist.setArrangement",
+                                   model::jsonObject({{"setlistId", setlistId}, {"entryId", first}, {"arrangementId", arrangementId}}));
+            session.commands().run("setlist.setTransition", model::jsonObject({{"setlistId", setlistId}, {"entryId", first},
+                                                                               {"kind", "crossfade"}, {"seconds", 4}}));
+            session.commands().run("setlist.setTransition", model::jsonObject({{"setlistId", setlistId}, {"entryId", second},
+                                                                               {"kind", "gap"}, {"seconds", 4}}));
+        }
         scene.page<SetlistsPage>(Page::Setlists);
     } else if (name == "new-song") {
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onNewSong)

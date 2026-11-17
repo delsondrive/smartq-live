@@ -9,6 +9,7 @@
 #include "ui/CuesLane.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
+#include "ui/SetlistEntries.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -62,7 +63,8 @@ juce::String readinessPill(const SongReadiness& r) {
     return "LOADING " + percent(r.progress);
 }
 
-// What follows a card's song: "→ stop", "→ gap 4 s", "→ seamless"; "end" on the last. Song by song, always a stop.
+// What follows a card's song: "→ stop", "→ gap 4 s", "→ seamless", "→ crossfade"; "end" on the last. Song by song, always a
+// stop (Session::followOn lets nothing follow on then, a crossfade included). A crossfade of 0 s plays as seamless.
 juce::String transitionNote(const model::SetlistDoc& list, std::size_t index) {
     if (index + 1 == list.entries.size()) return "end";
     const auto arrow = utf8("\xe2\x86\x92 ");                      // "→ "
@@ -71,8 +73,8 @@ juce::String transitionNote(const model::SetlistDoc& list, std::size_t index) {
     switch (transition.kind) {
     case model::TransitionKind::Gap: return arrow + "gap " + formatSeconds(transition.seconds) + " s";
     case model::TransitionKind::Seamless: return arrow + "seamless";
-    case model::TransitionKind::Stop:
-    case model::TransitionKind::Crossfade: break;                // plays as Stop until crossfades are built
+    case model::TransitionKind::Crossfade: return arrow + (playsAsCrossfade(transition) ? "crossfade" : "seamless");
+    case model::TransitionKind::Stop: break;
     }
     return arrow + "stop";
 }
@@ -84,8 +86,10 @@ juce::String followText(const model::SetlistDoc* list, int playingIndex) {
     switch (transition.kind) {
     case model::TransitionKind::Gap: return "after a " + formatSeconds(transition.seconds) + " s gap";
     case model::TransitionKind::Seamless: return "straight after this song";
-    case model::TransitionKind::Stop:
-    case model::TransitionKind::Crossfade: break;                // plays as Stop until crossfades are built
+    case model::TransitionKind::Crossfade:
+        if (!playsAsCrossfade(transition)) return "straight after this song";
+        return "after a " + formatSeconds(transition.seconds) + " s crossfade";
+    case model::TransitionKind::Stop: break;
     }
     return "after this song stops";
 }
@@ -321,7 +325,7 @@ ShowState makeShowState(const app::Session& session) {
         card.number = i + 1;
         if (const auto* song = songAt(i)) {
             card.title = song->title;
-            card.length = formatTime(song->lengthSeconds);
+            card.length = formatTime(arrangedSeconds(*song, list->entries[static_cast<std::size_t>(i)]));
         }
         card.kind = i == playingAt ? Kind::Playing : i == nextAt ? Kind::Next : i < reference ? Kind::Done : Kind::Later;
         if (card.kind == Kind::Playing) card.progress = st.songProgress;
@@ -380,7 +384,7 @@ ShowState makeShowState(const app::Session& session) {
             const auto metre = nextSong->tempo.empty() ? model::TempoPointDoc{} : nextSong->tempo.front();
             st.upBpmLabel = "BPM" + kDot + juce::String(metre.numerator) + "/" + juce::String(metre.denominator);
             st.upKey = nextSong->key;                                   // "" when it has none: no KEY figure
-            st.upLength = formatTime(nextSong->lengthSeconds);
+            st.upLength = formatTime(arrangedSeconds(*nextSong, list->entries[static_cast<std::size_t>(nextAt)]));
         }
         st.pill = readinessPill(next);
         switch (next.readiness) {

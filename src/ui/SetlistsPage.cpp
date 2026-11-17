@@ -10,6 +10,7 @@
 #include "model/JsonObject.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
+#include "ui/SetlistEntries.h"
 #include "ui/Theme.h"
 
 namespace sqlive::ui {
@@ -26,7 +27,7 @@ constexpr int kCapsHeight = 14, kCapsGap = 6;                                   
 constexpr int kListItemHeight = 46, kListNewHeight = 34, kListGap = 3, kListPadX = 12;   // .subtabs span
 constexpr int kHeaderHeight = 30, kSegmentedHeight = 28, kHeaderGap = 12;           // the title row, .col's gap
 constexpr int kTableHeadHeight = 29, kRowHeight = 46, kCellPad = 8, kChoiceHeight = 24;   // th, td and .dd
-constexpr int kGripWidth = 24, kNumberWidth = 36, kLengthWidth = 72, kThenWidth = 140;
+constexpr int kGripWidth = 24, kNumberWidth = 36, kLengthWidth = 64, kArrangementWidth = 140, kThenWidth = 132;
 constexpr int kBoxPadX = 12, kBoxPadY = 10, kBoxGap = 6, kSearchHeight = 26, kButtonHeight = 30;   // .box
 constexpr int kLibItemHeight = 30, kLibGap = 1, kLibPadX = 8;                       // .lib span
 constexpr int kDragThreshold = 4;
@@ -42,10 +43,11 @@ juce::String counted(int n, const juce::String& one, const juce::String& many) {
 
 juce::String transitionText(const model::Transition& t) {
     switch (t.kind) {
-        case model::TransitionKind::Stop:
-        case model::TransitionKind::Crossfade: break;            // plays as Stop until crossfades are built
+        case model::TransitionKind::Stop: break;
         case model::TransitionKind::Gap: return "Gap " + formatSeconds(t.seconds) + " s";
         case model::TransitionKind::Seamless: return "Seamless";
+        case model::TransitionKind::Crossfade:
+            return playsAsCrossfade(t) ? "Crossfade " + formatSeconds(t.seconds) + " s" : juce::String("Seamless");   // 0 s plays seamless
     }
     return "Stop";
 }
@@ -54,7 +56,7 @@ juce::String summaryOf(const model::BandModel& model, const model::SetlistDoc& l
     if (list.entries.empty()) return "No songs yet";
     double total = 0.0;
     for (const auto& entry : list.entries)
-        if (const auto* song = model.song(entry.songId)) total += song->lengthSeconds;
+        if (const auto* song = model.song(entry.songId)) total += arrangedSeconds(*song, entry);
     return counted(static_cast<int>(list.entries.size()), "song", "songs") + " " + kMiddleDot + " " + formatTime(total);
 }
 
@@ -74,9 +76,9 @@ juce::String warningOf(const app::Session& session, const juce::String& songId) 
     return {};
 }
 
-// The table's columns across a width: the grip, #, SONG, LENGTH and THEN, each from its x to the next one's.
+// The table's columns across a width: the grip, #, SONG, LENGTH, ARRANGEMENT and THEN, each from its x to the next one's.
 struct Columns {
-    int number = 0, song = 0, length = 0, then = 0, end = 0;
+    int number = 0, song = 0, length = 0, arrangement = 0, then = 0, end = 0;
 };
 
 Columns columnsFor(int width) {
@@ -85,7 +87,8 @@ Columns columnsFor(int width) {
     c.song = c.number + kNumberWidth;
     c.end = std::max(width, c.song);
     c.then = std::max(c.song, c.end - kThenWidth);
-    c.length = std::max(c.song, c.then - kLengthWidth);
+    c.arrangement = std::max(c.song, c.then - kArrangementWidth);
+    c.length = std::max(c.song, c.arrangement - kLengthWidth);
     return c;
 }
 
@@ -144,12 +147,17 @@ SetlistsState makeSetlistsState(const app::Session& session, const juce::String&
             if (const auto* song = model.song(entry.songId)) {
                 row.title = song->title;
                 row.sub = subOf(*song);
-                row.length = formatTime(song->lengthSeconds);
+                row.length = formatTime(arrangedSeconds(*song, entry));
+                row.arrangement = arrangementNameOf(*song, entry);
+                row.arrangementChoices = arrangementChoicesOf(*song);
+                row.arrangementIndex = chosenArrangementIndex(*song, entry);
                 auto found = warnings.find(entry.songId);
                 if (found == warnings.end()) found = warnings.emplace(entry.songId, warningOf(session, entry.songId)).first;
                 row.warning = found->second;
             } else {
                 row.title = "Missing song";
+                row.arrangement = "In order";
+                row.arrangementChoices = {"In order"};
             }
             const bool last = i + 1 == list->entries.size();
             row.then = last ? juce::String("end of the set") : state.continuous ? transitionText(entry.transition) : juce::String("Stop");
@@ -269,6 +277,8 @@ public:
 
     int idealHeight() const { return count() * kRowHeight; }
     Columns columns() const { return columnsFor(getWidth()); }
+    Choice* thenChoice(int row) { return choiceAt(choices_, row); }
+    Choice* arrangementChoice(int row) { return choiceAt(arrangements_, row); }
     juce::String drawnTitle(int row) const {
         return juce::isPositiveAndBelow(row, static_cast<int>(titles_.size())) ? titles_[static_cast<std::size_t>(row)] : juce::String();
     }
@@ -304,11 +314,37 @@ public:
             if (!continuous) {
                 choice.setItems({"Stop"}, 0);                     // song by song: every song stops, dimmed
             } else if (then == "Stop" || then == "Seamless") {
-                choice.setItems({"Stop", "Gap" + kEllipsis, "Seamless"}, then == "Stop" ? 0 : 2);
-            } else {                                              // "Gap 4 s", and "Gap…" to choose another length
-                choice.setItems({"Stop", then, "Seamless", "Gap" + kEllipsis}, 1);
+                choice.setItems({"Stop", "Gap" + kEllipsis, "Seamless", "Crossfade" + kEllipsis}, then == "Stop" ? 0 : 2);
+            } else if (then.startsWith("Gap")) {                  // "Gap 4 s", and "Gap…" to choose another length
+                choice.setItems({"Stop", then, "Seamless", "Gap" + kEllipsis, "Crossfade" + kEllipsis}, 1);
+            } else {                                              // "Crossfade 4 s", and "Crossfade…" to choose another length
+                choice.setItems({"Stop", "Gap" + kEllipsis, "Seamless", then, "Crossfade" + kEllipsis}, 3);
             }
             choice.setEnabled(continuous && page_.editable());
+        }
+
+        // The ARRANGEMENT choice of every row; dimmed, and "In order", for a song with no arrangements.
+        while (arrangements_.size() > rows.size()) {
+            removeChildComponent(arrangements_.back().get());
+            arrangements_.pop_back();
+        }
+        while (arrangements_.size() < rows.size()) {
+            auto choice = std::make_unique<Choice>();
+            auto* raw = choice.get();
+            choice->onChange = [this, raw](int index) {
+                for (std::size_t i = 0; i < arrangements_.size(); ++i)
+                    if (arrangements_[i].get() == raw && i < page_.state_.rows.size()) {
+                        const auto entryId = page_.state_.rows[i].entryId;
+                        page_.chooseArrangement(entryId, index);
+                        return;
+                    }
+            };
+            addAndMakeVisible(*choice);
+            arrangements_.push_back(std::move(choice));
+        }
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            arrangements_[i]->setItems(rows[i].arrangementChoices, rows[i].arrangementIndex);
+            arrangements_[i]->setEnabled(rows[i].arrangementChoices.size() > 1 && page_.editable());
         }
         const bool stillThere = std::any_of(rows.begin(), rows.end(), [this](const auto& r) { return r.entryId == selected_; });
         if (!stillThere) selected_.clear();
@@ -343,7 +379,7 @@ public:
             g.setColour(theme::mid);
             g.setFont(bodyFont());
             g.drawText(juce::String(row.number), cell(c.number, c.song), juce::Justification::centredLeft, true);
-            g.drawText(row.length, cell(c.length, c.then), juce::Justification::centredLeft, true);
+            g.drawText(row.length, cell(c.length, c.arrangement), juce::Justification::centredLeft, true);
 
             const auto song = cell(c.song, c.length);
             const auto line = song.withTrimmedTop(7).withHeight(17);
@@ -463,6 +499,9 @@ public:
     }
 
 private:
+    static Choice* choiceAt(const std::vector<std::unique_ptr<Choice>>& choices, int row) {
+        return juce::isPositiveAndBelow(row, static_cast<int>(choices.size())) ? choices[static_cast<std::size_t>(row)].get() : nullptr;
+    }
     int count() const { return static_cast<int>(page_.state_.rows.size()); }
     juce::Rectangle<int> rowArea(int i) const { return {0, i * kRowHeight, getWidth(), kRowHeight}; }
     int rowAt(int y) const { return y >= 0 && y < idealHeight() ? y / kRowHeight : -1; }
@@ -502,15 +541,17 @@ private:
             warnings_.push_back(warning);
             subs_.push_back(shorten(row.sub, smallFont(), songWidth));
         }
-        for (std::size_t i = 0; i < choices_.size(); ++i) {
-            const auto area = rowArea(static_cast<int>(i));
-            const int width = std::max(0, std::min(c.end - c.then - 2 * kCellPad, choices_[i]->idealWidth() + 24));
-            choices_[i]->setBounds(c.then + kCellPad, area.getY() + (kRowHeight - kChoiceHeight) / 2, width, kChoiceHeight);
-        }
+        const auto place = [&](Choice& choice, int row, int from, int to) {
+            const int width = std::max(0, std::min(to - from - 2 * kCellPad, choice.idealWidth() + 24));
+            choice.setBounds(from + kCellPad, rowArea(row).getY() + (kRowHeight - kChoiceHeight) / 2, width, kChoiceHeight);
+        };
+        for (std::size_t i = 0; i < choices_.size(); ++i) place(*choices_[i], static_cast<int>(i), c.then, c.end);
+        for (std::size_t i = 0; i < arrangements_.size(); ++i) place(*arrangements_[i], static_cast<int>(i), c.arrangement, c.then);
     }
 
     SetlistsPage& page_;
-    std::vector<std::unique_ptr<Choice>> choices_;
+    std::vector<std::unique_ptr<Choice>> choices_;                // THEN, for each row but the last
+    std::vector<std::unique_ptr<Choice>> arrangements_;           // ARRANGEMENT, for each row
     std::vector<juce::String> titles_, warnings_, subs_;          // as drawn
     juce::String selected_;                                       // an entry id
     int dropAt_ = -1;                                             // where a drop would go; -1 = no drag over the table
@@ -662,6 +703,8 @@ const juce::Viewport& SetlistsPage::tableViewport() const { return tableView_; }
 const juce::Viewport& SetlistsPage::listsViewport() const { return listsView_; }
 juce::String SetlistsPage::drawnTitle(int row) const { return table_->drawnTitle(row); }
 juce::String SetlistsPage::drawnHeading() const { return heading_; }
+Choice* SetlistsPage::thenChoice(int row) { return table_->thenChoice(row); }
+Choice* SetlistsPage::arrangementChoice(int row) { return table_->arrangementChoice(row); }
 
 void SetlistsPage::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(); }
 
@@ -758,7 +801,8 @@ void SetlistsPage::paint(juce::Graphics& g) {
     };
     head("#", c.number, c.song);
     head("SONG", c.song, c.length);
-    head("LENGTH", c.length, c.then);
+    head("LENGTH", c.length, c.arrangement);
+    head("ARRANGEMENT", c.arrangement, c.then);
     head("THEN", c.then, c.end);
     g.setColour(theme::hairline);
     g.fillRect(tableBox_.getX() + 1, headY + kTableHeadHeight - 1, tableBox_.getWidth() - 2, 1);
@@ -845,6 +889,11 @@ void SetlistsPage::chooseThen(const juce::String& entryId, const juce::String& i
         askGap(entryId);
         return;
     }
+    if (item == "Crossfade" + kEllipsis) {
+        askCrossfade(entryId);
+        return;
+    }
+    if (item != "Stop" && item != "Seamless") return;             // "Gap 4 s" or "Crossfade 4 s": already so
     run("setlist.setTransition", jsonObject({{"setlistId", session_.setlistId()}, {"entryId", entryId}, {"kind", item == "Seamless" ? "seamless" : "stop"}}));
 }
 

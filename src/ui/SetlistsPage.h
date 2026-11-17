@@ -19,10 +19,12 @@ struct SetlistsState {
     };
     struct Row {
         juce::String entryId, songId;  int number = 0;
-        juce::String title, sub, length, then, warning;
+        juce::String title, sub, length, arrangement, then, warning;
+        juce::StringArray arrangementChoices;                     // "In order", then the song's arrangements by name
+        int arrangementIndex = 0;                                 // the chosen one among them; 0 = "In order"
         // sub "128 BPM · E · count-in 1 bar" ("no count-in"). then: what the THEN column shows. Song by song: "Stop" in
-        // every row. Continuous: "Stop", "Gap 4 s" or "Seamless". The last row: "end of the set" in both modes.
-        // warning: "1 file missing", "3 files still in the cloud", or "".
+        // every row. Continuous: "Stop", "Gap 4 s", "Seamless" or "Crossfade 4 s". The last row: "end of the set" in both modes.
+        // length: the chosen arrangement's. warning: "1 file missing", "3 files still in the cloud", or "".
         bool operator==(const Row&) const = default;
     };
     struct LibraryItem {
@@ -43,8 +45,9 @@ SetlistsState makeSetlistsState(const app::Session&, const juce::String& search)
 
 // The mockup's screen 7. Left (200 px): the band's setlists; a click chooses one, a right-click renames or removes it,
 // and "+ New setlist" makes one. Middle: the chosen setlist's title and summary, "After each song" (continuous or song by
-// song), and its running order: rows dragged by their grip to reorder, removed with Delete or a right-click, a THEN
-// choice of what follows each song (dimmed, and "Stop", song by song), and "end of the set" on the last. Right (240 px):
+// song), and its running order: rows dragged by their grip to reorder, removed with Delete or a right-click, an ARRANGEMENT
+// choice of which arrangement each song plays (dimmed, and "In order", for a song with none), and a THEN choice of what follows
+// each song (Stop, Gap, Seamless or Crossfade; dimmed, and "Stop", song by song), and "end of the set" on the last. Right (240 px):
 // every song in the band, searchable, dragged into the running order (or double-clicked to add it at the end), removed
 // from the band with a right-click (asked first), and "+ New song". Files dropped anywhere on the page ask for a new song.
 //
@@ -66,6 +69,9 @@ public:
     const juce::Viewport& listsViewport() const;                  // for tests: the scrolling list of setlists
     juce::String drawnTitle(int row) const;                       // for tests: the row's title as laid out, shortened with "…" to fit
     juce::String drawnHeading() const;                            // for tests: the setlist's name as laid out above the table
+    Choice* thenChoice(int row);                                  // for tests: the row's THEN choice (none on the last row)
+    Choice* arrangementChoice(int row);                           // for tests: the row's ARRANGEMENT choice
+    void answerCrossfade(const juce::String& entryId, const juce::String& seconds);   // what the seconds question does with its answer
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -99,6 +105,8 @@ private:
     void setContinuous(bool);
     void chooseThen(const juce::String& entryId, const juce::String& item);
     void askGap(const juce::String& entryId);
+    void askCrossfade(const juce::String& entryId);
+    void chooseArrangement(const juce::String& entryId, int index);
     void addSong(const juce::String& songId, int index);          // index -1: at the end
     void moveEntry(const juce::String& entryId, int toIndex);
     void removeEntry(const juce::String& entryId);
