@@ -4,6 +4,7 @@
 #include <cmath>
 #include <set>
 
+#include "model/DocumentsJson.h"
 #include "model/SongMidi.h"
 #include "model/Words.h"
 
@@ -47,6 +48,14 @@ struct Lines {
     std::vector<ChangeLine> all;
     void add(const juce::String& where, const juce::String& what) { all.push_back({where, what}); }
 };
+
+// A document whose JSON differs although nothing said how (a part renamed or given another file, the band's name, a rig's
+// buffer or device): one line, so the list never says nothing has changed when something has.
+template <typename Doc>
+void sayIfChanged(Lines& out, std::size_t linesBefore, const juce::String& where, const Doc& then, const Doc& now) {
+    if (out.all.size() != linesBefore) return;
+    if (juce::JSON::toString(toVar(then), true) != juce::JSON::toString(toVar(now), true)) out.add(where, "changed");
+}
 
 // ---- Songs --------------------------------------------------------------------------------------------------------------
 
@@ -235,7 +244,11 @@ std::vector<ChangeLine> describeChanges(const BandModel& then, const BandModel& 
     for (const auto& id : thenSongs)
         if (now.song(id) == nullptr) out.add(then.song(id)->title, "removed");
     for (const auto& id : nowSongs)
-        if (const auto* was = then.song(id)) describeSong(out, *was, *now.song(id), then.band(), now.band());
+        if (const auto* was = then.song(id)) {
+            const auto before = out.all.size();
+            describeSong(out, *was, *now.song(id), then.band(), now.band());
+            sayIfChanged(out, before, now.song(id)->title, *was, *now.song(id));
+        }
 
     const auto nowSetlists = now.setlistIds(), thenSetlists = then.setlistIds();
     for (const auto& id : nowSetlists)
@@ -243,7 +256,11 @@ std::vector<ChangeLine> describeChanges(const BandModel& then, const BandModel& 
     for (const auto& id : thenSetlists)
         if (now.setlist(id) == nullptr) out.add(then.setlist(id)->name, "removed");
     for (const auto& id : nowSetlists)
-        if (const auto* was = then.setlist(id)) describeSetlist(out, then, now, *was, *now.setlist(id));
+        if (const auto* was = then.setlist(id)) {
+            const auto before = out.all.size();
+            describeSetlist(out, then, now, *was, *now.setlist(id));
+            sayIfChanged(out, before, now.setlist(id)->name, *was, *now.setlist(id));
+        }
 
     const auto nowRigs = now.rigIds(), thenRigs = then.rigIds();
     for (const auto& id : nowRigs)
@@ -251,16 +268,22 @@ std::vector<ChangeLine> describeChanges(const BandModel& then, const BandModel& 
     for (const auto& id : thenRigs)
         if (now.rig(id) == nullptr) out.add(then.rig(id)->name, "removed");
     for (const auto& id : nowRigs)
-        if (const auto* was = then.rig(id)) describeRig(out, then.band(), now.band(), *was, *now.rig(id));
+        if (const auto* was = then.rig(id)) {
+            const auto before = out.all.size();
+            describeRig(out, then.band(), now.band(), *was, *now.rig(id));
+            sayIfChanged(out, before, now.rig(id)->name, *was, *now.rig(id));
+        }
 
+    const auto beforeBand = out.all.size();
     describeBand(out, then.band(), now.band());
+    sayIfChanged(out, beforeBand, "Band", then.band(), now.band());
 
     auto& lines = out.all;
     const auto keep = static_cast<std::size_t>(std::max(0, limit));
-    if (lines.size() > keep + 1) {                                    // one over is shown whole: "and 1 more changes" saves nothing
-        const auto more = lines.size() - keep;
+    if (lines.size() > keep) {                                        // never more than the limit, and how many more
+        const auto more = static_cast<int>(lines.size() - keep);
         lines.resize(keep);
-        lines.push_back({{}, "and " + juce::String(static_cast<int>(more)) + " more changes"});
+        lines.push_back({{}, "and " + juce::String(more) + (more == 1 ? " more change" : " more changes")});
     }
     return std::move(lines);
 }

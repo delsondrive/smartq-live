@@ -70,6 +70,49 @@ TEST_CASE("the list is cut when long, and survives things that no longer exist",
     CHECK(SnapshotStore(s.folder()).load("no-such", then).failed());
 }
 
+TEST_CASE("the list never shows more than its limit and a last 'and n more' line", "[changes]") {
+    DemoSession d(true); auto& s = *d.session; SnapshotStore store(s.folder());
+    store.create(s.model(), "Then", false);  auto id = store.list().front().id;
+    auto song = d.setlist().entries[0].songId; auto g1 = s.model().band().midiDevices[0].id;
+    for (int i = 0; i < 20; ++i) s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 2 + i % 14}, {"beat", 1 + (i % 4)}}));
+    BandModel then;  REQUIRE(store.load(id, then).wasOk());
+    const auto all = describeChanges(then, s.model(), 1000);
+    const int count = static_cast<int>(all.size());
+    REQUIRE(count >= 20);
+    CHECK(describeChanges(then, s.model(), count).size() == all.size());              // at the limit: shown whole
+    const auto oneOver = describeChanges(then, s.model(), count - 1);                 // one over: still cut
+    REQUIRE(oneOver.size() == all.size());
+    CHECK(oneOver.back().where.isEmpty());  CHECK(oneOver.back().what == "and 1 more change");
+    const auto twoOver = describeChanges(then, s.model(), count - 2);
+    REQUIRE(twoOver.size() == all.size() - 1);
+    CHECK(twoOver.back().what == "and 2 more changes");
+    const auto dialog = describeChanges(then, s.model(), 12);                         // what the Snapshots dialog shows
+    REQUIRE(dialog.size() == 13);
+    for (int i = 0; i < 12; ++i) CHECK(dialog[(size_t) i].what == all[(size_t) i].what);
+    CHECK(dialog.back().what == "and " + juce::String(count - 12) + " more changes");
+}
+
+TEST_CASE("a document that differs with nothing else said still gets a line", "[changes]") {
+    DemoSession d; auto& s = *d.session; SnapshotStore store(s.folder());
+    store.create(s.model(), "Then", false);  auto id = store.list().front().id;
+    const auto first = d.setlist().entries[0].songId, second = d.setlist().entries[1].songId;
+    const auto title = s.model().song(first)->title, secondTitle = s.model().song(second)->title;
+    const auto rigName = s.model().rig(s.rigId())->name;
+    REQUIRE(s.commands().run("part.set", params({{"songId", first}, {"partId", s.model().song(first)->parts[0].id}, {"name", "Renamed"}})).ok);
+    REQUIRE(s.commands().run("band.rename", params({{"name", "Another name"}})).ok);
+    REQUIRE(s.commands().run("rig.set", params({{"rigId", s.rigId()}, {"bufferSize", 256}})).ok);
+    const auto& part = s.model().song(second)->parts[0];
+    REQUIRE(s.commands().run("part.set", params({{"songId", second}, {"partId", part.id}, {"gainDb", part.gainDb + 3}})).ok);
+    BandModel then;  REQUIRE(store.load(id, then).wasOk());
+    const auto lines = describeChanges(then, s.model(), 1000);
+    CHECK(has(lines, title, "changed"));                                             // a part renamed
+    CHECK(has(lines, "Band", "changed"));                                            // the band's name
+    CHECK(has(lines, rigName, "changed"));                                           // the rig's buffer size
+    CHECK_FALSE(has(lines, secondTitle, "changed"));                                 // said already: its level
+    CHECK(std::count_if(lines.begin(), lines.end(), [&](const ChangeLine& l) { return l.where == secondTitle; }) == 1);
+    CHECK(describeChanges(then, then).empty());
+}
+
 TEST_CASE("a snapshot older than what it is compared with is still readable", "[changes]") {
     DemoSession d(true); auto& s = *d.session;
     const auto& now = s.model();
@@ -88,6 +131,13 @@ TEST_CASE("a snapshot older than what it is compared with is still readable", "[
     }
 
     SECTION("stage 3 data on one side only") {
+        // The song has an arrangement and automation now, so their being gone on the old side is always said.
+        REQUIRE(s.commands().run("arrangement.add", params({{"songId", song}, {"name", "Short"}})).ok);
+        auto points = juce::Array<juce::var>();
+        points.add(params({{"bar", 2}, {"beat", 1}, {"db", -3}}));
+        REQUIRE(s.commands().run("automation.set", params({{"songId", song}, {"target", "click"}, {"points", juce::var(points)}})).ok);
+        REQUIRE_FALSE(now.song(song)->arrangements.empty());
+        REQUIRE_FALSE(now.song(song)->automation.empty());
         BandModel old;                                                            // as a snapshot from before sections existed
         auto band = now.band();
         band.sectionTypes.clear();
@@ -119,8 +169,10 @@ TEST_CASE("a snapshot older than what it is compared with is still readable", "[
         CHECK(has(forward, title, "Guitar 1: bar 9 removed") == false);
         CHECK(std::any_of(forward.begin(), forward.end(), [&](const ChangeLine& l) { return l.where == title && l.what.startsWith("A removed device: ") && l.what.contains("removed from bar 9"); }));
         CHECK(std::any_of(forward.begin(), forward.end(), [&](const ChangeLine& l) { return l.where == title && l.what.contains(" role a removed role" + kArrow); }));
-        if (!now.song(song)->automation.empty()) CHECK(has(forward, title, "automation changed"));
-        if (!now.song(song)->arrangements.empty()) CHECK(has(forward, title, "arrangements changed"));
+        CHECK(has(forward, title, "automation changed"));
+        CHECK(has(forward, title, "arrangements changed"));
+        CHECK(has(backward, title, "automation changed"));
+        CHECK(has(backward, title, "arrangements changed"));
     }
 
     SECTION("sections, arrangements, automation and section types edited") {
