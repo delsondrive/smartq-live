@@ -30,8 +30,10 @@ constexpr int kButtonPadding = 12, kMinButtonPadding = 6, kMinButtonGap = 3;
 
 const juce::String kAnotherProgram = "Another program" + kEllipsis, kNoProgram = "No program change";
 
-// The badge colours: the mockup's CC is --s-chorus; a note and a program take two more of the section colours.
-const juce::Colour kBadgeControl{0xffffc163}, kBadgeNote{0xff6ea8ff}, kBadgeProgram{0xffb69dff};
+// The badge colours: the mockup's CC is --s-chorus. A note and a program take colours of their own, a green and a violet
+// that are no section's (sections share the song timeline with the pedal changes), no device's in the Colour menu, and
+// never mint, ember, caution or danger.
+const juce::Colour kBadgeControl{0xffffc163}, kBadgeNote{0xff86e08e}, kBadgeProgram{0xffd68cff};
 
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
