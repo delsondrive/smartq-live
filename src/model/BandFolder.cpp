@@ -225,16 +225,14 @@ juce::File BandFolder::trashedSongFolder(const juce::String& songId) const {
 juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String& songTitle) {
     auto it = trashed_.find(key);
     if (it == trashed_.end()) {
-        // A folder remembered for it that is gone (its removal on another computer was loaded) doesn't count as its folder,
-        // nor, when its own is in the trash, does one that now holds another song's song.json (made there since).
+        // A folder remembered for it that is gone (its removal on another computer was loaded) doesn't count as its folder.
+        // Nor, when its own is in the trash, does one that holds another song's song.json, or none that can be read: made
+        // there since, by another song whose audio a sync tool may bring before its song.json.
         if (key.kind != DocKind::Song) return juce::Result::ok();
         const auto remembered = place(key);
-        if (remembered.isDirectory()) {
-            const auto held = songIdIn(remembered);
-            if (held.isEmpty() || held == key.id) return juce::Result::ok();
-        }
+        if (remembered.isDirectory() && songIdIn(remembered) == key.id) return juce::Result::ok();
         const auto from = trashedSongFolder(key.id);
-        if (from == juce::File()) return juce::Result::ok();
+        if (from == juce::File()) return juce::Result::ok();     // nothing to bring back: the remembered folder is its own
         const auto to = remembered != juce::File() && ! remembered.exists()
                             ? remembered                         // back where it was
                             : freeSongFolder(songTitle);
@@ -247,9 +245,10 @@ juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String&
     if (! from.exists()) { trashed_.erase(it); return juce::Result::ok(); }
     auto to = place(key);
     if (to.exists()) {   // something else took its place meanwhile
+        // A song's folder never lands on a name remembered for another song (whose folder is gone for now).
         auto parent = to.getParentDirectory();
-        to = from.isDirectory() ? uniqueChild(parent, to.getFileName(), "")
-                                : uniqueChild(parent, to.getFileNameWithoutExtension(), to.getFileExtension());
+        to = key.kind == DocKind::Song ? freeSongFolder(songTitle.isNotEmpty() ? songTitle : to.getFileName())
+                                       : uniqueChild(parent, to.getFileNameWithoutExtension(), to.getFileExtension());
     }
     to.getParentDirectory().createDirectory();
     if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");

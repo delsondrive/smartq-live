@@ -161,6 +161,39 @@ TEST_CASE("a new song never gets a folder still remembered for another song", "[
     CHECK(dirB.getChildFile("audio/B.wav").existsAsFile());
     CHECK_FALSE(dirB.getChildFile("audio/A.wav").exists());
 }
+TEST_CASE("a song coming back never lands in its remembered folder while another song's audio syncs in there first", "[folder]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    SongDoc a; a.id = newId(); a.title = "Same";
+    const auto dirA = folder.assignSongFolder(a.id, a.title);  dirA.getChildFile("audio/A.wav").create();
+    model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());
+    REQUIRE(root.getChildFile("trash").createDirectory());
+    REQUIRE(dirA.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
+    REQUIRE(dirA.getChildFile("audio/C.wav").create());             // and made its own song there: its audio syncs in first
+    REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());     // A is saved meanwhile (brought back, say)
+    CHECK_FALSE(dirA.getChildFile("song.json").exists());           // the other song's folder is left alone
+    const auto back = folder.songFolder(a.id);
+    CHECK(back != dirA);
+    CHECK(back.getChildFile("audio/A.wav").existsAsFile());         // its own folder came back from the trash
+    CHECK(juce::JSON::parse(back.getChildFile("song.json").loadFileAsString()).getProperty("id", {}).toString() == a.id);
+}
+TEST_CASE("a song this folder trashed comes back beside a folder now taken, never into one remembered for another song", "[folder]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    SongDoc a; a.id = newId(); a.title = "Same";
+    const auto dirA = folder.assignSongFolder(a.id, a.title);  dirA.getChildFile("audio/A.wav").create();
+    model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());
+    SongDoc b; b.id = newId(); b.title = "Same";
+    const auto dirB = folder.assignSongFolder(b.id, b.title);       // "Same 2"
+    model.putSong(b);  REQUIRE(folder.save({DocKind::Song, b.id}, model).wasOk());
+    model.removeSong(a.id);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());   // trashed here
+    REQUIRE(dirB.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 Same 2")));   // B trashed elsewhere; still remembered
+    REQUIRE(dirA.getChildFile("song.json").create());               // and something else in A's old folder
+    model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());   // A comes back (undo)
+    const auto back = folder.songFolder(a.id);
+    CHECK(back != dirA);  CHECK(back != dirB);                      // "Same 2" is still B's
+    CHECK(back.getChildFile("audio/A.wav").existsAsFile());
+}
 TEST_CASE("a song coming back never writes over another song now in its remembered folder", "[folder]") {
     sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
     BandFolder folder(root); BandModel model; folder.load(model);
