@@ -68,6 +68,9 @@ public:
 
     TopBar& topBar() { return topBar_; }
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
+    // The phone remote's state for the top bar (app::remoteStatusOf), asked with every refresh; MainWindow sets it when the
+    // app has a remote. Unset (tests, screenshots): no remote.
+    std::function<app::RemoteStatus()> remoteStatus;
 
     void paint(juce::Graphics&) override;
     void resized() override;

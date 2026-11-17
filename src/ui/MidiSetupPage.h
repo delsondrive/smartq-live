@@ -43,6 +43,9 @@ struct MidiSetupState {
             // latching switch to momentary." (its tooltip adds toggling pads: either acts only on every other tap)
         juce::String keyNote;
             // the key cell's tooltip adds it: for Stop with a key of its own, that Start's key held stops too
+        juce::String phone;
+            // what the phone remote can do: "✓", "✓ hold" (Stop, Go to the next song now: held on the phone), "—" (the
+            // view switch), from app::remotePageActions()
         bool operator==(const Control&) const = default;
     };
     juce::String rigName;
@@ -68,10 +71,10 @@ MidiSetupState makeMidiSetupState(const app::Session&, const app::ControlInput*)
 // drag; a double-click sets "on time"), PATCHES (opens the PatchListDialog), STATUS and "Test" (sends its first patch, or
 // program 0; off unless its port is open). "+ Add a device" asks for a name. The rows scroll when there are many.
 //
-// CONTROLS: one row per action: ACTION, KEY (a click waits for the next key, as "Press a key…"; Esc cancels) and PEDAL
+// CONTROLS: one row per action: ACTION, KEY (a click waits for the next key, as "Press a key…"; Esc cancels), PEDAL
 // OR PAD (the learned control with ✕ to forget it, or "Learn", which waits for the next pedal or pad through the window's
-// ControlInput as "Press a pedal…", pulsing in ember; Esc or a second click cancels). Without a ControlInput (tests)
-// nothing can be learned and no row pulses.
+// ControlInput as "Press a pedal…", pulsing in ember; Esc or a second click cancels) and PHONE (what the phone remote can
+// do, in mint; "—" in dim). Without a ControlInput (tests) nothing can be learned and no row pulses.
 //
 // Every change is a command, in Edit mode only; a refusal, or what a command says it did, is said in the box's header for
 // 4 s. Waiting for a key or a pedal is cancelled when the page hides (cancelGestures) or the mode changes. The page takes

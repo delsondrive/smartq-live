@@ -630,4 +630,13 @@ void RemoteServer::changeListenerCallback(juce::ChangeBroadcaster*) {
     if (hub_) hub_->wake();                                       // each stream asks for its phone's access again
 }
 
+RemoteStatus remoteStatusOf(const RemoteAccess& access, const RemoteServer& server) {
+    RemoteStatus status;
+    status.running = server.isRunning();
+    status.connected = server.connectedPhones();
+    for (const auto& phone : access.phones())
+        if (phone.access == PhoneAccess::Waiting) status.waiting = true;
+    return status;
+}
+
 }  // namespace sqlive::app

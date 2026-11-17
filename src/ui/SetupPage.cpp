@@ -40,9 +40,11 @@ const model::ComputerBinding* bindingOf(const app::Session& session) {
 
 }  // namespace
 
-SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlInput* input)
+SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlInput* input, app::RemoteAccess* access,
+                     app::RemoteServer* server)
     : session_(session), host_(host), duplicate_("Duplicate rig"), more_(juce::String::fromUTF8("\xe2\x8b\xaf")), tone_("Test tone"),
       grid_(session), midi_(session, input), cue_voice_(session) {
+    if (access != nullptr && server != nullptr) remote_ = std::make_unique<RemoteSetupPage>(session, *access, *server);
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
                                                                &more_, &tone_, &grid_})
         addAndMakeVisible(*child);
@@ -79,6 +81,7 @@ SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlIn
 
     addChildComponent(midi_);                                     // shown with its sub-tab
     addChildComponent(cue_voice_);
+    if (remote_ != nullptr) addChildComponent(*remote_);
     keepOffKeyboard(*this);
     session_.changes().addChangeListener(this);
     refresh(true);
@@ -104,6 +107,7 @@ void SetupPage::visibilityChanged() {
     grid_.refreshNow();                                           // it isn't told when the page is shown
     if (midi_.isVisible()) midi_.refreshNow();
     if (cue_voice_.isVisible()) cue_voice_.refreshNow();
+    if (remote_ != nullptr && remote_->isVisible()) remote_->refreshNow();
 }
 
 void SetupPage::showSubTab(SubTab tab) {
@@ -116,6 +120,7 @@ void SetupPage::showSubTab(SubTab tab) {
         child->setVisible(audio);
     midi_.setVisible(midi);                                       // shown, it reads the band again; hidden, it stops waiting
     cue_voice_.setVisible(tab == SubTab::CueVoice);
+    if (remote_ != nullptr) remote_->setVisible(tab == SubTab::Remote);
     if (audio) {
         interfaces_for_.clear();
         refresh(true);
@@ -130,10 +135,17 @@ void SetupPage::mouseDown(const juce::MouseEvent& e) {
     if (sub_tab_.contains(e.getPosition())) showSubTab(SubTab::Audio);
     else if (midi_tab_.contains(e.getPosition())) showSubTab(SubTab::Midi);
     else if (cue_tab_.contains(e.getPosition())) showSubTab(SubTab::CueVoice);
+    else if (remote_tab_.contains(e.getPosition())) showSubTab(SubTab::Remote);
 }
 
 juce::Rectangle<int> SetupPage::subTabBounds(SubTab tab) const {
-    return tab == SubTab::Audio ? sub_tab_ : tab == SubTab::Midi ? midi_tab_ : cue_tab_;
+    switch (tab) {
+        case SubTab::Audio: return sub_tab_;
+        case SubTab::Midi: return midi_tab_;
+        case SubTab::CueVoice: return cue_tab_;
+        case SubTab::Remote: return remote_tab_;
+    }
+    return {};
 }
 
 void SetupPage::refresh(bool force) {
@@ -341,8 +353,10 @@ void SetupPage::resized() {
     sub_tab_ = sub_tabs_.withHeight(kSubTabHeight);
     midi_tab_ = sub_tab_.translated(0, kSubTabHeight + kSubTabGap);
     cue_tab_ = midi_tab_.translated(0, kSubTabHeight + kSubTabGap);
+    remote_tab_ = cue_tab_.translated(0, kSubTabHeight + kSubTabGap);
     midi_.setBounds(area.withTrimmedLeft(std::min(kGap, area.getWidth())));
     cue_voice_.setBounds(midi_.getBounds());
+    if (remote_ != nullptr) remote_->setBounds(midi_.getBounds());
     area.removeFromLeft(kGap);
 
     // The panel's groups side by side; the pill and the buttons at its right, or on a row of their own when they don't fit.
@@ -439,7 +453,8 @@ void SetupPage::paint(juce::Graphics& g) {
     drawSubTab(sub_tab_, "Audio & routing", "Rig, outputs, roles", sub_tab_choice_ == SubTab::Audio);
     drawSubTab(midi_tab_, "MIDI & controls", "Pedalboards, keys, pedals", sub_tab_choice_ == SubTab::Midi);
     drawSubTab(cue_tab_, "Cue voice", "Section types, sounds", sub_tab_choice_ == SubTab::CueVoice);
-    if (sub_tab_choice_ != SubTab::Audio) return;                 // the MIDI and cue voice pages draw themselves
+    drawSubTab(remote_tab_, "Remote", "Phones", sub_tab_choice_ == SubTab::Remote);
+    if (sub_tab_choice_ != SubTab::Audio) return;                 // the other pages draw themselves
 
     theme::paintPanel(g, top_.toFloat());
     g.setColour(theme::dim);

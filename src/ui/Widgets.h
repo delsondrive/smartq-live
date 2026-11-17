@@ -58,7 +58,7 @@ private:
 };
 
 // The mockup's .st: a 12 px pill in mint (Ok), caution (Warning) or danger (Bad), its tint behind the words.
-class StatusPill : public juce::Component {
+class StatusPill : public juce::Component, public juce::SettableTooltipClient {
 public:
     enum class Level { Ok, Warning, Bad };
     StatusPill();

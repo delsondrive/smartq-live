@@ -6,6 +6,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "app/RemoteServer.h"
 #include "app/Session.h"
 #include "ui/Widgets.h"
 
@@ -28,16 +29,19 @@ struct TopBarState {
     bool playing = false, canUndo = false;  juce::String undoTip; // "Undo: rename the band"
     double holdProgress = 0.0;                                    // ShowController::holdProgress(): the ▶ button's ring
     // editToo: shown in Edit mode as well, before Undo (as the audio pill is when it is Bad, and "Check files"). shortText:
-    // the words when the Edit-mode bar is too narrow for them all ("MIDI missing"); "" = the same words
-    struct Pill { juce::String text; StatusPill::Level level; bool editToo = false; juce::String shortText; };  std::vector<Pill> pills;
+    // the words when the Edit-mode bar is too narrow for them all ("MIDI missing"); "" = the same words. tooltip: "" = none
+    struct Pill { juce::String text; StatusPill::Level level; bool editToo = false; juce::String shortText, tooltip; };
+    std::vector<Pill> pills;
 
     bool operator==(const TopBarState&) const;
 };
 
 // The top bar's state from the session. AudioHost and ShowController may be nullptr (tests): no device, no hold.
-// Runs 30 times a second: it reads only what the session already keeps.
+// Runs 30 times a second: it reads only what the session already keeps. remote (app::remoteStatusOf; none in tests): while
+// the phone remote runs, "Remote <n>" (n phones following), Ok; a Warning shown in Edit mode too, with the tooltip "A phone
+// is waiting to be let in.", while one waits.
 TopBarState makeTopBarState(const app::Session&, const app::AudioHost*, const app::ShowController*, Page,
-                            bool keyboardElsewhere = false);
+                            bool keyboardElsewhere = false, const app::RemoteStatus& remote = {});
 
 // The words on the tabs, "Setlists", "Song editor", "Mixer", "Setup".
 juce::String pageName(Page);
@@ -46,7 +50,8 @@ juce::String pageName(Page);
 // logo, clock, chips, beat lights, the transport (⏮ ▶ ⏭), status pills, the switch. Show mode, stage view: logo, a gap,
 // pills, the switch. Clicking the logo in Edit mode opens the About panel. In Edit mode only the pills that need a look sit
 // before Undo: the audio pill when audio isn't OK ("No audio", "Audio lost"), the MIDI pill when a device is missing or
-// none has a port here, and "Check files", when there is one, where a click calls onCheckFiles. When they don't all fit
+// none has a port here, the remote's while a phone waits, and "Check files", when there is one, where a click calls
+// onCheckFiles. When they don't all fit
 // between the tabs and Undo, they take their short words ("MIDI missing"), and then the widest is cut with "…".
 class TopBar : public juce::Component, private juce::Timer {
 public:

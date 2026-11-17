@@ -273,7 +273,10 @@ void AppShell::refresh() {
     refreshTopBar();
 }
 
-void AppShell::refreshTopBar() { topBar_.setState(makeTopBarState(session_, host_, controller_, page_, keyboardElsewhere_)); }
+void AppShell::refreshTopBar() {
+    topBar_.setState(makeTopBarState(session_, host_, controller_, page_, keyboardElsewhere_,
+                                     remoteStatus ? remoteStatus() : app::RemoteStatus{}));
+}
 
 void AppShell::refreshBanners() {
     interrupted_.refresh();

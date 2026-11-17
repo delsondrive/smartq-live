@@ -11,7 +11,9 @@
 
 namespace sqlive::app {
 class AudioHost;
-}
+class RemoteAccess;
+class RemoteServer;
+}  // namespace sqlive::app
 
 namespace sqlive::ui {
 
@@ -23,7 +25,9 @@ bool keyboardElsewhere(bool inShow, bool active, int modalCount);
 
 // The app's window: a native title bar, resizable down to 1100 x 680, opening at 1280 x 800 in the middle of the screen,
 // with an AppShell as its content. It owns the ShowController and the app's one ControlInput (every MIDI input, so a learned
-// pedal works whichever window has the keyboard), and wires them and every page in (plugInPages).
+// pedal works whichever window has the keyboard), and wires them and every page in (plugInPages). The band's phone remote
+// (App's RemoteAccess and RemoteServer, both or neither; none in tests) goes to Setup's Remote page and the top bar; both
+// must outlive the window.
 //
 // In Show mode the ShowController listens to the keys, the window takes kiosk mode (when allowed) and the screen saver is
 // off; leaving Show mode undoes all three. Whenever the window stops being active the controller forgets every held key,
@@ -35,7 +39,7 @@ bool keyboardElsewhere(bool inShow, bool active, int modalCount);
 // click.
 class MainWindow : public juce::DocumentWindow, private juce::ChangeListener {
 public:
-    MainWindow(app::Session&, app::AudioHost*);
+    MainWindow(app::Session&, app::AudioHost*, app::RemoteAccess* = nullptr, app::RemoteServer* = nullptr);
     ~MainWindow() override;
 
     void setKioskAllowed(bool);                                   // allowed unless told otherwise

@@ -11,6 +11,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/Controls.h"
+#include "app/RemoteActions.h"
 #include "app/Session.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
@@ -29,6 +30,7 @@ constexpr int kBoxGap = 12, kHeaderTop = 10, kHeaderHeight = 18, kPadX = 12, kCe
 constexpr int kHeadRow = 29, kDeviceRow = 42, kControlRow = 36, kControlRowMin = 30;
 constexpr int kChoiceHeight = 24, kButtonHeight = 28, kSwitchW = 34, kSwitchH = 18, kValueHeight = 24, kValueMin = 80;
 constexpr int kLearnHeight = 20, kLearnPadX = 8, kClearSize = 16, kActionWidth = 240, kKeyWidth = 240, kMessageGap = 16;
+constexpr int kPhoneWidth = 90;                                               // the PHONE column, at the right
 constexpr double kMessageSeconds = 4.0, kPulseSeconds = 1.2;
 constexpr int kMaxOffsetMs = 200;
 
@@ -109,6 +111,16 @@ const std::vector<app::Action>& rowActions() {
         return all;
     }();
     return rows;
+}
+
+// The PHONE column (the mockup's screen 12), from the one list the phone's page is checked against: "✓" for an action the
+// page sends, "✓ hold" for one that needs its hold first (Stop, Go to the next song now), "—" for any other.
+const juce::String kPhoneNo = utf8("\xe2\x80\x94");                           // —
+juce::String phoneText(const juce::String& action) {
+    static const auto offered = app::remotePageActions();
+    if (!offered.contains(action)) return kPhoneNo;
+    const auto hold = app::remoteHoldFor(action);
+    return utf8("\xe2\x9c\x93") + (hold.isNotEmpty() && offered.contains(hold) ? juce::String(" hold") : juce::String());
 }
 
 // "1–9, 0" while the ten have their default keys; otherwise each one's key, in order ("" for none).

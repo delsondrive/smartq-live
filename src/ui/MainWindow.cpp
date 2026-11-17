@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 
+#include "app/RemoteServer.h"
 #include "ui/Pages.h"
 #include "ui/Theme.h"
 
@@ -7,7 +8,7 @@ namespace sqlive::ui {
 
 using app::Mode;
 
-MainWindow::MainWindow(app::Session& session, app::AudioHost* host)
+MainWindow::MainWindow(app::Session& session, app::AudioHost* host, app::RemoteAccess* access, app::RemoteServer* server)
     : juce::DocumentWindow("Smart Q Live", theme::bg1, juce::DocumentWindow::allButtons),
       session_(session),
       controller_(session),
@@ -15,7 +16,9 @@ MainWindow::MainWindow(app::Session& session, app::AudioHost* host)
       shell_(session, host),
       tooltips_(nullptr, 600) {
     shell_.setShowController(&controller_);
-    plugInPages(shell_, session_, host, &controller_, &controlInput_);
+    if (access != nullptr && server != nullptr)
+        shell_.remoteStatus = [access, server] { return app::remoteStatusOf(*access, *server); };
+    plugInPages(shell_, session_, host, &controller_, &controlInput_, access, server);
     shell_.onOpenAnotherBand = [this] { if (onOpenAnotherBand) onOpenAnotherBand(); };
 
     setUsingNativeTitleBar(true);

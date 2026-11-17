@@ -107,4 +107,12 @@ private:
     juce::String published_;                           // the last state handed to the hub
 };
 
+// What the top bar says about the remote: whether it runs, how many phones follow it, and whether one waits to be let in.
+struct RemoteStatus {
+    bool running = false;
+    int connected = 0;
+    bool waiting = false;
+};
+RemoteStatus remoteStatusOf(const RemoteAccess&, const RemoteServer&);   // message thread
+
 }  // namespace sqlive::app

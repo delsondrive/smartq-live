@@ -22,7 +22,14 @@ FetchContent_Declare(httplib
     GIT_TAG v0.64.0
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR do-not-add)
-FetchContent_MakeAvailable(JUCE Catch2 httplib)
+# The QR code on Setup's Remote page: one C++ file and its header (cpp/qrcodegen.cpp), compiled into both targets below.
+# The repository has no CMakeLists of its own; it is only fetched.
+FetchContent_Declare(qrcodegen
+    GIT_REPOSITORY https://github.com/nayuki/QR-Code-generator.git
+    GIT_TAG v1.8.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR do-not-add)
+FetchContent_MakeAvailable(JUCE Catch2 httplib qrcodegen)
 
 # The build stamp: the short commit, the commit's time and whether the tree has uncommitted changes (tracked files only,
 # so a scratch file doesn't mark the build), read when this configures. scripts/build.ps1 configures before every build,
@@ -74,6 +81,11 @@ list(APPEND SQLIVE_CORE_SOURCES "${SQLIVE_BUILD_INFO_CPP}")
 # httplib.h is visible to this one file only, in both targets.
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/app/RemoteServer.cpp"
     PROPERTIES INCLUDE_DIRECTORIES "${httplib_SOURCE_DIR}")
+# qrcodegen.hpp is visible to src/ui/QrCode.cpp only; the library's one source is built with the app's, in both targets.
+set(SQLIVE_QRCODEGEN_CPP "${qrcodegen_SOURCE_DIR}/cpp/qrcodegen.cpp")
+list(APPEND SQLIVE_CORE_SOURCES "${SQLIVE_QRCODEGEN_CPP}")
+set_source_files_properties("${CMAKE_SOURCE_DIR}/src/ui/QrCode.cpp"
+    PROPERTIES INCLUDE_DIRECTORIES "${qrcodegen_SOURCE_DIR}/cpp")
 
 # The owner's logo, as plain vectors, and the phone remote's page.
 juce_add_binary_data(SmartQLiveAssets

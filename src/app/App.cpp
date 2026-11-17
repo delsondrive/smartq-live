@@ -206,6 +206,10 @@ void App::openBand(const juce::File& root) {
     dispatcher_ = std::make_unique<MidiDispatcher>(
         session_->engine(), [host = host_.get()] { return host->anchor(); },
         [ports = midi_.get()](const engine::OutMidi& m) { ports->send(m); });
+    // The band's phone remote, running again at once when it was left on (a failure leaves Setup's switch off).
+    access_ = std::make_unique<RemoteAccess>(settings_, session_->folder().root());
+    server_ = std::make_unique<RemoteServer>(*session_, *access_, [s = session_.get()] { return ui::makeRemoteStateJson(*s); });
+    if (access_->enabled()) server_->start(access_->port());
     if (host_->hasBindingForThisComputer()) {
         // A failure is taken as the device lost: the "Audio lost" pill shows, and it is tried again every 2 s.
         host_->openFromRig();
@@ -216,13 +220,17 @@ void App::openBand(const juce::File& root) {
 }
 
 void App::showMainWindow() {
-    window_ = std::make_unique<ui::MainWindow>(*session_, host_.get());
+    window_ = std::make_unique<ui::MainWindow>(*session_, host_.get(), access_.get(), server_.get());
     window_->onClose = [this] { quit(); };
     window_->onOpenAnotherBand = [this] { showWelcome(); };
 }
 
 void App::closeBand() {
     window_.reset();                                              // its ShowController and pages hold the session
+    // The phone remote: the server ends its streams and joins its web threads before the access it reads goes.
+    if (server_ != nullptr) server_->stop();
+    server_.reset();
+    access_.reset();
     // The device first, which ends the playing song's MIDI (note-offs, 0xFC), and the dispatcher sends that before it and
     // the ports go.
     if (host_ != nullptr) host_->close();

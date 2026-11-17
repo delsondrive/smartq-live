@@ -22,7 +22,7 @@ constexpr int kDialogWidth = 1040;
 
 // Each of Tasks 11-17 adds its page or view here, with AppShell::setPageComponent or setShowComponents.
 void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, app::ShowController* controller,
-                 app::ControlInput* input) {
+                 app::ControlInput* input, app::RemoteAccess* access, app::RemoteServer* server) {
     auto setlists = std::make_unique<SetlistsPage>(session);
     auto editor = std::make_unique<SongEditorPage>(session);
     auto mixer = std::make_unique<MixerPage>(session);
@@ -60,7 +60,7 @@ void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, a
     shell.setPageComponent(Page::Setlists, std::move(setlists));
     shell.setPageComponent(Page::SongEditor, std::move(editor));
     shell.setPageComponent(Page::Mixer, std::move(mixer));
-    shell.setPageComponent(Page::Setup, std::make_unique<SetupPage>(session, host, input));
+    shell.setPageComponent(Page::Setup, std::make_unique<SetupPage>(session, host, input, access, server));
     // Show mode: the main view, and the stage view with the ring that fills while Space is held to stop.
     shell.setShowComponents(std::make_unique<MainView>(session), std::make_unique<StageView>(session, controller));
 }

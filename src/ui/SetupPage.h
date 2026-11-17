@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -7,18 +8,21 @@
 #include "app/Session.h"
 #include "ui/CueVoicePage.h"
 #include "ui/MidiSetupPage.h"
+#include "ui/RemoteSetupPage.h"
 #include "ui/RoutingGrid.h"
 #include "ui/Widgets.h"
 
 namespace sqlive::app {
 class AudioHost;
 class ControlInput;
-}
+class RemoteAccess;
+class RemoteServer;
+}  // namespace sqlive::app
 
 namespace sqlive::ui {
 
-// Setup (the mockup's screens 11, 12 and 13). On the left its sub-tabs, "Audio & routing", "MIDI & controls" and "Cue
-// voice" (later stages add theirs); a click on one shows it on the right.
+// Setup (the mockup's screens 11 to 14). On the left its sub-tabs, "Audio & routing", "MIDI & controls", "Cue voice" and
+// "Remote" (later stages add theirs); a click on one shows it on the right.
 //
 // Audio & routing: a panel with the RIG (choosing one chooses it in the session and opens its interface), the AUDIO
 // INTERFACE for this computer (driver type and device, saved in the rig under settings().computerName() with
@@ -32,20 +36,24 @@ namespace sqlive::ui {
 //
 // Cue voice: the CueVoicePage (section types, their colours and cues, and the voice that says them).
 //
+// Remote: the RemoteSetupPage, on the app's RemoteAccess and RemoteServer; without them (tests, screenshots) it is empty.
+//
 // With no AudioHost (tests, screenshots) nothing is opened and the interface is the one the rig names, if any. Every change
 // to the band is a command, in Edit mode only; nothing here takes the keyboard (but the MIDI page while it waits for a key
 // or a pedal). It refreshes on Session::changes() while shown; the driver types and devices are asked for only when the rig
 // or its interface changes, or the page is shown.
 class SetupPage : public juce::Component, private juce::ChangeListener {
 public:
-    SetupPage(app::Session&, app::AudioHost*, app::ControlInput* = nullptr);
+    SetupPage(app::Session&, app::AudioHost*, app::ControlInput* = nullptr, app::RemoteAccess* = nullptr,
+              app::RemoteServer* = nullptr);
     ~SetupPage() override;
 
-    enum class SubTab { Audio, Midi, CueVoice };
+    enum class SubTab { Audio, Midi, CueVoice, Remote };
     void showSubTab(SubTab);                                      // what a click on a sub-tab does
     SubTab subTab() const { return sub_tab_choice_; }
     MidiSetupPage& midi() { return midi_; }
     CueVoicePage& cueVoice() { return cue_voice_; }
+    RemoteSetupPage* remote() { return remote_.get(); }           // nullptr without a RemoteAccess and RemoteServer
 
     const RoutingState& state() const { return state_; }
     RoutingGrid& grid() { return grid_; }
@@ -97,10 +105,11 @@ private:
     RoutingGrid grid_;
     MidiSetupPage midi_;
     CueVoicePage cue_voice_;
+    std::unique_ptr<RemoteSetupPage> remote_;
     SubTab sub_tab_choice_ = SubTab::Audio;
 
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<int> sub_tabs_, sub_tab_, midi_tab_, cue_tab_, top_, problems_, rig_label_, interface_label_, rate_label_,
+    juce::Rectangle<int> sub_tabs_, sub_tab_, midi_tab_, cue_tab_, remote_tab_, top_, problems_, rig_label_, interface_label_, rate_label_,
         buffer_label_;
 };
 

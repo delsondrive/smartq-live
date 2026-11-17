@@ -95,6 +95,7 @@ MidiSetupState makeMidiSetupState(const app::Session& session, const app::Contro
             control.key = (held.isNotEmpty() ? "hold " + held + kDot : juce::String()) + "Esc Esc";
             if (control.midi.isNotEmpty()) control.hint = kTapTwice;
         }
+        control.phone = phoneText(control.action);
         control.learning = learning.has_value() && *learning == action;
         if (control.learning) control.hint = kMomentary;
         state.controls.push_back(std::move(control));
@@ -584,7 +585,7 @@ void MidiSetupPage::layoutControls() {
         const int y = controls_columns_.getBottom() + i * control_row_;
         ControlRow row;
         row.key = {x + action_width_, y, key_width_, control_row_};
-        row.pedal = {x + action_width_ + key_width_, y, std::max(0, width - action_width_ - key_width_), control_row_};
+        row.pedal = {x + action_width_ + key_width_, y, std::max(0, width - action_width_ - key_width_ - kPhoneWidth), control_row_};
         const int left = row.pedal.getX() + kCellPad, centreY = y + control_row_ / 2;
         if (c.learning || c.midi.isEmpty()) {
             const auto text = c.learning ? pressAPedal() : kLearn;
@@ -641,7 +642,8 @@ void MidiSetupPage::paint(juce::Graphics& g) {
     drawHeader(controls_header_, "CONTROLS", true, controls_header_.getRight());
     drawColumns(controls_columns_, {{controls_box_.getX(), "ACTION"},
                                     {controls_box_.getX() + action_width_, "KEY"},
-                                    {controls_box_.getX() + action_width_ + key_width_, "PEDAL OR PAD"}});
+                                    {controls_box_.getX() + action_width_ + key_width_, "PEDAL OR PAD"},
+                                    {controls_box_.getRight() - kPhoneWidth, "PHONE"}});
     paintControls(g);
 }
 
@@ -747,6 +749,12 @@ void MidiSetupPage::paintControls(juce::Graphics& g) {
             g.setFont(hintFont());
             g.drawText(kClear, r.clear.toFloat(), juce::Justification::centred, false);
         }
+
+        // PHONE.
+        g.setColour(c.phone == kPhoneNo ? theme::dim : theme::mint);
+        g.setFont(tdFont());
+        g.drawText(c.phone, juce::Rectangle<int>(rowArea.getRight() - kPhoneWidth + kCellPad, rowArea.getY(), kPhoneWidth - 2 * kCellPad, control_row_),
+                   juce::Justification::centredLeft, false);
     }
 }
 

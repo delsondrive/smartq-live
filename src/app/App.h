@@ -17,12 +17,18 @@ class MainWindow;
 
 namespace sqlive::app {
 
+class RemoteAccess;
+class RemoteServer;
+
 // What Main.cpp runs: reads this computer's settings, opens a band folder (--band <folder> on the command line, else the
 // newest recent one), makes the session and the audio host, and shows the main window. With no band folder it shows the
 // Welcome page; a band whose rig has no device for this computer first shows the New computer page. A device that is bound
 // but can't be opened is not a reason for that page: the main window opens with the red "Audio lost" pill (in Edit mode
 // too; in Show mode the red banner as well), and AudioHost tries it again every 2 s until it is plugged in.
 // Every band folder that opens is noted in the settings, which are saved.
+// Each open band has its phone remote: a RemoteAccess on this computer's settings for that folder, and a RemoteServer on
+// every local address, started at once when the remote was left on there; Setup's Remote page turns it on and off. It
+// stops when the band closes (another band, or the app quitting), after the window and before the device and the session.
 // With --screenshots <folder> it draws every screen to a PNG there (ui::renderScreens), prints the folder, and opens no
 // window, so wantsWindow() is false and the app quits (with exit code 1 when the pictures couldn't be made).
 // With --remote-demo it runs the phone remote on its own, to try the page in a browser on this computer: the demo band in a
@@ -33,8 +39,8 @@ namespace sqlive::app {
 class App {
 public:
     App(juce::File settingsFile, const juce::StringArray& commandLine);
-    ~App();                                                       // the remote demo; the window, the MIDI dispatcher and ports,
-                                                                  // the device, then the session (flushed)
+    ~App();                                                       // the remote demo; the window, the phone remote, the MIDI
+                                                                  // dispatcher and ports, the device, then the session (flushed)
 
     bool wantsWindow() const;                                     // false: nothing is on screen and nothing will be; quit
     std::function<void()> onQuit;                                 // the app should quit (the window was closed)
@@ -62,6 +68,8 @@ private:
     std::unique_ptr<AudioHost> host_;
     std::unique_ptr<MidiPorts> midi_;                             // this computer's MIDI outputs, attached to the session
     std::unique_ptr<MidiDispatcher> dispatcher_;                  // the engine's one MIDI consumer: sends through midi_ by host_'s clock
+    std::unique_ptr<RemoteAccess> access_;                        // the open band's phone remote: who may use it
+    std::unique_ptr<RemoteServer> server_;                        // and its web server, on session_ and access_
     std::unique_ptr<ui::MainWindow> window_;
     std::unique_ptr<StartWindow> start_;
     std::unique_ptr<RemoteDemo> demo_;

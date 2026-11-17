@@ -87,7 +87,7 @@ bool TopBarState::operator==(const TopBarState& o) const {
     if (pills.size() != o.pills.size()) return false;
     for (std::size_t i = 0; i < pills.size(); ++i)
         if (pills[i].text != o.pills[i].text || pills[i].level != o.pills[i].level || pills[i].editToo != o.pills[i].editToo
-            || pills[i].shortText != o.pills[i].shortText)
+            || pills[i].shortText != o.pills[i].shortText || pills[i].tooltip != o.pills[i].tooltip)
             return false;
     return mode == o.mode && page == o.page && stageView == o.stageView && clock == o.clock && clockSub == o.clockSub
            && chips == o.chips && beatsInBar == o.beatsInBar && beatNow == o.beatNow && playing == o.playing
@@ -97,7 +97,7 @@ bool TopBarState::operator==(const TopBarState& o) const {
 juce::String pageName(Page page) { return tabNames()[static_cast<int>(page)]; }
 
 TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* host, const app::ShowController* controller,
-                            Page page, bool keyboardElsewhere) {
+                            Page page, bool keyboardElsewhere, const app::RemoteStatus& remote) {
     TopBarState t;
     t.mode = session.mode();
     t.page = page;
@@ -141,6 +141,12 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
         } else {
             t.pills.push_back({"MIDI: not connected", Level::Warning, true, "No MIDI"});   // no device has a port on this computer
         }
+    }
+    // The phone remote, while it runs: how many phones follow it; a phone waiting to be let in needs a look, in Edit mode too.
+    if (remote.running) {
+        const auto text = "Remote " + juce::String(remote.connected);
+        if (remote.waiting) t.pills.push_back({text, Level::Warning, true, {}, "A phone is waiting to be let in."});
+        else t.pills.push_back({text, Level::Ok});
     }
     // The conflict copies are the list the session keeps from its last look at the band folder: nothing here scans.
     if (!session.loadReport().notes.isEmpty() || !session.conflictCopies().empty()) t.pills.push_back({kCheckFiles, Level::Warning});
@@ -354,7 +360,10 @@ void TopBar::apply() {
         pills_.push_back(std::make_unique<StatusPill>());
         addChildComponent(*pills_.back());
     }
-    for (std::size_t i = 0; i < pills_.size() && i < state_.pills.size(); ++i) pills_[i]->set(state_.pills[i].text, state_.pills[i].level);
+    for (std::size_t i = 0; i < pills_.size() && i < state_.pills.size(); ++i) {
+        pills_[i]->set(state_.pills[i].text, state_.pills[i].level);
+        pills_[i]->setTooltip(state_.pills[i].tooltip);
+    }
 
     beats_.set(state_.beatsInBar, state_.beatNow, 12.0f);
     earlier_->setTooltip("Earlier song");
