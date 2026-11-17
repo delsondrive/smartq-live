@@ -82,6 +82,10 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
                                         (engine::SamplePos) std::llround(song.audioStartSeconds * sampleRate), std::move(parts),
                                         click, sampleRate);
     auto midi = buildMidi(song, band, rig, prepared.tempo, sampleRate);
+    // An event a device's offset puts before the song's first sample (a note at bar 1, early, with no count-in or lead-in)
+    // would never play: it is sent at that first sample instead. Moving every such event keeps them in order, so a short
+    // note's note-off still follows its note-on; a program or control change there is covered by the chase all the same.
+    for (auto& event : midi.events) event.at = std::max(event.at, prepared.start);
     prepared.midi = std::move(midi.events);
     prepared.clockDevices = std::move(midi.clockDevices);
     prepared.startStopDevices = std::move(midi.startStopDevices);

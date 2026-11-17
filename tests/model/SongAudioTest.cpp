@@ -67,6 +67,32 @@ TEST_CASE("audio is paired with its part by id, never by position", "[songaudio]
     CHECK(prepared.end == 200);
 }
 
+TEST_CASE("a note at bar 1 pushed early by its device's offset is sent at the song's first sample", "[songaudio]") {
+    BandDoc band; band.roles = defaultRoles();
+    band.midiDevices = {{"d0", "Synth", {}, false, false, -20.0, {}}};
+    SongDoc song; song.id = "s";                                   // no count-in and no lead-in: the song begins at bar 1
+    song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, 0.0f, false, 1}};
+    MidiMessageDoc shortNote; shortNote.type = MidiMessageDoc::Type::Note; shortNote.note = 36; shortNote.beats = 0.02;   // 10 ms
+    MidiMessageDoc longNote = shortNote; longNote.note = 48; longNote.beats = 1.0;
+    song.midiLanes["d0"] = {{"m1", 1, 1.0, "", {shortNote, longNote}}};
+    auto audio = sqlive::test::constantAudio(96000, 0.5f, NAN);
+    auto prepared = buildPreparedSong(song, band, RigDoc{}, {{"p1", audio}}, 48000.0);
+    REQUIRE(prepared.start == 0);
+    REQUIRE(prepared.midi.size() == 4);
+    CHECK(prepared.midi[0].at == 0);  CHECK(prepared.midi[0].data[0] == 0x90);  CHECK(prepared.midi[0].data[1] == 36);
+    CHECK(prepared.midi[1].at == 0);  CHECK(prepared.midi[1].data[0] == 0x90);  CHECK(prepared.midi[1].data[1] == 48);
+    CHECK(prepared.midi[2].at == 0);  CHECK(prepared.midi[2].data[0] == 0x80);  CHECK(prepared.midi[2].data[1] == 36);   // after its note-on
+    CHECK(prepared.midi[3].at == 24000 - 960);  CHECK(prepared.midi[3].data[0] == 0x80);   // a later note-off keeps its time
+
+    engine::Engine e; e.prepare(48000.0, 512); e.setMix(sqlive::test::stereoMix());
+    e.cue(sqlive::test::share(std::move(prepared)));  e.start();
+    const auto base = e.status().streamTime;
+    std::vector<float> l(512), r(512); float* out[2] = {l.data(), r.data()};
+    e.process(out, 2, 512);
+    engine::OutMidi m;
+    REQUIRE(e.popMidi(m));                                         // the note is played, at the song's first sample
+    CHECK(m.data[0] == 0x90);  CHECK(m.data[1] == 36);  CHECK(m.streamTime == base);
+}
 TEST_CASE("a band with a clock device gets clock ticks in its prepared songs", "[songaudio]") {
     BandDoc band; band.roles = defaultRoles();
     band.midiDevices = {{"d0", "Delay", {}, true, false, 0.0, {}}};

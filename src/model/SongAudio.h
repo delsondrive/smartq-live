@@ -24,7 +24,8 @@ std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, do
 // The song as the engine plays it, its parts in song.parts order, each with its part id. Audio is matched to a part by
 // the part's id; a part with no entry, a null one, or a role that isn't in the band is left out, and entries for parts
 // the song doesn't have are ignored. The song ends where its longest loaded part does. Its MIDI is buildMidi's, sent on
-// the rig's device channels; with a clock device, clockTicks are buildClockTicks over [start, end).
+// the rig's device channels, with what a device's offset puts before the song's start moved to its start (in order);
+// with a clock device, clockTicks are buildClockTicks over [start, end).
 engine::PreparedSong buildPreparedSong(const SongDoc&, const BandDoc&, const RigDoc&,
                                        const std::map<juce::String, std::shared_ptr<const engine::PartAudio>>& audioByPartId,
                                        double sampleRate);
