@@ -550,6 +550,29 @@ TEST_CASE("undoing and redoing a song imported again on another computer leaves 
     CHECK(s.saveState() == SaveState::Saved);
 }
 
+TEST_CASE("a song a bandmate removed and then imported again into the same folder comes in, once its removal was taken", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    const auto oldId = d.setlist().entries[0].songId;
+    auto again = *s.model().song(oldId);  again.id = model::newId();               // the same song, imported again: a new id
+    const auto dir = s.folder().songFolder(oldId);
+    const auto trashed = root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName());
+    REQUIRE(root.getChildFile("trash").createDirectory());
+    REQUIRE(dir.moveFileTo(trashed));                                              // their app trashed it
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    REQUIRE(s.takeOutsideChanges().wasOk());                                       // its removal is taken; its folder still remembered
+    REQUIRE(s.model().song(oldId) == nullptr);
+    REQUIRE(trashed.getChildFile("audio").copyDirectoryTo(dir.getChildFile("audio")));   // then imported again: the same folder name
+    writeElsewhere(dir.getChildFile("song.json"), model::toJson(again));
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    CHECK(s.outsideChanges()[0].kind == OutsideChange::Kind::Added);
+    CHECK(s.takeOutsideChanges().wasOk());
+    CHECK(s.outsideChanges().empty());
+    REQUIRE(s.model().song(again.id) != nullptr);
+    CHECK(s.folder().songFolder(again.id) == dir);
+    CHECK_FALSE(s.loadReport().notes.joinIntoString("\n").contains("couldn't be read"));
+}
 TEST_CASE("undoing the load of a song another computer trashed brings its folder back from the trash", "[folderwatch]") {
     DemoSession d; auto& s = *d.session; auto root = s.folder().root();
     const auto id = d.setlist().entries[0].songId;

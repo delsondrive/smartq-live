@@ -171,6 +171,12 @@ bool BandFolder::adoptSongFolder(const juce::String& songId, const juce::File& f
 
 void BandFolder::forgetSongFolder(const juce::String& songId) { places_.erase({DocKind::Song, songId}); }
 
+juce::String BandFolder::songRememberedAt(const juce::File& folder) const {
+    for (const auto& [key, place] : places_)
+        if (key.kind == DocKind::Song && place == folder) return key.id;
+    return {};
+}
+
 bool BandFolder::adoptFile(const DocKey& key, const juce::File& file) {
     if (key.kind != DocKind::Setlist && key.kind != DocKind::Rig) return false;
     const auto dir = root_folder_.getChildFile(key.kind == DocKind::Setlist ? "setlists" : "rigs");

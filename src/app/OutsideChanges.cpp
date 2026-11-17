@@ -318,8 +318,8 @@ juce::Result OutsideChanges::take() {
     const auto before = outside_changes_;
     std::map<model::DocKey, juce::String> texts;
     std::vector<OutsideChange> waiting;
-    const auto leftOut = [&](const OutsideChange& change, const juce::File& file) {
-        const auto note = file.getFullPathName() + " couldn't be read, so it was left out.";
+    const auto leftOut = [&](const OutsideChange& change, const juce::File& file, const juce::String& why = "couldn't be read") {
+        const auto note = file.getFullPathName() + " " + why + ", so it was left out.";
         if (!load_report_.notes.contains(note)) {
             load_report_.notes.add(note);
             unreadable_notes_[change.key] = note;
@@ -328,6 +328,39 @@ juce::Result OutsideChanges::take() {
     };
     std::vector<OutsideChange> loads;                            // what is loaded, as the undo record has it
     std::vector<std::pair<model::DocKey, juce::File>> replaced;  // documents another took the place of
+    std::vector<std::pair<juce::String, juce::File>> released;   // places of songs gone from here, let go for one that came in
+    // Songs that go, in this load or before it: a folder still remembered for one of them (kept so that it can't be given
+    // to another song while it might come back) is let go when a song comes in there, as a bandmate removed it and
+    // imported it again.
+    const auto gone = [&](const juce::String& songId) {
+        return model_.song(songId) == nullptr
+               || std::any_of(outside_changes_.begin(), outside_changes_.end(), [&](const OutsideChange& c) {
+                      return c.kind == OutsideChange::Kind::Removed && c.key == model::DocKey{model::DocKind::Song, songId};
+                  });
+    };
+    const auto letGoOfGone = [&](const OutsideChange& change, const juce::File& file) {
+        if (change.key.kind != model::DocKind::Song) return;
+        const auto folder = file.getParentDirectory();
+        for (const auto& id : {change.key.id, folder_.songRememberedAt(folder)}) {
+            const auto place = folder_.songFolder(id);
+            if (id.isEmpty() || place == juce::File() || !gone(id)) continue;
+            if (id != change.key.id && place != folder) continue;
+            folder_.forgetSongFolder(id);
+            released.emplace_back(id, place);
+        }
+    };
+    // Why a document that came in can't have its folder or file here, in plain words.
+    const auto whyNoPlace = [&](const OutsideChange& change, const juce::File& file) -> juce::String {
+        if (!file.existsAsFile()) return "is no longer there";
+        if (change.key.kind == model::DocKind::Song) {
+            const auto other = folder_.songRememberedAt(file.getParentDirectory());
+            if (const auto* song = model_.song(other); song != nullptr)
+                return "is in the folder of " + juce::String::fromUTF8("\xe2\x80\x9c") + song->title
+                       + juce::String::fromUTF8("\xe2\x80\x9d") + ", another song here";
+            return "is in a folder another song here keeps";
+        }
+        return "is the file of another " + juce::String(change.key.kind == model::DocKind::Setlist ? "setlist" : "rig") + " here";
+    };
     for (const auto& change : outside_changes_) {
         if (change.kind == OutsideChange::Kind::Removed) {
             if (change.key.kind == model::DocKind::Band) {
@@ -352,9 +385,12 @@ juce::Result OutsideChanges::take() {
             }
         }
         // One that came in lives in a folder or file this app hasn't seen: remembered as the document's, so it is saved there.
-        if (change.kind == OutsideChange::Kind::Added && !adoptPlace(change.key, file)) {
-            leftOut(change, file);
-            continue;
+        if (change.kind == OutsideChange::Kind::Added) {
+            letGoOfGone(change, file);
+            if (!adoptPlace(change.key, file)) {
+                leftOut(change, file, whyNoPlace(change, file));
+                continue;
+            }
         }
         texts[change.key] = text;
         loads.push_back(change);
@@ -366,6 +402,7 @@ juce::Result OutsideChanges::take() {
         for (const auto& change : loads)
             if (change.kind == OutsideChange::Kind::Added) forgetPlace(change.key);
         for (const auto& [key, file] : replaced) adoptPlace(key, file);
+        for (const auto& [id, place] : released) folder_.adoptSongFolder(id, place);
         outside_changes_ = before;
     }
     sweepUnreadableNotes();
