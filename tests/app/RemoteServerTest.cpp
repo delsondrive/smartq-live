@@ -264,6 +264,19 @@ TEST_CASE("the server refuses what it shouldn't accept", "[remoteserver]") {
     const std::string head = "POST /api/join HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n";
     CHECK(rawRequest(port, head + "Content-Length: 4\r\n\r\n{\"\xff\"").status == 400);
     CHECK(rawRequest(port, head + "Content-Length: 5\r\n\r\n" + std::string("{\"\0\"}", 5)).status == 400);
+    // JUCE's parser takes single-quoted strings too: one hiding a " must not hide the nesting after it.
+    CHECK(request(port, "POST", "/api/join", "['\"'," + juce::String::repeatedString("[", 4000)).status == 400);
+    CHECK(request(port, "POST", "/api/join", "{'a':[[[[[1]]]]]}").status == 400);
+    CHECK(request(port, "POST", "/api/join", "{'name':'Phone','pin':'" + access.pin() + "'}").status == 400);
+    CHECK(request(port, "POST", "/api/join", joinBody("Sam's phone", access.pin())).status == 200);   // ' inside "…" is fine
+    CHECK(request(port, "GET", "/").status == 200);
+
+    // Only the two POSTs take a body; any other request with one is refused before it is read.
+    CHECK(rawRequest(port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}").status == 400);
+    CHECK(rawRequest(port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+                           "2\r\n{}\r\n0\r\n\r\n").status == 411);
+    CHECK(rawRequest(port, "DELETE /api/join HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 5000\r\n\r\n").status == 413);
+    CHECK(request(port, "POST", "/band.json", "{}").status == 404);
 
     // A body sent in chunks, or without a length, is refused whatever its size (411), so 4 KB never rests on the library.
     const std::string big(6000, 'x');
@@ -437,4 +450,63 @@ TEST_CASE("many phones following the show don't hold up a phone's action", "[rem
     CHECK(s.now().nextIndex == 1);
     const auto nextIsSecond = lastStateIs([](const juce::var& state) { return int(state["next"]["number"]) == 2; });
     for (auto& stream : streams) CHECK(nextIsSecond(stream->readUntil(nextIsSecond)));   // and every phone sees it
+}
+
+TEST_CASE("a client that sends slowly never holds a web thread, nor stop(), for long", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServer server(s, access, stateOf(s));
+    REQUIRE(server.start(18140, "127.0.0.1").wasOk());
+    const int port = server.port();
+
+    // A body dripped a byte at a time is cut off 2 s after its headers (408), however long the client would go on.
+    {
+        Connection c(port);
+        c.send("POST /api/join HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\n\r\n");
+        const auto began = msNow();
+        while (c.status() == 0 && msNow() - began < 6000) {
+            c.send("{");
+            c.readFor(300, [&] { return c.status() != 0; });
+        }
+        CHECK(c.status() == 408);
+        CHECK(msNow() - began >= 1900);
+        CHECK(msNow() - began < 3500);
+    }
+    CHECK(request(port, "GET", "/").status == 200);
+
+    // stop() with a body half sent and a request whose headers stall: it doesn't wait for either client.
+    Connection body(port);
+    body.send("POST /api/join HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\n\r\n{");
+    Connection headers(port);
+    headers.send("POST /api/join HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Le");
+    body.readFor(200, [] { return false; });                                       // both are with a web thread now
+    const auto stopping = msNow();
+    server.stop();
+    CHECK(msNow() - stopping < 1500);
+    CHECK_FALSE(server.isRunning());
+}
+
+TEST_CASE("the stream limits: at most so many streams, and a comment line when there's nothing to say", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServerLimits limits;
+    limits.maxStreams = 2;
+    limits.keepAliveMs = 200;
+    app::RemoteServer server(s, access, stateOf(s), limits);
+    REQUIRE(server.start(18150, "127.0.0.1").wasOk());
+    const int port = server.port();
+    const auto first = joinedToken(port, access, "One"), second = joinedToken(port, access, "Two"),
+               third = joinedToken(port, access, "Three");
+
+    Events one(port, first), two(port, second);
+    REQUIRE(one.read(1).size() == 1);
+    REQUIRE(two.read(1).size() == 1);
+    CHECK(Events(port, third).status() == 503);                                     // one too many
+    CHECK(server.connectedPhones() == 2);
+    Events oneAgain(port, first);                                                    // a phone coming back is no more
+    CHECK(oneAgain.status() == 200);                                                 // streams: its old one ends
+    CHECK(one.ends(3000));
+
+    const auto quietSince = msNow();                                                 // nothing to say for a while
+    two.readUntil([&](const std::vector<Event>&) { return two.text().find(": still here\n\n") != std::string::npos; }, 2000);
+    CHECK(two.text().find(": still here\n\n") != std::string::npos);
+    CHECK(msNow() - quietSince < 1000);
 }

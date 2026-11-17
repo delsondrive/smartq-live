@@ -38,11 +38,10 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using model::jsonObject;
 
+using Ms = std::chrono::milliseconds;
+
 constexpr int maxJsonDepth = 4;
-constexpr auto actionWait = std::chrono::seconds(2);
-constexpr auto keepAliveEvery = std::chrono::seconds(10);
-constexpr auto streamCheckEvery = std::chrono::seconds(1);   // how soon a stream notices its phone went away
-constexpr int ioTimeoutSeconds = 5;
+constexpr int keepConnectionSeconds = 5;                          // an idle connection between two requests
 
 // The clock performRemoteAction's holds are measured on, read when the web thread receives the request.
 double secondsNow() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
@@ -77,7 +76,9 @@ juce::String accessWord(PhoneAccess access) {
 bool mayWatch(PhoneAccess access) { return access == PhoneAccess::ViewOnly || access == PhoneAccess::FullControl; }
 
 // Valid UTF-8 without a NUL, and no [ or { nested deeper than maxJsonDepth outside strings: juce::JSON::parse recurses
-// once per level, and a body of 4000 ['s would run a web thread out of stack.
+// once per level, and a body of 4000 ['s would run a web thread out of stack. JUCE's parser also takes strings in single
+// quotes (juce_JSON.cpp, parseAny), which this scan doesn't follow; the page never sends one, so a ' outside a
+// double-quoted string is refused rather than scanned.
 bool worthParsing(const std::string& body) {
     if (body.find('\0') != std::string::npos) return false;
     if (!juce::CharPointer_UTF8::isValidString(body.data(), static_cast<int>(body.size()))) return false;
@@ -90,6 +91,8 @@ bool worthParsing(const std::string& body) {
             else if (c == '"') inString = false;
         } else if (c == '"') {
             inString = true;
+        } else if (c == '\'') {
+            return false;
         } else if (c == '[' || c == '{') {
             if (++depth > maxJsonDepth) return false;
         } else if (c == ']' || c == '}') {
@@ -100,14 +103,9 @@ bool worthParsing(const std::string& body) {
 }
 
 // The JSON object a phone sent; nothing, with the answer given, when it isn't one.
-std::optional<juce::var> bodyObject(const httplib::Request& req, httplib::Response& res) {
-    if (req.body.size() > static_cast<size_t>(RemoteServer::maxBodyBytes)) {
-        answerMessage(res, 413, "That's more than the remote ever sends.");
-        return std::nullopt;
-    }
+std::optional<juce::var> bodyObject(const std::string& body, httplib::Response& res) {
     juce::var parsed;
-    if (!worthParsing(req.body) || juce::JSON::parse(fromStd(req.body), parsed).failed()
-        || parsed.getDynamicObject() == nullptr) {
+    if (!worthParsing(body) || juce::JSON::parse(fromStd(body), parsed).failed() || parsed.getDynamicObject() == nullptr) {
         answerMessage(res, 400, "That isn't what the remote sends.");
         return std::nullopt;
     }
@@ -157,9 +155,10 @@ namespace remote_detail {
 // What the web threads share with the message thread. They never touch the session: the state is a string the message
 // thread publishes here. One per run of the server.
 struct Hub {
-    explicit Hub(RemoteAccess& a) : access(a) {}
+    Hub(RemoteAccess& a, const RemoteServerLimits& l) : access(a), limits(l) {}
 
     RemoteAccess& access;                                         // thread-safe, and outlives the web threads
+    const RemoteServerLimits limits;
 
     std::mutex mutex;
     std::condition_variable woken;
@@ -173,6 +172,11 @@ struct Hub {
     void wake() {
         { std::lock_guard lock(mutex);  ++wakes; }
         woken.notify_all();
+    }
+
+    bool isStopping() {
+        std::lock_guard lock(mutex);
+        return stopping;
     }
 };
 
@@ -243,30 +247,27 @@ public:
         }
 
         const auto now = Clock::now();
-        if (out.empty() && now - lastWrite_ >= keepAliveEvery) out = ": still here\n\n";
+        const auto keepAlive = Ms(hub_->limits.keepAliveMs);
+        if (out.empty() && now - lastWrite_ >= keepAlive) out = ": still here\n\n";
         if (!out.empty()) {
             lastWrite_ = now;
             return sink.write(out.data(), out.size());
         }
 
-        const auto wait = std::min<Clock::duration>(streamCheckEvery, lastWrite_ + keepAliveEvery - now);
+        const auto wait = std::min<Clock::duration>(Ms(hub_->limits.streamCheckMs), lastWrite_ + keepAlive - now);
         std::unique_lock lock(hub_->mutex);
         hub_->woken.wait_for(lock, wait, [&] { return hub_->wakes != wakes; });
         return true;
     }
 
-    // The worker is done with the stream, however it ended. The phone is connected while a stream of its own is open.
+    // The worker is done with the stream, however it ended. The phone is connected while a stream of its own is open: the
+    // flag changes under the hub's lock, as a new stream registers, so an older stream ending can't clear a newer one's.
     void close() {
-        bool wasCurrent = false;
-        {
-            std::lock_guard lock(hub_->mutex);
-            const auto mine = hub_->streams.find(phoneId_);
-            if (mine != hub_->streams.end() && mine->second == serial_) {
-                hub_->streams.erase(mine);
-                wasCurrent = true;
-            }
-        }
-        if (wasCurrent) hub_->access.setConnected(phoneId_, false);
+        std::lock_guard lock(hub_->mutex);
+        const auto mine = hub_->streams.find(phoneId_);
+        if (mine == hub_->streams.end() || mine->second != serial_) return;
+        hub_->streams.erase(mine);
+        hub_->access.setConnected(phoneId_, false);
     }
 
 private:
@@ -304,27 +305,65 @@ const std::string& page() {
     return html;
 }
 
+// Reads a POST's body into body, as httplib's content reader hands it over: at most maxBodyBytes, all of it within
+// limits.bodyMs of the headers, and nothing more once the server is stopping. httplib's own body read has no total
+// deadline and no stop check, only a timeout per read, so a client sending a byte now and then would otherwise hold a web
+// thread, and stop(), for as long as it likes. False, with the answer given and the connection to be closed, when the
+// body didn't come whole.
+bool readBody(const httplib::ContentReader& reader, Hub& hub, std::string& body, httplib::Response& res) {
+    const auto deadline = Clock::now() + Ms(hub.limits.bodyMs);
+    enum class Why { none, tooBig, tooSlow, stopping } why = Why::none;
+    const bool whole = reader([&](const char* data, size_t size) {
+        if (hub.isStopping()) why = Why::stopping;
+        else if (Clock::now() > deadline) why = Why::tooSlow;
+        else if (body.size() + size > static_cast<size_t>(RemoteServer::maxBodyBytes)) why = Why::tooBig;
+        else { body.append(data, size);  return true; }
+        return false;
+    });
+    if (whole && why == Why::none) return true;
+    res.set_header("Connection", "close");
+    switch (why) {
+    case Why::tooBig: answerMessage(res, 413, "That's more than the remote ever sends.");  break;
+    case Why::stopping: answerMessage(res, 503, "The remote is stopping.");  break;
+    case Why::tooSlow:
+    case Why::none: answerMessage(res, 408, "That took too long to arrive.");  break;   // none: a read timed out or failed
+    }
+    return false;
+}
+
 void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::weak_ptr<remote_detail::Target>& target) {
+    using httplib::ContentReader;
     using httplib::Request;
     using httplib::Response;
 
-    // Before anything is read past the headers: who may ask at all, and how big a body may be.
+    // Before anything is read past the headers: who may ask at all, and whether a body may come and how big. Only the two
+    // POSTs read a body, through readBody; every other request with one is refused here, so 4 KB never rests on the
+    // library, and no body is read without a deadline.
     svr.set_pre_routing_handler([](const Request& req, Response& res) {
+        using Answer = httplib::Server::HandlerResponse;
         if (!isLocalNetworkAddress(fromStd(req.remote_addr))) {
             refuseUnread(res, 403, "This remote only works on the local network.");
-            return httplib::Server::HandlerResponse::Handled;
+            return Answer::Handled;
         }
-        if (req.method == "POST") {
-            if (req.has_header("Transfer-Encoding") || !req.has_header("Content-Length")) {
-                refuseUnread(res, 411, "Send the body with its length.");
-                return httplib::Server::HandlerResponse::Handled;
-            }
-            if (req.get_header_value_u64("Content-Length") > static_cast<size_t>(RemoteServer::maxBodyBytes)) {
-                refuseUnread(res, 413, "That's more than the remote ever sends.");
-                return httplib::Server::HandlerResponse::Handled;
-            }
+        const bool post = req.method == "POST";
+        if (req.has_header("Transfer-Encoding") || (post && !req.has_header("Content-Length"))) {
+            refuseUnread(res, 411, "Send the body with its length.");
+            return Answer::Handled;
         }
-        return httplib::Server::HandlerResponse::Unhandled;
+        const auto length = req.get_header_value_u64("Content-Length");
+        if (length > static_cast<size_t>(RemoteServer::maxBodyBytes)) {
+            refuseUnread(res, 413, "That's more than the remote ever sends.");
+            return Answer::Handled;
+        }
+        if (!post && length > 0) {
+            refuseUnread(res, 400, "That request takes no body.");
+            return Answer::Handled;
+        }
+        if (post && req.path != "/api/join" && req.path != "/api/action") {
+            refuseUnread(res, 404, "There's nothing here.");
+            return Answer::Handled;
+        }
+        return Answer::Unhandled;
     });
 
     svr.Get("/", [](const Request&, Response& res) {
@@ -332,8 +371,10 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
         res.set_content(page(), "text/html; charset=utf-8");
     });
 
-    svr.Post("/api/join", [hub](const Request& req, Response& res) {
-        const auto body = bodyObject(req, res);
+    svr.Post("/api/join", [hub](const Request& req, Response& res, const ContentReader& reader) {
+        std::string text;
+        if (!readBody(reader, *hub, text, res)) return;
+        const auto body = bodyObject(text, res);
         if (!body) return;
         const auto name = stringField(*body, "name"), pin = stringField(*body, "pin");
         if (!name || !pin) return answerMessage(res, 400, "That isn't what the remote sends.");
@@ -357,14 +398,14 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
         {
             std::lock_guard lock(hub->mutex);
             if (hub->stopping) return answerMessage(res, 503, "The remote is stopping.");
-            if (hub->streams.count(phoneId) == 0 && static_cast<int>(hub->streams.size()) >= RemoteServer::maxStreams)
+            if (hub->streams.count(phoneId) == 0 && static_cast<int>(hub->streams.size()) >= hub->limits.maxStreams)
                 return answerMessage(res, 503, "Too many phones are following the show.");
             serial = ++hub->lastStream;
             hub->streams[phoneId] = serial;                        // the phone's older stream, if any, ends
             ++hub->wakes;
+            hub->access.setConnected(phoneId, true);               // under the lock: see EventStream::close
         }
         hub->woken.notify_all();
-        hub->access.setConnected(phoneId, true);
 
         auto stream = std::make_shared<EventStream>(hub, token, phoneId, serial);
         res.set_header("Cache-Control", "no-store");
@@ -373,9 +414,11 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
             [stream](bool) { stream->close(); });
     });
 
-    svr.Post("/api/action", [hub, target](const Request& req, Response& res) {
+    svr.Post("/api/action", [hub, target](const Request&, Response& res, const ContentReader& reader) {
         const double at = secondsNow();
-        const auto body = bodyObject(req, res);
+        std::string text;
+        if (!readBody(reader, *hub, text, res)) return;
+        const auto body = bodyObject(text, res);
         if (!body) return;
         const auto token = stringField(*body, "token"), action = stringField(*body, "action");
         if (!token || !action) return answerMessage(res, 400, "That isn't what the remote sends.");
@@ -387,9 +430,10 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
         // give up on it, so a phone told 503 can be sure nothing happened.
         enum : int { pending, taken, abandoned };
         auto claim = std::make_shared<std::atomic<int>>(pending);
+        // Only the posted message holds the promise: dropped unperformed, it breaks the promise, and the wait ends at once.
         auto promise = std::make_shared<std::promise<RemoteActionResult>>();
         auto future = promise->get_future();
-        const bool posted = juce::MessageManager::callAsync([hub, target, claim, promise, token = *token,
+        const bool posted = juce::MessageManager::callAsync([hub, target, claim, promise = std::move(promise), token = *token,
                                                              action = *action, phoneId, at] {
             int expected = pending;
             if (!claim->compare_exchange_strong(expected, taken)) return;   // the phone was answered 503 already
@@ -405,7 +449,7 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
         if (!posted) return answerMessage(res, 503, "The laptop is busy.");
 
         // Waits up to 2 s, a little at a time, so stopping the server never waits for the message thread.
-        const auto until = Clock::now() + actionWait;
+        const auto until = Clock::now() + Ms(hub->limits.actionWaitMs);
         while (future.wait_for(std::chrono::milliseconds(20)) != std::future_status::ready) {
             bool stopping = false;
             { std::lock_guard lock(hub->mutex);  stopping = hub->stopping; }
@@ -418,17 +462,21 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
         try {
             const auto result = future.get();
             answerMessage(res, result.status, result.message);
-        } catch (const std::future_error&) {                     // the message was dropped unperformed
+        } catch (const std::future_error&) {                     // the message was dropped unperformed: broken promise
             answerMessage(res, 503, "The laptop is busy.");
         }
     });
 }
 
-void setUp(httplib::Server& svr) {
+void setUp(httplib::Server& svr, const RemoteServerLimits& limits) {
+    // One read or write waits at most ioTimeoutMs, and the headers of a request all arrive within it too (httplib bounds
+    // them by the read timeout as a whole); readBody bounds the body. So no client holds a web thread, or stop(), longer.
+    const auto ioSeconds = static_cast<time_t>(limits.ioTimeoutMs / 1000);
+    const auto ioMicros = static_cast<time_t>((limits.ioTimeoutMs % 1000) * 1000);
     svr.set_payload_max_length(static_cast<size_t>(RemoteServer::maxBodyBytes));
-    svr.set_read_timeout(ioTimeoutSeconds, 0);
-    svr.set_write_timeout(ioTimeoutSeconds, 0);
-    svr.set_keep_alive_timeout(ioTimeoutSeconds);
+    svr.set_read_timeout(ioSeconds, ioMicros);
+    svr.set_write_timeout(ioSeconds, ioMicros);
+    svr.set_keep_alive_timeout(keepConnectionSeconds);           // between requests: ends within 10 ms of a stop
     svr.set_tcp_nodelay(true);
     svr.set_default_headers({{"X-Content-Type-Options", "nosniff"}});
     // Every open stream holds a worker for as long as it is open: room for 16 of them and the requests besides.
@@ -446,8 +494,9 @@ void setUp(httplib::Server& svr) {
 
 }  // namespace
 
-RemoteServer::RemoteServer(Session& session, RemoteAccess& access, std::function<juce::String()> stateJson)
-    : session_(session), access_(access), stateJson_(std::move(stateJson)),
+RemoteServer::RemoteServer(Session& session, RemoteAccess& access, std::function<juce::String()> stateJson,
+                           RemoteServerLimits limits)
+    : session_(session), access_(access), stateJson_(std::move(stateJson)), limits_(limits),
       target_(std::make_shared<remote_detail::Target>(remote_detail::Target{session, access, {}})) {
     JUCE_ASSERT_MESSAGE_THREAD
     access_.addChangeListener(this);
@@ -465,7 +514,7 @@ juce::Result RemoteServer::start(int preferredPort, const juce::String& bindAddr
     stop();
     if (preferredPort < 1 || preferredPort > 65535) return juce::Result::fail("The remote's port must be 1 to 65535.");
 
-    hub_ = std::make_shared<remote_detail::Hub>(access_);
+    hub_ = std::make_shared<remote_detail::Hub>(access_, limits_);
     published_ = {};
     publishState();                                               // a phone's first stream has the state at once
 
@@ -473,7 +522,7 @@ juce::Result RemoteServer::start(int preferredPort, const juce::String& bindAddr
     try {
         for (int port = preferredPort; port <= last; ++port) {
             auto server = std::make_unique<httplib::Server>();    // a failed bind leaves a server unusable: one per try
-            setUp(*server);
+            setUp(*server, limits_);
             route(*server, hub_, target_);
             if (!server->bind_to_port(bindAddress.toStdString(), port)) continue;
 
@@ -518,7 +567,7 @@ void RemoteServer::stop() {
 
 bool RemoteServer::isRunning() const { return web_ != nullptr && !web_->ended; }
 
-int RemoteServer::port() const { return web_ != nullptr ? port_ : 0; }
+int RemoteServer::port() const { return isRunning() ? port_ : 0; }
 
 juce::String RemoteServer::address() const {
     const auto local = "http://localhost:" + juce::String(port());

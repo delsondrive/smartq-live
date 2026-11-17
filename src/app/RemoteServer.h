@@ -23,6 +23,16 @@ struct Target;                                         // what a posted action n
 struct Web;                                            // httplib's server and its thread
 }  // namespace remote_detail
 
+// How much the server allows and how long it waits. The defaults are the app's; tests shorten them.
+struct RemoteServerLimits {
+    int maxStreams = 16;              // event streams open at once; one more gets 503
+    int keepAliveMs = 10000;          // a stream with nothing to say sends a comment line after this long
+    int streamCheckMs = 1000;         // how soon an open stream notices its phone has gone
+    int ioTimeoutMs = 1000;           // one read or write on a connection; also every header of a request, together
+    int bodyMs = 2000;                // all of a request's body, after its headers
+    int actionWaitMs = 2000;          // an action's wait for the message thread before 503
+};
+
 // The phone remote's web server, on the local network only. Off until start(); it listens only while it runs.
 //
 //   GET  /                    the page (assets/remote.html), not cached
@@ -32,27 +42,33 @@ struct Web;                                            // httplib's server and i
 //                             sends "access" at once and whenever it changes, and, once the phone is let in, "state" (the
 //                             injected JSON) at once and whenever it changes; a comment line after 10 s of nothing. It ends
 //                             when the phone is forgotten, when the same phone opens another, or when the server stops. One
-//                             stream per phone, at most 16; while one is open the phone is marked connected.
+//                             stream per phone, at most 16 (503 beyond); while one is open the phone is marked connected.
 //   POST /api/action          {"token", "action"} → performRemoteAction's status and {"message"}, performed on the message
 //                             thread; 503 "The laptop is busy." when that takes over 2 s
 //   anything else             404
 //
-// Nothing a phone sends is trusted: a request from outside the local network gets 403; a POST without a Content-Length, or
-// sent in chunks, 411; a body over 4 KB, 413; a body that isn't UTF-8, nests deeper than 4, or isn't a JSON object of
-// strings where strings are expected, 400. Every answer carries X-Content-Type-Options: nosniff.
+// Nothing a phone sends is trusted. A request from outside the local network gets 403. A body sent in chunks, or a POST
+// without a Content-Length, gets 411, whatever the method; a body over 4 KB, 413; a body on anything but a POST, 400; a
+// POST to a path that takes none, 404; a body that takes over 2 s to arrive, 408 (all of these close the connection). A
+// body that isn't UTF-8, nests deeper than 4, uses single-quoted strings, or isn't a JSON object of strings where strings
+// are expected gets 400. Every answer carries X-Content-Type-Options: nosniff.
 //
 // The web threads never touch the session: they read the state the message thread published and RemoteAccess (which is
 // thread-safe), and post actions to the message thread. Build, start, stop and destroy it on the message thread, before the
 // RemoteAccess and the Session it was given go: stop() ends every stream and joins every web thread.
+//
+// How long stop() takes, whatever a client does: about one ioTimeoutMs (1 s) at most. Streams and waiting actions end at
+// once; a connection between requests ends within 10 ms; a request whose headers or body are still arriving, or a write
+// to a phone that stopped reading, gives up within one read or write timeout. So stopping during a show stalls the
+// laptop's screen for up to a second, never longer.
 class RemoteServer : private juce::Timer, private juce::ChangeListener {
 public:
     static constexpr int portsTried = 10;
     static constexpr int maxBodyBytes = 4096;
-    static constexpr int maxStreams = 16;
     static constexpr int webThreads = 40;
 
     // stateJson builds what a phone that is let in is shown (ui::makeRemoteStateJson): called on the message thread only.
-    RemoteServer(Session&, RemoteAccess&, std::function<juce::String()> stateJson);
+    RemoteServer(Session&, RemoteAccess&, std::function<juce::String()> stateJson, RemoteServerLimits limits = {});
     ~RemoteServer() override;
 
     // Listens on preferredPort, else on the next free one of the nine after it. bindAddress "0.0.0.0" is every local
@@ -76,6 +92,7 @@ private:
     Session& session_;
     RemoteAccess& access_;
     std::function<juce::String()> stateJson_;
+    const RemoteServerLimits limits_;
     std::shared_ptr<remote_detail::Target> target_;
     std::shared_ptr<remote_detail::Hub> hub_;          // one per run
     std::unique_ptr<remote_detail::Web> web_;
