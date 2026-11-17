@@ -266,7 +266,7 @@ Plug your pedalboard into the laptop by USB (or through a USB MIDI interface) be
 - [ ] Each track's row says its name and channel and an arrow, then the device it goes to, with the device's colour dot. A track named after a device has that device already chosen. Choose **Leave out** on one: it says **Choose a device, or it is left out**.
 - [ ] Click **Create song**. Open it in the Song editor. The tempo lane has the tempo change, and the device's lane has the track's changes, at the right bars.
 - [ ] **(by ear)** Play the song and listen at the last bar. The click is still exactly in time with the audio.
-- [ ] Click the title of a song that is already there. The menu has **Import a MIDI file…**. Choose the MIDI file. A window **Import a MIDI file** opens with ticks for **Tempo**, **Sections** and **Pedal changes**, and **Cancel** and **Import**. Untick **Tempo** and click **Import**. The pedal changes come in and the tempo stays as it was. **Undo** takes the whole import back in one step.
+- [ ] Open a song that is already there. In the Song editor, click the song's title. The menu has **Import a MIDI file…**. Choose the MIDI file. A window **Import a MIDI file** opens with ticks for **Tempo**, **Sections** and **Pedal changes**, and **Cancel** and **Import**. Untick **Tempo** and click **Import**. The pedal changes come in and the tempo stays as it was. **Undo** takes the whole import back in one step.
 
 ## 15. Pedals as controls
 
