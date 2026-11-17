@@ -143,7 +143,10 @@ juce::Result SnapshotStore::restore(const juce::String& id, CommandLayer& comman
         return juce::Result::fail(applied.message);
 
     if (const auto saved = write(present, "Before going back", false); saved.failed()) {
-        if (documentsOf(commands.model()) != present) commands.undo();   // the step just taken; none was taken if nothing changed
+        if (documentsOf(commands.model()) != present) {           // the step just taken (none was taken if nothing changed),
+            commands.undo();                                     // and gone for good: never redone without its safety copy
+            commands.clearRedo();
+        }
         return juce::Result::fail("How things were couldn't be saved first, so nothing was changed. " + saved.getErrorMessage());
     }
     return juce::Result::ok();

@@ -4,10 +4,14 @@
 #include <memory>
 
 #include "app/Session.h"
+#include "model/BandFolder.h"
+#include "model/CoreCommands.h"
+#include "model/DocumentSet.h"
 #include "model/Snapshots.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
+#include "tests/support/TempDir.h"
 #include "ui/AppShell.h"
 #include "ui/SnapshotsDialog.h"
 #include "ui/Theme.h"
@@ -106,4 +110,58 @@ TEST_CASE("the snapshots dialog lists them in the mockup's words, and nothing of
     const auto count = store.list().size();
     CHECK(store.restore(store.list()[0].id, s.commands()).failed());   // snapshot.apply is refused in Show mode
     CHECK(store.list().size() == count);                          // and nothing was written: no "Before going back"
+}
+TEST_CASE("the snapshot made before going back holds the documents as they were", "[snapshots]") {
+    DemoSession d; auto& s = *d.session;
+    const auto opened = s.snapshots().list().front().id;
+    const auto removed = d.setlist().entries[2].songId;
+    s.commands().run("band.rename", params({{"name", "Changed"}}));
+    s.commands().run("song.remove", params({{"songId", removed}}));
+    REQUIRE(s.snapshots().restore(opened, s.commands()).wasOk());
+    REQUIRE(s.model().band().name == "Demo band");
+    const auto safety = s.snapshots().list().front();
+    REQUIRE(safety.name == "Before going back");  CHECK_FALSE(safety.automatic);
+    REQUIRE(s.snapshots().restore(safety.id, s.commands()).wasOk());            // back to how it was before going back
+    CHECK(s.model().band().name == "Changed");
+    CHECK(s.model().song(removed) == nullptr);
+    CHECK(s.model().songIds().size() == 2);
+}
+TEST_CASE("when the safety copy can't be written, going back is taken back and can't be redone", "[snapshots]") {
+    TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    CommandLayer commands(model); registerCoreCommands(commands);
+    SnapshotStore store(folder);
+    REQUIRE(store.create(model, "Before", false).wasOk());
+    const auto id = store.list().front().id;
+    commands.run("band.rename", params({{"name", "Changed"}}));
+    const auto snapshots = root.getChildFile("snapshots");
+    commands.registerCommand("snapshot.apply", [&](BandModel& m, const juce::var& p) {
+        auto applied = applyDocuments(m, p, "This snapshot couldn't be read, so nothing was changed.");
+        CHECK(snapshots.moveFileTo(root.getChildFile("elsewhere")));            // and in its place a file: no safety copy now
+        CHECK(snapshots.replaceWithText("not a folder"));
+        return applied;
+    });
+    CHECK(store.restore(id, commands).failed());
+    CHECK(model.band().name == "Changed");
+    CHECK(commands.undoName() == "band.rename");
+    CHECK_FALSE(commands.canRedo());                                            // Ctrl+Y can't go back without the safety copy
+}
+TEST_CASE("a song removed on another computer comes back from the trash with its audio", "[snapshots]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    const auto opened = s.snapshots().list().front().id;
+    const auto id = d.setlist().entries[0].songId;
+    const auto part = s.model().song(id)->parts[0];
+    const auto dir = s.folder().songFolder(id);
+    REQUIRE(s.folder().audioFile(*s.model().song(id), part).existsAsFile());
+    REQUIRE(root.getChildFile("trash").createDirectory());
+    REQUIRE(dir.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    REQUIRE(s.takeOutsideChanges().wasOk());
+    REQUIRE(s.model().song(id) == nullptr);
+    REQUIRE(s.snapshots().restore(opened, s.commands()).wasOk());
+    s.flushNow();
+    REQUIRE(s.model().song(id) != nullptr);
+    CHECK(s.folder().audioFile(*s.model().song(id), part).existsAsFile());     // its own folder, audio and all
+    CHECK(root.getChildFile("trash").getNumberOfChildFiles(juce::File::findDirectories) == 0);
 }

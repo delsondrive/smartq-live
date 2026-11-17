@@ -213,10 +213,14 @@ juce::File BandFolder::trashedSongFolder(const juce::String& songId) const {
 juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String& songTitle) {
     auto it = trashed_.find(key);
     if (it == trashed_.end()) {
-        if (key.kind != DocKind::Song || place(key) != juce::File()) return juce::Result::ok();
+        // A folder remembered for it that is gone (its removal on another computer was loaded) doesn't count as its folder.
+        const auto remembered = place(key);
+        if (key.kind != DocKind::Song || remembered.isDirectory()) return juce::Result::ok();
         const auto from = trashedSongFolder(key.id);
         if (from == juce::File()) return juce::Result::ok();
-        const auto to = uniqueChild(root_folder_.getChildFile("songs"), safeFileName(songTitle), "");
+        const auto to = remembered != juce::File() && ! remembered.exists()
+                            ? remembered                         // back where it was
+                            : uniqueChild(root_folder_.getChildFile("songs"), safeFileName(songTitle), "");
         to.getParentDirectory().createDirectory();
         if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
         places_[key] = to;

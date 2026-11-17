@@ -32,6 +32,7 @@ public:
     juce::String undoName() const;  juce::String redoName() const;      // the command's name, "" when there is none
     CommandResult undo();  CommandResult redo();
     void clearHistory();
+    void clearRedo();                                           // a step just undone that must never be redone
 
     std::function<void(const std::vector<DocKey>& changed)> onChanged;  // after a run, undo or redo that changed something
     // The run, undo or redo that changed something last: its command's name and how. Set before onChanged is called, so a

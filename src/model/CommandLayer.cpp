@@ -90,5 +90,6 @@ CommandResult CommandLayer::redo() {
 }
 
 void CommandLayer::clearHistory() { undo_stack_.clear(); redo_stack_.clear(); }
+void CommandLayer::clearRedo() { redo_stack_.clear(); }
 
 }  // namespace sqlive::model

@@ -155,3 +155,31 @@ TEST_CASE("Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes on every Edit page, n
     CHECK(s.model().band().name == "Renamed");                                     // Show mode never writes the band folder
     CHECK_FALSE(shell.keyPressed(redo));
 }
+TEST_CASE("in Edit mode at the narrowest window the pills never run into the tabs", "[shell]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    ui::TopBar bar(s);
+    auto state = makeTopBarState(s, nullptr, nullptr, Page::Setlists);
+    using Level = StatusPill::Level;
+    const juce::String midi = "MIDI: Nord Stage 3 on the keyboard riser missing";
+    state.pills = {{"No audio", Level::Bad}, {midi, Level::Warning, true, "MIDI missing"}, {"Check files", Level::Warning}};
+    bar.setState(state);
+    for (const int w : {1100, 1280, 1920}) {
+        INFO(w);
+        bar.setBounds(0, 0, w, TopBar::height);
+        const int tabsEnd = bar.tabArea(Page::Setup).getRight();
+        int buttonsStart = w;                                                      // Undo, then Snapshots
+        for (auto* child : bar.getChildren())
+            if (auto* button = dynamic_cast<PillButton*>(child); button != nullptr && button->isVisible())
+                buttonsStart = std::min(buttonsStart, button->getX());
+        int shown = 0;
+        for (auto* child : bar.getChildren())
+            if (auto* pill = dynamic_cast<StatusPill*>(child); pill != nullptr && pill->isVisible()) {
+                ++shown;
+                CHECK(pill->getX() > tabsEnd);  CHECK(pill->getRight() < buttonsStart);
+                CHECK(pill->text().isNotEmpty());
+                if (w == 1920 && pill->text().startsWith("MIDI")) CHECK(pill->text() == midi);   // with room, every word
+            }
+        CHECK(shown == 3);
+    }
+}

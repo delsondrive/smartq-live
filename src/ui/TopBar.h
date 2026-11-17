@@ -27,8 +27,9 @@ struct TopBarState {
     int beatsInBar = 4, beatNow = 0;
     bool playing = false, canUndo = false;  juce::String undoTip; // "Undo: rename the band"
     double holdProgress = 0.0;                                    // ShowController::holdProgress(): the ▶ button's ring
-    // editToo: shown in Edit mode as well, before Undo (as the audio pill is when it is Bad, and "Check files")
-    struct Pill { juce::String text; StatusPill::Level level; bool editToo = false; };  std::vector<Pill> pills;
+    // editToo: shown in Edit mode as well, before Undo (as the audio pill is when it is Bad, and "Check files"). shortText:
+    // the words when the Edit-mode bar is too narrow for them all ("MIDI missing"); "" = the same words
+    struct Pill { juce::String text; StatusPill::Level level; bool editToo = false; juce::String shortText; };  std::vector<Pill> pills;
 
     bool operator==(const TopBarState&) const;
 };
@@ -45,7 +46,8 @@ juce::String pageName(Page);
 // logo, clock, chips, beat lights, the transport (⏮ ▶ ⏭), status pills, the switch. Show mode, stage view: logo, a gap,
 // pills, the switch. Clicking the logo in Edit mode opens the About panel. In Edit mode only the pills that need a look sit
 // before Undo: the audio pill when audio isn't OK ("No audio", "Audio lost"), the MIDI pill when a device is missing or
-// none has a port here, and "Check files", when there is one, where a click calls onCheckFiles.
+// none has a port here, and "Check files", when there is one, where a click calls onCheckFiles. When they don't all fit
+// between the tabs and Undo, they take their short words ("MIDI missing"), and then the widest is cut with "…".
 class TopBar : public juce::Component, private juce::Timer {
 public:
     static constexpr int height = 62;
@@ -55,6 +57,7 @@ public:
 
     void setState(const TopBarState&);
     const TopBarState& state() const { return state_; }
+    juce::Rectangle<int> tabArea(Page) const;                     // where that tab is; empty in Show mode
 
     std::function<void(Page)> onPage;
     std::function<void(app::Mode)> onMode;

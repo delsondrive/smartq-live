@@ -27,7 +27,7 @@ public:
     std::vector<SnapshotInfo> list() const;                       // newest first, by sequence
     // Every document as the snapshot has it, and the ones it hasn't removed, as one undoable "snapshot.apply" step; the
     // present is saved as a snapshot named "Before going back" (not automatic) once that step is taken, so a refusal (Show
-    // mode) writes nothing. When the present can't be saved, the step is taken back and nothing is changed.
+    // mode) writes nothing. When the present can't be saved, the step is taken back (and can't be redone): nothing changes.
     juce::Result restore(const juce::String& id, CommandLayer&);
     juce::Result remove(const juce::String& id);
     juce::Result rename(const juce::String& id, const juce::String& name);   // rewrites snapshot.json; the folder keeps its name

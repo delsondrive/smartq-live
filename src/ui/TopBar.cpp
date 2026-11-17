@@ -86,7 +86,8 @@ void centreOn(juce::Component& c, int x, int width, int height, int centreY) { c
 bool TopBarState::operator==(const TopBarState& o) const {
     if (pills.size() != o.pills.size()) return false;
     for (std::size_t i = 0; i < pills.size(); ++i)
-        if (pills[i].text != o.pills[i].text || pills[i].level != o.pills[i].level || pills[i].editToo != o.pills[i].editToo)
+        if (pills[i].text != o.pills[i].text || pills[i].level != o.pills[i].level || pills[i].editToo != o.pills[i].editToo
+            || pills[i].shortText != o.pills[i].shortText)
             return false;
     return mode == o.mode && page == o.page && stageView == o.stageView && clock == o.clock && clockSub == o.clockSub
            && chips == o.chips && beatsInBar == o.beatsInBar && beatNow == o.beatNow && playing == o.playing
@@ -134,11 +135,11 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
         const auto missing = ports->missingDeviceNames();
         if (!missing.isEmpty()) {
             const auto who = missing.size() == 1 ? missing[0] : juce::String(missing.size());
-            t.pills.push_back({"MIDI: " + who + " missing", Level::Warning, true});
+            t.pills.push_back({"MIDI: " + who + " missing", Level::Warning, true, "MIDI missing"});
         } else if (const int connected = ports->connectedCount(); connected > 0) {
             t.pills.push_back({"MIDI " + juce::String(connected), Level::Ok});
         } else {
-            t.pills.push_back({"MIDI: not connected", Level::Warning, true});   // no device has a port on this computer
+            t.pills.push_back({"MIDI: not connected", Level::Warning, true, "No MIDI"});   // no device has a port on this computer
         }
     }
     // The conflict copies are the list the session keeps from its last look at the band folder: nothing here scans.
@@ -419,19 +420,50 @@ void TopBar::layout() {
     // click opens the files dialog (in Show mode it only says so: nothing there may change the band folder).
     const bool showPills = !edit;
     checkFiles_ = {};
-    int editX = undo_->getX() - kGap;
-    for (std::size_t i = pills_.size(); i-- > 0;) {
+    std::vector<std::size_t> inEdit;                                  // the pills shown before Undo, left to right
+    for (std::size_t i = 0; i < pills_.size(); ++i) {
         const bool inState = i < state_.pills.size();
-        const bool checkFiles = inState && state_.pills[i].text == kCheckFiles;
-        const bool shownInEdit =
-            edit && inState && (checkFiles || state_.pills[i].editToo || state_.pills[i].level == StatusPill::Level::Bad);
+        const bool shownInEdit = edit && inState
+                                 && (state_.pills[i].text == kCheckFiles || state_.pills[i].editToo
+                                     || state_.pills[i].level == StatusPill::Level::Bad);
         pills_[i]->setVisible(inState && (showPills || shownInEdit));
-        if (!shownInEdit) continue;
-        const int pw = pills_[i]->idealWidth();
-        editX -= pw;
-        centreOn(*pills_[i], editX, pw, 24, centreY);
-        editX -= 6;
-        if (checkFiles) checkFiles_ = pills_[i]->getBounds();
+        if (inState) pills_[i]->set(state_.pills[i].text, state_.pills[i].level);   // every word, unless too narrow below
+        if (shownInEdit) inEdit.push_back(i);
+    }
+    if (!inEdit.empty()) {
+        // Between the tabs and Undo. When every word doesn't fit: the pills' short words, then the widest cut (with "…"),
+        // so a pill never runs into the tabs.
+        constexpr int kPillGap = 6, kPillMin = 28;
+        const int room = undo_->getX() - kGap - (tabs_.back().getRight() + kGap);
+        std::vector<int> widths;
+        const auto measure = [&] {
+            widths.clear();
+            for (const auto i : inEdit) widths.push_back(pills_[i]->idealWidth());
+        };
+        const auto total = [&] {
+            int sum = kPillGap * (static_cast<int>(widths.size()) - 1);
+            for (const int w2 : widths) sum += w2;
+            return sum;
+        };
+        measure();
+        if (total() > room) {
+            for (const auto i : inEdit)
+                if (state_.pills[i].shortText.isNotEmpty()) pills_[i]->set(state_.pills[i].shortText, state_.pills[i].level);
+            measure();
+        }
+        while (total() > room) {
+            const auto widest = std::max_element(widths.begin(), widths.end());
+            if (*widest <= kPillMin) break;
+            *widest = std::max(kPillMin, *widest - (total() - room));
+        }
+        int editX = undo_->getX() - kGap;
+        for (std::size_t k = inEdit.size(); k-- > 0;) {
+            auto& pill = *pills_[inEdit[k]];
+            editX -= widths[k];
+            centreOn(pill, editX, widths[k], 24, centreY);
+            editX -= kPillGap;
+            if (state_.pills[inEdit[k]].text == kCheckFiles) checkFiles_ = pill.getBounds();
+        }
     }
     if (showPills) {
         int x = right;
@@ -544,6 +576,11 @@ void TopBar::paint(juce::Graphics& g) {
     g.drawText("EDIT", editPart, juce::Justification::centred, false);
     g.setColour(edit ? theme::dim : kOnEmber);
     g.drawText("SHOW", showPart, juce::Justification::centred, false);
+}
+
+juce::Rectangle<int> TopBar::tabArea(Page page) const {
+    const auto i = static_cast<std::size_t>(page);
+    return i < tabs_.size() ? tabs_[i] : juce::Rectangle<int>();
 }
 
 int TopBar::tabAt(juce::Point<int> p) const {

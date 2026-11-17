@@ -549,3 +549,23 @@ TEST_CASE("undoing and redoing a song imported again on another computer leaves 
     CHECK(s.outsideChanges().empty());                                             // no stale banner
     CHECK(s.saveState() == SaveState::Saved);
 }
+
+TEST_CASE("undoing the load of a song another computer trashed brings its folder back from the trash", "[folderwatch]") {
+    DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+    const auto id = d.setlist().entries[0].songId;
+    const auto part = s.model().song(id)->parts[0];
+    const auto dir = s.folder().songFolder(id);
+    REQUIRE(root.getChildFile("trash").createDirectory());
+    REQUIRE(dir.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
+    s.advanceWithoutDevice(0);
+    REQUIRE(s.outsideChanges().size() == 1);
+    REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Removed);
+    REQUIRE(s.takeOutsideChanges().wasOk());
+    REQUIRE(s.model().song(id) == nullptr);
+    s.commands().undo();  s.flushNow();
+    REQUIRE(s.model().song(id) != nullptr);
+    CHECK(s.folder().songFolder(id) == dir);                                       // where it was
+    CHECK(s.folder().audioFile(*s.model().song(id), part).existsAsFile());         // audio and all
+    CHECK(root.getChildFile("trash").getNumberOfChildFiles(juce::File::findDirectories) == 0);
+    s.advanceWithoutDevice(0);  CHECK(s.outsideChanges().empty());
+}
