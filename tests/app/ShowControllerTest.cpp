@@ -109,7 +109,9 @@ TEST_CASE("holding the right arrow during a song goes to the next song now; a ta
     app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); };
     c.keyDown(ShowKey::Right, 0.0);  c.tick(0.5);  CHECK(seen.empty());
     CHECK(c.nextSongHoldProgress() == Catch::Approx(0.5).margin(0.02));  CHECK(c.holdProgress() == 0.0);   // not a hold toward a stop
-    c.keyUp(ShowKey::Right, 0.6);
+    c.keyUp(ShowKey::Right, 0.6);                                  // a hold let go short of the second: nothing at all
+    CHECK(seen.empty());
+    c.keyDown(ShowKey::Right, 1.0);  c.keyUp(ShowKey::Right, 1.2);   // a tap
     CHECK(seen == std::vector{Action::NextSongLater});
     c.keyDown(ShowKey::Right, 2.0);  c.tick(3.01);  c.tick(3.5);  c.keyUp(ShowKey::Right, 4.0);
     CHECK(seen == std::vector{Action::NextSongLater, Action::GoToNextSongNow});
@@ -133,7 +135,9 @@ TEST_CASE("going to the next song now does nothing with no song playing, and its
     c.keyDown(ShowKey::Right, 0.0);  c.tick(1.5);
     CHECK(c.nextSongHoldProgress() == 0.0);                        // nothing plays: no hold toward going on
     c.keyUp(ShowKey::Right, 2.0);
-    CHECK(seen == std::vector{Action::NextSongLater});             // only the choice of the next song, on the release
+    CHECK(seen.empty());                                           // a long press does nothing, even between songs
+    c.keyDown(ShowKey::Right, 2.5);  c.keyUp(ShowKey::Right, 2.6);
+    CHECK(seen == std::vector{Action::NextSongLater});             // a tap: only the choice of the next song, on the release
     c.buttonDown(Action::GoToNextSongNow, 3.0, app::PedalKind::Tap);  c.buttonDown(Action::GoToNextSongNow, 3.5, app::PedalKind::Tap);
     CHECK(seen.size() == 1);
     s.chooseNext(0);  s.perform(Action::Start);  s.advanceWithoutDevice(4800);
@@ -207,7 +211,9 @@ TEST_CASE("no hold toward the next song fills in a count-in or while stopping", 
     c.keyDown(ShowKey::Right, 0.0);  c.tick(0.5);
     CHECK(c.nextSongHoldProgress() == 0.0);
     c.tick(1.5);  c.keyUp(ShowKey::Right, 1.6);
-    CHECK(seen == std::vector{Action::NextSongLater});             // let go: a tap, choosing the next song
+    CHECK(seen.empty());                                           // let go after 0.3 s: nothing
+    c.keyDown(ShowKey::Right, 1.7);  c.keyUp(ShowKey::Right, 1.8);
+    CHECK(seen == std::vector{Action::NextSongLater});             // a tap, choosing the next song
     c.keyDown('N', 0, 2.0);  c.tick(3.5);  c.keyUp('N', 3.6);
     CHECK(seen.size() == 1);                                       // its own key does nothing there
     s.advanceWithoutDevice(kPastCountIn);
@@ -218,5 +224,60 @@ TEST_CASE("no hold toward the next song fills in a count-in or while stopping", 
     c.tick(6.1);
     CHECK(c.nextSongHoldProgress() == 0.0);
     c.keyUp(ShowKey::Right, 6.2);
-    CHECK(seen == std::vector{Action::NextSongLater, Action::NextSongLater});
+    CHECK(seen == std::vector{Action::NextSongLater});             // a hold that fell short: nothing more
+}
+
+// ---- The final review's fixes (I1, I2, M2) ----
+
+TEST_CASE("a hold toward the next song is used up when its song gives way, across a seamless follow-on or a crossfade", "[keys]") {
+    for (const bool crossfade : {false, true}) {
+        INFO(crossfade);
+        DemoSession d; auto& s = *d.session;
+        auto transition = params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id},
+                                  {"kind", crossfade ? "crossfade" : "seamless"}});
+        if (crossfade) transition.getDynamicObject()->setProperty("seconds", 2);
+        REQUIRE(s.commands().run("setlist.setTransition", transition).ok);
+        s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+        d.settle();  s.enterShow();  s.perform(Action::Start);
+        // First Light is 38.4 s after its 2.4 s count-in. The hold begins 0.3 s before the song gives way: its end, or the
+        // crossfade's start 2 s before it.
+        s.advanceWithoutDevice(int(48000 * (2.4 + 38.4 - (crossfade ? 2.3 : 0.3))));
+        REQUIRE(s.now().playingIndex == 0);  REQUIRE(s.now().canGoOn);
+        app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); };
+        c.keyDown(ShowKey::Right, 0.0);  c.tick(0.1);
+        CHECK(c.nextSongHoldProgress() > 0.0);
+        s.advanceWithoutDevice(48000 / 2);                         // the next song has taken over
+        REQUIRE(s.now().playingIndex == 1);
+        c.tick(0.6);
+        CHECK(c.nextSongHoldProgress() == 0.0);
+        c.tick(1.1);  c.tick(1.5);  c.keyUp(ShowKey::Right, 1.6);
+        CHECK(seen.empty());                                       // never sent on in the new song, and the release is nothing
+        CHECK(s.now().playingIndex == 1);
+        c.keyDown(ShowKey::Right, 3.0);  c.keyUp(ShowKey::Right, 3.1);
+        CHECK(seen == std::vector{Action::NextSongLater});         // a fresh tap in the new song still chooses
+    }
+}
+TEST_CASE("letting go of the right arrow is a tap only within 0.3 s; a longer press let go early moves nothing", "[keys]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(kPastCountIn);
+    app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); s.perform(a); };
+    REQUIRE(s.now().nextIndex == 1);
+    c.keyDown(ShowKey::Right, 0.0);  c.tick(0.3);  c.tick(0.6);  c.keyUp(ShowKey::Right, 0.9);   // the ring filling, let go at 0.9 s
+    CHECK(seen.empty());
+    CHECK(s.now().nextIndex == 1);                                 // the next song is still the next one
+    c.keyDown(ShowKey::Right, 2.0);  c.keyUp(ShowKey::Right, 2.29);
+    CHECK(seen == std::vector{Action::NextSongLater});
+    CHECK(s.now().nextIndex == 2);
+}
+TEST_CASE("with nothing cued after it the hold toward the next song doesn't fill, and goes nowhere", "[keys]") {
+    DemoSession d; auto& s = *d.session; s.enterShow();
+    s.chooseNext(2);  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);   // the last song: nothing after it
+    REQUIRE(s.now().inStep);  REQUIRE(s.now().nextIndex == -1);
+    CHECK_FALSE(s.now().canGoOn);
+    app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); s.perform(a); };
+    c.keyDown(ShowKey::Right, 0.0);  c.tick(0.5);
+    CHECK(c.nextSongHoldProgress() == 0.0);
+    c.tick(1.2);  c.keyUp(ShowKey::Right, 1.3);
+    CHECK(seen.empty());
+    s.perform(Action::GoToNextSongNow);  s.advanceWithoutDevice(48000 * 3);   // and asked anyway, it is ignored
+    CHECK(s.now().playing);  CHECK(s.now().playingIndex == 2);
 }

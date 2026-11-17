@@ -142,7 +142,7 @@ struct ShowState {
 // "Press Q to start", "hold S stop"; a hint whose action has no key is left out. The section hints show only for a song
 // with sections: the main view's "↑ ↓ next section", "L loop" and "Backspace cancel" while it plays; the stage view's
 // "↑ ↓ next section", "L loop this section" and "Backspace cancel" while it plays, "hold → go to next song now" while a
-// hold can act (NowPlaying::inStep), and "1–9 start from a section" between songs, while Section1 … Section10 have the
+// hold can act (NowPlaying::canGoOn), and "1–9 start from a section" between songs, while Section1 … Section10 have the
 // keys 1 … 9 and 0.
 //
 // It runs 30 times a second. What it works out from documents alone is kept, message thread only: the keys, from the

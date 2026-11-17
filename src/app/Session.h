@@ -52,6 +52,8 @@ struct NowPlaying {
                                                                  // goes up, whatever the song time does (loops, jumps)
     bool inStep = false;                                         // a step of it plays: not its count-in, a count-off or lead-in,
                                                                  // a gap, its stop fade, or what follows its last step
+    bool canGoOn = false;                                        // inStep, and the next song is cued in the engine: "go to the next
+                                                                 // song now" can act (nothing cued, or the next still loading: no)
     Readiness nextReadiness = Readiness::None;  double nextProgress = 0.0;  juce::StringArray nextProblems;
     bool countIn = false;  int bar = 1;  double beat = 1.0;
     double seconds = 0.0, lengthSeconds = 0.0;                   // from bar 1; negative during the count-in

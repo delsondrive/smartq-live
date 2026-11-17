@@ -31,11 +31,14 @@ enum class PedalKind { Held, Tap };
 //    does a song started from anywhere else (the top bar's ▶, a seamless follow-on): both taps must be in one song.
 //  - Esc stops only when pressed twice within a second and at least 150 ms apart, always (the band can't give Esc away).
 //  - Going to the next song now ends a song, so it is guarded as Stop is: a single tap never does it. On a key, a hold of a
-//    second while a step of a song plays and nothing is stopping: Next song: later's key (→) held, or a key of its own held
-//    (a shorter press of that does nothing). A tap of → is still Next song: later, sent when the key is let go; a hold
-//    that went to the next song sends nothing more. In a count-in, lead-in or gap, or once a stop is asked for, no hold
-//    fills: → let go is a tap, and a key of its own does nothing. On a tapped pedal or pad, two taps during one song, as
-//    for Stop, kept apart from Stop's.
+//    second while it can act (NowPlaying::canGoOn: a step plays, nothing is stopping, and the next song is cued):
+//    Next song: later's key (→) held, or a key of its own held (a shorter press of that does nothing). A hold fills only
+//    from a press made while it can act, and stops filling for good once it can't. The hold belongs to the song it was
+//    pressed in: once that song has gone (it ended, followed on or crossfaded), it is used up, and its release sends
+//    nothing. A tap of → is still Next song: later, sent when the key is let go within 0.3 s (before the ring shows), in
+//    the song it was pressed in; a longer press let go early does nothing, so a hold that falls short never moves the next
+//    song instead, and a hold that went to the next song sends nothing more. On a tapped pedal or pad, two taps during
+//    one song, as for Stop, kept apart from Stop's.
 //  - "One song" is the song the engine started, by its serial (NowPlaying::playingSerial), never by its time, which goes
 //    back at a loop or a jump. A song started anywhere else, even the same entry again, forgets a first tap; so does a
 //    Start, or a section key that starts a song.
@@ -49,6 +52,7 @@ public:
     static constexpr double holdSeconds = 1.0;
     static constexpr double doubleEscSeconds = 1.0;    // also a tapped Stop's two presses: the second within this
     static constexpr double doubleMinSeconds = 0.15;   // and no sooner than this
+    static constexpr double tapSeconds = 0.3;          // Next song: later's key let go sooner than this is a tap
 
     explicit ShowController(Session&);
     ~ShowController() override;
@@ -99,8 +103,13 @@ private:
     std::map<int, std::optional<Action>> keys_;    // keyboard keys held, by key code, with what each pressed (none: Esc)
     std::set<Holder> held_;                        // actions held, by keys or by buttons
     std::map<Holder, double> stop_holds_;          // a held Start (during a song) or Stop, counting toward a stop, since when
-    std::map<Holder, double> next_holds_;          // a held Next song: later or GoToNextSongNow (during a song), since when
-    std::set<Holder> next_done_;                   // holds that went to the next song: their release sends nothing
+    struct NextPress {                             // a held Next song: later or GoToNextSongNow
+        double since = 0.0;
+        std::uint64_t serial = 0;                  // the song it was pressed in (NowPlaying::playingSerial; 0: none)
+        bool filling = false;                      // counting toward going on: it could from the press, and still can
+    };
+    std::map<Holder, NextPress> next_presses_;
+    std::set<Holder> next_done_;                   // presses used up (went on, or their song went): their release sends nothing
     double last_time_ = 0.0;
     DoublePress esc_, tapped_stop_, tapped_next_;
     // The song the first Stop tap was in: a second tap in another song (or the same one started again, by ▶ or anything

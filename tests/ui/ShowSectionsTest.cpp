@@ -342,3 +342,17 @@ TEST_CASE("in a count-in or a count-off the step it leads into is Next, and the 
     CHECK(st.alongSteps == st.spans.steps[2].at / st.spans.total);
     CHECK_FALSE(textsOf(st.hints).contains(holdHint));
 }
+
+TEST_CASE("the hold hint doesn't show while nothing is cued to go on to", "[showsections]") {
+    DemoSession d(true); auto& s = *d.session;                     // every song with sections
+    s.enterShow();
+    const auto holdHint = juce::String::fromUTF8("hold \xe2\x86\x92 go to next song now");
+    s.chooseNext(1);  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);   // Low Tide, with Run cued after it
+    REQUIRE(s.now().canGoOn);
+    CHECK(textsOf(makeShowState(s).hints).contains(holdHint));
+    s.perform(Action::Stop);  s.advanceWithoutDevice(9600);
+    s.chooseNext(2);  s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 5);   // Run, the last song: nothing after it
+    REQUIRE(s.now().inStep);
+    CHECK_FALSE(s.now().canGoOn);
+    CHECK_FALSE(textsOf(makeShowState(s).hints).contains(holdHint));
+}

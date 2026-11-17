@@ -679,6 +679,7 @@ NowPlaying Session::now() const {
     n.playingSerial = playing_.serial;
     n.inStep = playing_.active() && !n.stopping && !inGap && status.playingSerial == playing_.serial
                && status.state == engine::PlayState::Playing && status.step >= 0;
+    n.canGoOn = n.inStep && cue_.serial != 0;
     n.nextSongId = songIdOf(next_entry_id_);
     if (n.nextSongId.isNotEmpty()) {
         n.nextReadiness = readinessOf(n.nextSongId, arrangementIdOf(next_entry_id_));

@@ -60,7 +60,8 @@ void ShowController::press(Source source, Action a, double now) {
             break;
         case Action::NextSongLater:                // sent on the release, unless held into the next song
         case Action::GoToNextSongNow:              // only ever held into it
-            if (session_.now().inStep) next_holds_[{source, a}] = now;   // only while a step plays: never a count-in
+            // Every press is timed, to tell a tap from a hold; only while it can go on does it fill toward going on.
+            next_presses_[{source, a}] = {now, session_.now().playingSerial, session_.now().canGoOn};
             break;
         default: act(a); break;
     }
@@ -69,10 +70,15 @@ void ShowController::press(Source source, Action a, double now) {
 void ShowController::release(Source source, Action a, double now) {
     last_time_ = now;
     const bool wasHeld = held_.erase({source, a}) > 0;
-    const bool wentOn = next_done_.erase({source, a}) > 0;
+    const bool done = next_done_.erase({source, a}) > 0;
     stop_holds_.erase({source, a});
-    next_holds_.erase({source, a});
-    if (a == Action::NextSongLater && wasHeld && !wentOn) act(Action::NextSongLater);
+    const auto press = next_presses_.find({source, a});
+    // Next song: later is a tap: let go before the ring shows, in the song it was pressed in. A longer press let go before
+    // the second is up does nothing, so a hold toward going on that falls short never moves the next song instead.
+    const bool tapped = press != next_presses_.end() && now - press->second.since < tapSeconds
+                        && press->second.serial == session_.now().playingSerial;
+    if (press != next_presses_.end()) next_presses_.erase(press);
+    if (a == Action::NextSongLater && wasHeld && !done && tapped) act(Action::NextSongLater);
 }
 
 bool ShowController::doubleTap(DoublePress& presses, TappedIn& in, double now) {
@@ -151,12 +157,25 @@ void ShowController::tick(double now) {
             act(Action::Stop);
             return;
         }
-    // Only while a step plays and nothing is stopping: otherwise the hold is dropped, and letting go of → is a tap.
-    if (!next_holds_.empty() && !session_.now().inStep) next_holds_.clear();
-    for (auto& [holder, since] : next_holds_)
-        if (now - since >= holdSeconds) {
-            for (auto& [used, at] : next_holds_) next_done_.insert(used);   // once only; their releases send nothing
-            next_holds_.clear();
+    if (next_presses_.empty()) return;
+    const auto song = session_.now();
+    for (auto it = next_presses_.begin(); it != next_presses_.end();) {
+        // Pressed in a song that has gone (it ended, followed on, or crossfaded): the press is used up, and its release
+        // sends nothing. Told by the serial, as the engine moves on whenever it likes.
+        if (it->second.serial != song.playingSerial) {
+            next_done_.insert(it->first);
+            it = next_presses_.erase(it);
+            continue;
+        }
+        // Only while it can go on (a step plays, nothing is stopping, the next song is cued): otherwise the hold stops
+        // filling, for the rest of this press.
+        if (!song.canGoOn) it->second.filling = false;
+        ++it;
+    }
+    for (auto& [holder, press] : next_presses_)
+        if (press.filling && now - press.since >= holdSeconds) {
+            for (auto& [used, other] : next_presses_) next_done_.insert(used);   // once only; their releases send nothing
+            next_presses_.clear();
             act(Action::GoToNextSongNow);
             return;
         }
@@ -167,7 +186,7 @@ void ShowController::keyboardLost() {
         if (action) {
             held_.erase({Source::Keys, *action});
             stop_holds_.erase({Source::Keys, *action});
-            next_holds_.erase({Source::Keys, *action});
+            next_presses_.erase({Source::Keys, *action});
             next_done_.erase({Source::Keys, *action});
         }
     keys_.clear();                                 // a held button stays held: it doesn't need the keyboard
@@ -181,7 +200,8 @@ double ShowController::holdProgress() const {
 
 double ShowController::nextSongHoldProgress() const {
     double progress = 0.0;
-    for (auto& [holder, since] : next_holds_) progress = std::max(progress, std::clamp((last_time_ - since) / holdSeconds, 0.0, 1.0));
+    for (auto& [holder, press] : next_presses_)
+        if (press.filling) progress = std::max(progress, std::clamp((last_time_ - press.since) / holdSeconds, 0.0, 1.0));
     return progress;
 }
 

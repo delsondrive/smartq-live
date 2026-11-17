@@ -476,8 +476,9 @@ ShowState makeShowState(const app::Session& session) {
             addHint(st.hints, juce::StringArray(keys.cancelKey), "cancel");
         }
         addHint(st.hints, keys.songKeys, "next song");
-        // Only while a hold can act: a step plays (not a count-in, a lead-in or a gap) and nothing is stopping.
-        if (sectionKeys && now.inStep && keys.nextSongNowKey.isNotEmpty())
+        // Only while a hold can act: a step plays (not a count-in, a lead-in or a gap), nothing is stopping, and the next
+        // song is cued (NowPlaying::canGoOn).
+        if (sectionKeys && now.canGoOn && keys.nextSongNowKey.isNotEmpty())
             st.hints.push_back({"hold", {keys.nextSongNowKey}, "go to next song now"});
         st.hints.push_back(stop);
         addHint(st.hints, view, "main view");
