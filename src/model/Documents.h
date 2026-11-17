@@ -49,9 +49,35 @@ struct MarkerDoc {
 };
 struct SectionDoc {
     juce::String id, name; int startBar = 1, endBar = 2;           // endBar is the first bar after it
+    juce::String typeId;                                           // a SectionTypeDoc's id; "" = no type
     juce::NamedValueSet extra;
     bool operator==(const SectionDoc&) const = default;
 };
+// Sections, arrangements, cues and automation.
+struct SectionTypeDoc {
+    juce::String id, name; juce::Colour colour;
+    juce::String cueClip;                                          // a path inside the band folder; "" = no cue
+    juce::NamedValueSet extra;
+    bool operator==(const SectionTypeDoc&) const = default;
+};
+struct ArrangementDoc {
+    juce::String id, name; std::vector<juce::String> steps;        // section ids, in playing order
+    juce::NamedValueSet extra;
+    bool operator==(const ArrangementDoc&) const = default;
+};
+struct CueMarkerDoc {
+    juce::String id; int bar = 1; double beat = 1.0;
+    juce::String clip, text;                                       // clip: a path inside the band folder; text: what it says
+    juce::NamedValueSet extra;
+    bool operator==(const CueMarkerDoc&) const = default;
+};
+struct AutomationPoint {
+    int bar = 1; double beat = 1.0; float db = 0.0f;
+    juce::NamedValueSet extra;
+    bool operator==(const AutomationPoint&) const = default;
+};
+enum class JumpTiming { EndOfSection, NextBar };                   // when a jump to another section happens
+enum class CueLead { TwoBeats, OneBar, TwoBars };                  // how long before a section's end its cue is spoken
 // What a pedal or pad sends that a control answers to.
 enum class MidiKind { None, Control, Note, Program };   // written as 0, 1, 2, 3
 struct ControlBinding {
@@ -67,6 +93,7 @@ struct BandDoc {
     std::vector<Role> roles;
     std::vector<MidiDeviceDoc> midiDevices;
     std::map<juce::String, ControlBinding> controls;               // keyed by action name
+    std::vector<SectionTypeDoc> sectionTypes; CueLead cueLead = CueLead::OneBar;
     juce::NamedValueSet extra;
     bool operator==(const BandDoc&) const = default;
 };
@@ -91,11 +118,14 @@ struct SongDoc {
     std::vector<TempoPointDoc> tempo{TempoPointDoc{}}; ClickDoc click; std::vector<PartDoc> parts;
     std::map<juce::String, std::vector<MarkerDoc>> midiLanes;      // MIDI device id -> its markers
     std::vector<SectionDoc> sections;
+    std::vector<ArrangementDoc> arrangements; JumpTiming jumpTiming = JumpTiming::EndOfSection;
+    std::vector<CueMarkerDoc> cues;
+    std::map<juce::String, std::vector<AutomationPoint>> automation;   // keyed by part id, or "click", or "cues"
     juce::NamedValueSet extra;
     bool operator==(const SongDoc&) const = default;
 };
 
-enum class TransitionKind { Stop, Gap, Seamless };
+enum class TransitionKind { Stop, Gap, Seamless, Crossfade };
 struct Transition {
     TransitionKind kind = TransitionKind::Stop; double seconds = 0.0;
     juce::NamedValueSet extra;
@@ -103,6 +133,7 @@ struct Transition {
 };
 struct SetlistEntry {
     juce::String id, songId; Transition transition;
+    juce::String arrangementId;                                    // "" = the song's sections in order
     juce::NamedValueSet extra;
     bool operator==(const SetlistEntry&) const = default;
 };

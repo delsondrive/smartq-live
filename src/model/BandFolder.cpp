@@ -60,7 +60,7 @@ bool BandFolder::looksLikeBandFolder(const juce::File& f) { return f.getChildFil
 
 juce::Result BandFolder::create(const juce::File& root, const juce::String& bandName) {
     if (looksLikeBandFolder(root)) return juce::Result::fail("There is already a band in " + root.getFullPathName() + ".");
-    BandDoc band; band.id = newId(); band.name = bandName; band.roles = defaultRoles();
+    BandDoc band; band.id = newId(); band.name = bandName; band.roles = defaultRoles(); band.sectionTypes = defaultSectionTypes();
     auto rig = defaultRig(band);
     SetlistDoc setlist; setlist.id = newId(); setlist.name = "Setlist 1";
     if (! root.getChildFile("songs").createDirectory())

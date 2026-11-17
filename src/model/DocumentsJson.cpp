@@ -21,7 +21,8 @@ using namespace detail;
 const EnumName kRoleKinds[] = {
     {(int) RoleKind::Part, "part"}, {(int) RoleKind::Click, "click"}, {(int) RoleKind::Cues, "cues"}, {(int) RoleKind::Pad, "pad"}};
 const EnumName kTransitions[] = {
-    {(int) TransitionKind::Stop, "stop"}, {(int) TransitionKind::Gap, "gap"}, {(int) TransitionKind::Seamless, "seamless"}};
+    {(int) TransitionKind::Stop, "stop"}, {(int) TransitionKind::Gap, "gap"}, {(int) TransitionKind::Seamless, "seamless"},
+    {(int) TransitionKind::Crossfade, "crossfade"}};
 const EnumName kPlayModes[] = {{(int) PlayMode::SongBySong, "songBySong"}, {(int) PlayMode::Continuous, "continuous"}};
 const EnumName kLabels[] = {{(int) OutputLabel::Monitor, "monitor"}, {(int) OutputLabel::Foh, "foh"},
                             {(int) OutputLabel::Timecode, "timecode"}, {(int) OutputLabel::Unused, "unused"}};
@@ -58,6 +59,7 @@ juce::var write(const Transition& t) {
 juce::var write(const SetlistEntry& e) {
     auto o = startObject();
     put(o, "id", e.id); put(o, "songId", e.songId); put(o, "transition", write(e.transition));
+    writeSections(o, e);
     return finish(o, e.extra);
 }
 juce::var write(const OutputDoc& d) {
@@ -86,7 +88,7 @@ void read(Reader& r, Role& out, std::set<juce::String>& seen) {
     out.extra = r.rest();
 }
 void read(Reader& r, TempoPointDoc& out) {
-    out.bar = r.whole("bar", 1, 1, 99999); out.beat = r.number("beat", 1.0, 1.0, 32.0); out.bpm = r.number("bpm", 120.0, 20.0, 400.0);
+    out.bar = r.whole("bar", 1, 1, kMaxBar); out.beat = r.number("beat", 1.0, 1.0, kMaxBeat); out.bpm = r.number("bpm", 120.0, 20.0, 400.0);
     out.numerator = r.whole("numerator", 4, 1, 32, true);
     const double dens[] = {1, 2, 4, 8, 16};
     out.denominator = (int) r.oneOf("denominator", 4.0, dens);
@@ -113,6 +115,7 @@ void read(Reader& r, Transition& out) {
 void read(Reader& r, SetlistEntry& out, std::set<juce::String>& seen) {
     out.id = r.id(seen); out.songId = r.text("songId");
     r.object("transition", [&](Reader& t) { read(t, out.transition); });
+    readSections(r, out);
     out.extra = r.rest();
 }
 void read(Reader& r, OutputDoc& out, std::set<juce::String>& seen) {
@@ -161,6 +164,7 @@ juce::var toVar(const BandDoc& b) {
     put(o, "levels", juce::var(levels.get()));
     put(o, "roles", arrayOf(b.roles, [](const Role& r) { return write(r); }));
     writeMidi(o, b);
+    writeSections(o, b);
     return finish(o, b.extra);
 }
 bool fromVar(const juce::var& v, BandDoc& out, ParseNotes& notes) {
@@ -175,6 +179,7 @@ bool fromVar(const juce::var& v, BandDoc& out, ParseNotes& notes) {
     });
     readIdList(r, "roles", out.roles);
     readMidi(r, out);
+    readSections(r, out);
     out.extra = r.rest();
     return true;
 }
@@ -187,6 +192,7 @@ juce::var toVar(const SongDoc& s) {
     put(o, "click", write(s.click));
     put(o, "parts", arrayOf(s.parts, [](const PartDoc& p) { return write(p); }));
     writeMidi(o, s);
+    writeSections(o, s);
     return finish(o, s.extra);
 }
 bool fromVar(const juce::var& v, SongDoc& out, ParseNotes& notes) {
@@ -205,6 +211,7 @@ bool fromVar(const juce::var& v, SongDoc& out, ParseNotes& notes) {
     r.object("click", [&](Reader& c) { read(c, out.click); });
     readIdList(r, "parts", out.parts);
     readMidi(r, out);
+    readSections(r, out);
     out.extra = r.rest();
     return true;
 }

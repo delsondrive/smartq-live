@@ -1,7 +1,7 @@
 #pragma once
 
-// Inside the documents' JSON: the writing helpers and the tolerant Reader, shared by DocumentsJson.cpp and
-// DocumentsMidiJson.cpp. Nothing else includes this.
+// Inside the documents' JSON: the writing helpers, the tolerant Reader and the limits on bars and beats, shared by
+// DocumentsJson.cpp, DocumentsMidiJson.cpp and DocumentsSectionsJson.cpp. Nothing else includes this.
 
 #include <cmath>
 #include <functional>
@@ -13,6 +13,11 @@
 #include "model/Units.h"
 
 namespace sqlive::model::detail {
+
+// Every bar and beat in a document (a tempo point's, a marker's, a section's, a cue's, an automation point's) is limited
+// to these.
+inline constexpr int kMaxBar = 99999;
+inline constexpr double kMaxBeat = 32.0;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Writing
@@ -238,5 +243,12 @@ void writeMidi(const Obj&, const BandDoc&);         void readMidi(Reader&, BandD
 void writeMidi(const Obj&, const SongDoc&);         void readMidi(Reader&, SongDoc&);
 void writeMidi(const Obj&, const RigDoc&);          void readMidi(Reader&, RigDoc&);
 void writeMidi(const Obj&, const ComputerBinding&); void readMidi(Reader&, ComputerBinding&);
+
+// Section types, arrangements, cues and automation (a section's own keys, its type included, are with the MIDI parts),
+// written and read by DocumentsSectionsJson.cpp and called beside writeMidi and readMidi. A missing key gives its default
+// without a note: a band with no "sectionTypes" gets defaultSectionTypes().
+void writeSections(const Obj&, const BandDoc&);      void readSections(Reader&, BandDoc&);
+void writeSections(const Obj&, const SongDoc&);      void readSections(Reader&, SongDoc&);
+void writeSections(const Obj&, const SetlistEntry&); void readSections(Reader&, SetlistEntry&);
 
 }  // namespace sqlive::model::detail

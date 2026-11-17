@@ -22,6 +22,19 @@ std::vector<Role> defaultRoles() {
     return roles;
 }
 
+std::vector<SectionTypeDoc> defaultSectionTypes() {
+    struct Type { const char* name; juce::uint32 colour; };
+    static const Type types[] = {{"Intro", 0xff8491ff},        {"Verse", 0xff6ea8ff}, {"Pre-chorus", 0xff58d3e8},
+                                 {"Chorus", 0xffffc163},       {"Bridge", 0xffb69dff}, {"Solo", 0xffff8fd2},
+                                 {"Instrumental", 0xff9fd8a0}, {"Breakdown", 0xffe9d568}, {"Outro", 0xffa79fb0}};
+    std::vector<SectionTypeDoc> out;
+    for (const auto& t : types) {
+        const juce::String name(t.name);
+        out.push_back({name.toLowerCase(), name, juce::Colour(t.colour), "cues/built-in/" + name + ".wav", {}});
+    }
+    return out;
+}
+
 RigDoc defaultRig(const BandDoc& band) {
     RigDoc rig; rig.id = newId(); rig.name = "Headphones"; rig.sampleRate = band.sampleRate;
     OutputDoc out; out.id = newId(); out.name = "Headphones"; out.firstChannel = 1; out.stereo = true; out.label = OutputLabel::Monitor;

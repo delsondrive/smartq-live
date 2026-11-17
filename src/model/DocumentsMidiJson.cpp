@@ -1,5 +1,5 @@
-// The MIDI parts of the documents: devices and their patches, a lane of markers per device in each song, sections, the
-// controls' bindings, and the rig's channels and ports. Every limit on a MIDI value is written here, once.
+// The MIDI parts of the documents: devices and their patches, a lane of markers per device in each song, sections (with
+// their types), the controls' bindings, and the rig's channels and ports. Every limit on a MIDI value is written here, once.
 
 #include <limits>
 #include <set>
@@ -13,8 +13,6 @@ namespace {
 
 using namespace detail;
 
-constexpr int kMaxBar = 99999;                                   // as a tempo point's
-constexpr double kMaxBeat = 32.0;                                // as a tempo point's
 constexpr double kMinNoteBeats = 1.0 / 16.0;                     // never zero-length
 constexpr double kMaxNoteBeats = 4096.0;                         // longer than any song
 constexpr double kMaxOffsetMs = 200.0;
@@ -59,6 +57,7 @@ juce::var write(const MarkerDoc& m) {
 juce::var write(const SectionDoc& s) {
     auto o = startObject();
     put(o, "id", s.id); put(o, "name", s.name); put(o, "startBar", s.startBar); put(o, "endBar", s.endBar);
+    put(o, "typeId", s.typeId);
     return finish(o, s.extra);
 }
 juce::var write(const ControlBinding& c) {
@@ -128,6 +127,7 @@ void read(Reader& r, SectionDoc& out, std::set<juce::String>* seen) {
     out.name = r.text("name");
     out.startBar = r.whole("startBar", 1, 1, kMaxBar);
     out.endBar = r.whole("endBar", out.startBar + 1, out.startBar + 1, kMaxBar + 1);   // at least one bar long
+    out.typeId = r.text("typeId");
     out.extra = r.rest();
 }
 void read(Reader& r, ControlBinding& out) {
