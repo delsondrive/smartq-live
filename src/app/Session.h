@@ -77,6 +77,8 @@ public:
     juce::ChangeBroadcaster& changes();                          // fires when anything a view shows has changed
 
     juce::String rigId() const;        void chooseRig(const juce::String& rigId);       // remembered in Settings
+    // This computer's binding in the chosen rig (its interface, its MIDI ports); nullptr when the rig has none for it.
+    const model::ComputerBinding* thisComputer() const;
     juce::String setlistId() const;    void chooseSetlist(const juce::String& setlistId);
     // From AudioHost (or tests), once the device has prepared the engine: loads songs again at a new rate, and sends the
     // follow-on, the mix and the next entry's cue again, as prepare dropped what was queued. Never prepares the engine.

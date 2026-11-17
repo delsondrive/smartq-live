@@ -109,9 +109,8 @@ RoutingState makeRoutingState(const app::Session& session, const app::AudioHost*
     state.rigName = rig->name;
     state.sampleRate = sampleRateText(rig->sampleRate);
     state.buffer = bufferText(rig->bufferSize);
-    const auto binding = rig->computers.find(session.settings().computerName());
-    if (binding != rig->computers.end() && binding->second.deviceName.isNotEmpty())
-        state.device = binding->second.deviceName + " (" + binding->second.deviceType + ")";
+    if (const auto* here = session.thisComputer(); here != nullptr && here->deviceName.isNotEmpty())
+        state.device = here->deviceName + " (" + here->deviceType + ")";
 
     for (const auto& out : rig->outputs)
         state.columns.push_back({out.id, out.name, formatChannels(out.firstChannel, out.stereo), outputLabelName(out.label), out.label,

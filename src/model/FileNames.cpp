@@ -54,4 +54,9 @@ juce::File uniqueChild(const juce::File& folder, const juce::String& name, const
     return candidate;
 }
 
+juce::File trashTarget(const juce::File& bandRoot, const juce::String& name, const juce::String& extension) {
+    const auto stamp = juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S");
+    return uniqueChild(bandRoot.getChildFile("trash"), stamp + " " + name, extension);
+}
+
 }  // namespace sqlive::model

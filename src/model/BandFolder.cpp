@@ -44,15 +44,13 @@ std::vector<Found> dedupe(std::vector<Found> found, juce::StringArray& notes) {
 // The id in the folder's song.json; empty when it has none or it can't be read.
 juce::String songIdIn(const juce::File& dir) {
     const auto file = dir.getChildFile("song.json");
-    if (! file.existsAsFile()) return {};
-    return juce::JSON::parse(file.loadFileAsString()).getProperty("id", {}).toString();
+    return file.existsAsFile() ? idInText(file.loadFileAsString()) : juce::String();
 }
 
-juce::File trashTarget(const juce::File& root, const juce::File& item) {
-    auto trash = root.getChildFile("trash");
-    auto stamp = juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S");
-    if (item.isDirectory()) return uniqueChild(trash, stamp + " " + item.getFileName(), "");
-    return uniqueChild(trash, stamp + " " + item.getFileNameWithoutExtension(), item.getFileExtension());
+// A song's folder or a document's file, in the trash under its own name.
+juce::File trashTargetOf(const juce::File& root, const juce::File& item) {
+    if (item.isDirectory()) return trashTarget(root, item.getFileName(), "");
+    return trashTarget(root, item.getFileNameWithoutExtension(), item.getFileExtension());
 }
 }  // namespace
 
@@ -212,7 +210,7 @@ juce::File BandFolder::fileFor(const DocKey& key) const {
 juce::Result BandFolder::moveToTrash(const DocKey& key) {
     auto p = place(key);
     if (p == juce::File() || ! p.exists()) return juce::Result::ok();
-    auto target = trashTarget(root_folder_, p);
+    auto target = trashTargetOf(root_folder_, p);
     target.getParentDirectory().createDirectory();
     if (! p.moveFileTo(target)) return juce::Result::fail("Couldn't move " + p.getFullPathName() + " to the trash.");
     trashed_[key] = target;

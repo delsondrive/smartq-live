@@ -111,6 +111,14 @@ const model::SnapshotStore& Session::snapshots() const { return snapshots_; }
 juce::ChangeBroadcaster& Session::changes() { return changes_; }
 juce::String Session::rigId() const { return rig_id_; }
 juce::String Session::setlistId() const { return setlist_id_; }
+
+const model::ComputerBinding* Session::thisComputer() const {
+    const auto* rig = model().rig(rig_id_);
+    if (rig == nullptr) return nullptr;
+    const auto found = rig->computers.find(settings().computerName());
+    return found != rig->computers.end() ? &found->second : nullptr;
+}
+
 double Session::sampleRate() const { return sample_rate_; }
 int Session::outputChannels() const { return output_channels_; }
 bool Session::stageView() const { return stage_view_; }

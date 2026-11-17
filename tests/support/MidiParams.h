@@ -31,7 +31,7 @@ inline juce::var messages(std::initializer_list<model::MidiMessageDoc> items) {
     return out;
 }
 inline juce::var binding(int keyCode, int midiKind = 0, int midiChannel = 0, int midiNumber = 0) {
-    model::ControlBinding b; b.keyCode = keyCode; b.midiKind = midiKind; b.midiChannel = midiChannel; b.midiNumber = midiNumber;
+    model::ControlBinding b; b.keyCode = keyCode; b.midiKind = static_cast<model::MidiKind>(midiKind); b.midiChannel = midiChannel; b.midiNumber = midiNumber;
     return model::toVar(b);
 }
 

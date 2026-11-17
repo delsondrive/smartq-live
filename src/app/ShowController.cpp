@@ -3,10 +3,11 @@
 #include <algorithm>
 #include <vector>
 
+#include "app/WallClock.h"
+
 namespace sqlive::app {
 
 namespace {
-double clockSeconds() { return juce::Time::getMillisecondCounterHiRes() / 1000.0; }
 
 int codeOf(ShowKey key) {
     switch (key) {
@@ -150,13 +151,13 @@ double ShowController::holdProgress() const {
 }
 
 bool ShowController::keyPressed(const juce::KeyPress& k, juce::Component*) {
-    keyDown(k.getKeyCode(), k.getModifiers().getRawFlags(), clockSeconds());
+    keyDown(k.getKeyCode(), k.getModifiers().getRawFlags(), wallClockSeconds());
     updateTimer();
     return true;
 }
 
 bool ShowController::keyStateChanged(bool, juce::Component*) {
-    releaseVanishedKeys(clockSeconds());
+    releaseVanishedKeys(wallClockSeconds());
     updateTimer();
     return true;
 }
@@ -171,7 +172,7 @@ void ShowController::releaseVanishedKeys(double now) {
 }
 
 void ShowController::timerCallback() {
-    const auto now = clockSeconds();
+    const auto now = wallClockSeconds();
     releaseVanishedKeys(now);
     tick(now);
     updateTimer();

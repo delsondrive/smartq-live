@@ -64,7 +64,7 @@ juce::var write(const SectionDoc& s) {
 juce::var write(const ControlBinding& c) {
     auto o = startObject();
     put(o, "keyCode", c.keyCode); put(o, "keyModifiers", c.keyModifiers);
-    put(o, "midiKind", c.midiKind); put(o, "midiChannel", c.midiChannel); put(o, "midiNumber", c.midiNumber);
+    put(o, "midiKind", static_cast<int>(c.midiKind)); put(o, "midiChannel", c.midiChannel); put(o, "midiNumber", c.midiNumber);
     return finish(o, c.extra);
 }
 juce::var write(const MidiDeviceDoc& d) {
@@ -132,7 +132,7 @@ void read(Reader& r, SectionDoc& out, std::set<juce::String>* seen) {
 }
 void read(Reader& r, ControlBinding& out) {
     out.keyCode = r.whole("keyCode", 0, 0, kMaxWhole); out.keyModifiers = r.whole("keyModifiers", 0, 0, kMaxWhole);
-    out.midiKind = r.whole("midiKind", 0, 0, 3, true);
+    out.midiKind = static_cast<MidiKind>(r.whole("midiKind", 0, 0, 3, true));
     out.midiChannel = channel(r, "midiChannel"); out.midiNumber = sevenBit(r, "midiNumber", 0);
     out.extra = r.rest();
 }

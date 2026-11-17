@@ -26,20 +26,11 @@ private:
     std::unique_ptr<juce::MidiOutput> out_;
 };
 
-
 std::unique_ptr<MidiPorts::Output> openOutput(const juce::String& name) {
     for (const auto& device : juce::MidiOutput::getAvailableDevices())
         if (device.name == name)
             if (auto out = juce::MidiOutput::openDevice(device.identifier)) return std::make_unique<RealOutput>(std::move(out));
     return nullptr;
-}
-
-// This computer's binding in the chosen rig; nullptr when it has none.
-const model::ComputerBinding* thisComputer(const Session& session) {
-    const auto* rig = session.model().rig(session.rigId());
-    if (rig == nullptr) return nullptr;
-    const auto found = rig->computers.find(session.settings().computerName());
-    return found != rig->computers.end() ? &found->second : nullptr;
 }
 
 juce::String portOf(const model::ComputerBinding* here, const juce::String& deviceId) {
@@ -111,7 +102,7 @@ juce::StringArray MidiPorts::missingDeviceNames() const {
 // ---- Opening and closing -----------------------------------------------------------------------------------------------
 
 std::vector<MidiPorts::Device> MidiPorts::bindings() const {
-    const auto* here = thisComputer(session_);
+    const auto* here = session_.thisComputer();
     std::vector<Device> devices;
     for (const auto& d : session_.model().band().midiDevices) devices.push_back({d.id, d.name, portOf(here, d.id), Status::NoPort});
     return devices;
@@ -121,7 +112,7 @@ std::vector<MidiPorts::Device> MidiPorts::bindings() const {
 bool MidiPorts::bindingsChanged() const {
     const auto& band = session_.model().band().midiDevices;
     if (band.size() != devices_.size()) return true;
-    const auto* here = thisComputer(session_);
+    const auto* here = session_.thisComputer();
     for (std::size_t i = 0; i < band.size(); ++i) {
         const auto& d = band[i];
         const auto& known = devices_[i];

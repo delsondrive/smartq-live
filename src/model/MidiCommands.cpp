@@ -90,7 +90,7 @@ bool sameKey(const ControlBinding& a, const ControlBinding& b) {
     return a.keyCode != 0 && a.keyCode == b.keyCode && a.keyModifiers == b.keyModifiers;
 }
 bool samePedal(const ControlBinding& a, const ControlBinding& b) {
-    return a.midiKind != 0 && a.midiKind == b.midiKind && a.midiChannel == b.midiChannel && a.midiNumber == b.midiNumber;
+    return a.midiKind != MidiKind::None && a.midiKind == b.midiKind && a.midiChannel == b.midiChannel && a.midiNumber == b.midiNumber;
 }
 String curly(const String& s) { return String::fromUTF8("\xE2\x80\x9C") + s + String::fromUTF8("\xE2\x80\x9D"); }
 String quoted(const juce::StringArray& titles) {
@@ -282,7 +282,7 @@ void registerMidiCommands(CommandLayer& layer) {
             const ControlBinding had = it != m.band().controls.end() ? it->second : other.defaultBinding;
             ControlBinding now = had;
             if (sameKey(binding, had)) { now.keyCode = 0; now.keyModifiers = 0; keyTaken.add(other.title); }
-            if (samePedal(binding, had)) { now.midiKind = 0; now.midiChannel = 0; now.midiNumber = 0; pedalTaken.add(other.title); }
+            if (samePedal(binding, had)) { now.midiKind = MidiKind::None; now.midiChannel = 0; now.midiNumber = 0; pedalTaken.add(other.title); }
             if (! (now == had)) changes.emplace_back(other.name, now);
         }
         auto& controls = m.editBand().controls;

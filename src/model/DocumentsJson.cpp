@@ -9,6 +9,7 @@
 namespace sqlive::model {
 
 juce::String newId() { return juce::Uuid().toDashedString(); }
+juce::String idInText(const juce::String& text) { return juce::JSON::parse(text).getProperty("id", {}).toString(); }
 
 namespace {
 

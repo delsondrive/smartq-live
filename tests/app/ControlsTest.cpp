@@ -47,8 +47,8 @@ TEST_CASE("the control map has defaults and takes the band's choices", "[control
     CHECK(defaults.actionForKey(juce::KeyPress::rightKey, 0) == Action::NextSongLater);
     CHECK_FALSE(defaults.actionForKey('q', 0).has_value());
     std::map<juce::String, model::ControlBinding> band;
-    band["start"] = {'q', 0, 1, 10, 64};                           // Q, and CC 64 on channel 10
-    band["nextSongLater"] = {juce::KeyPress::rightKey, 0, 2, 0, 36};   // and note 36 on any channel
+    band["start"] = {'q', 0, model::MidiKind::Control, 10, 64};                           // Q, and CC 64 on channel 10
+    band["nextSongLater"] = {juce::KeyPress::rightKey, 0, model::MidiKind::Note, 0, 36};   // and note 36 on any channel
     ControlMap map(band);
     CHECK(map.actionForKey('q', 0) == Action::Start);
     CHECK_FALSE(map.actionForKey(juce::KeyPress::spaceKey, 0).has_value());
@@ -60,11 +60,11 @@ TEST_CASE("the control map has defaults and takes the band's choices", "[control
     CHECK(ControlMap::describe(band["start"]) == "Q");             // the key when there is one
     CHECK(ControlMap::describeKey(band["start"]) == "Q");  CHECK(ControlMap::describeMidi(band["start"]) == "CC 64, ch 10");
     CHECK(ControlMap::describeKey(ControlMap::defaultFor(Action::Start)) == "Space");
-    CHECK(ControlMap::describe({0, 0, 1, 10, 64}) == "CC 64, ch 10");
-    CHECK(ControlMap::describe({0, 0, 2, 0, 36}) == "Note 36");
+    CHECK(ControlMap::describe({0, 0, model::MidiKind::Control, 10, 64}) == "CC 64, ch 10");
+    CHECK(ControlMap::describe({0, 0, model::MidiKind::Note, 0, 36}) == "Note 36");
     CHECK(ControlMap::describe({}) == "");
     CHECK(actionTitle(Action::Start) == "Start the song");  CHECK(actionName(Action::NextSongEarlier) == "nextSongEarlier");
-    CHECK(ControlMap::bindingFromMidi(juce::MidiMessage::programChange(1, 3))->midiKind == 3);
+    CHECK(ControlMap::bindingFromMidi(juce::MidiMessage::programChange(1, 3))->midiKind == model::MidiKind::Program);
     CHECK_FALSE(ControlMap::bindingFromMidi(juce::MidiMessage::midiClock()).has_value());
     CHECK_FALSE(ControlMap::bindingFromMidi(juce::MidiMessage::controllerEvent(1, 64, 0)).has_value());   // a release teaches nothing
 }
@@ -238,7 +238,7 @@ TEST_CASE("learning takes the next press instead of acting on it", "[controls]")
     input.handle(juce::MidiMessage::midiClock(), 0.0);
     input.handle(juce::MidiMessage::noteOn(10, 40, 0.5f), 0.1);
     REQUIRE(learned.has_value());
-    CHECK(learned->midiKind == 2);  CHECK(learned->midiChannel == 10);  CHECK(learned->midiNumber == 40);
+    CHECK(learned->midiKind == model::MidiKind::Note);  CHECK(learned->midiChannel == 10);  CHECK(learned->midiNumber == 40);
     CHECK_FALSE(input.learning().has_value());  CHECK(actions == 0);
 }
 TEST_CASE("a bound pedal does nothing in Edit mode, except to be learned", "[controls]") {
@@ -269,7 +269,7 @@ TEST_CASE("learning never takes a pedal on the move, or a note pressed again whi
     CHECK(p.input->learning() == Action::NextSongLater);
     p.cc(1, 11, 0, 4.0);  p.cc(1, 11, 90, 4.5);
     REQUIRE(learned.has_value());
-    CHECK(learned->midiKind == 1);  CHECK(learned->midiChannel == 1);  CHECK(learned->midiNumber == 11);
+    CHECK(learned->midiKind == model::MidiKind::Control);  CHECK(learned->midiChannel == 1);  CHECK(learned->midiNumber == 11);
     CHECK(p.seen.size() == 1);
 }
 TEST_CASE("a switch that only ever sends 127 can be learned again", "[controls]") {
@@ -280,7 +280,7 @@ TEST_CASE("a switch that only ever sends 127 can be learned again", "[controls]"
     p.input->learn(Action::NextSongEarlier, [&](model::ControlBinding b) { learned = b; });
     p.cc(1, 20, 127, 2.0);                                                                // its next press, with no release between
     REQUIRE(learned.has_value());
-    CHECK(learned->midiKind == 1);  CHECK(learned->midiNumber == 20);
+    CHECK(learned->midiKind == model::MidiKind::Control);  CHECK(learned->midiNumber == 20);
     CHECK(p.seen.size() == 1);
 }
 TEST_CASE("only what crosses is queued, so a stream never crowds out a press", "[controls]") {

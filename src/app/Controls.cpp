@@ -8,7 +8,7 @@ namespace sqlive::app {
 
 namespace {
 
-constexpr int kControl = 1, kNote = 2, kProgram = 3;   // model::ControlBinding::midiKind
+using model::MidiKind;
 
 const std::vector<Action>& actions() {
     static const std::vector<Action> all = {Action::Start, Action::Stop, Action::NextSongLater, Action::NextSongEarlier,
@@ -24,26 +24,26 @@ const model::ActionInfo& infoOf(Action a) {
 
 int keyboardOnly(int modifiers) { return modifiers & juce::ModifierKeys::allKeyboardModifiers; }
 
-// The message's kind and number as a binding has them; 0 when it can't be a control.
-int kindOf(const juce::MidiMessage& m) {
-    if (m.isController()) return kControl;
-    if (m.isNoteOn() || m.isNoteOff()) return kNote;
-    if (m.isProgramChange()) return kProgram;
-    return 0;
+// The message's kind and number as a binding has them; MidiKind::None when it can't be a control.
+MidiKind kindOf(const juce::MidiMessage& m) {
+    if (m.isController()) return MidiKind::Control;
+    if (m.isNoteOn() || m.isNoteOff()) return MidiKind::Note;
+    if (m.isProgramChange()) return MidiKind::Program;
+    return MidiKind::None;
 }
-int numberOf(const juce::MidiMessage& m, int kind) {
+int numberOf(const juce::MidiMessage& m, MidiKind kind) {
     switch (kind) {
-        case kControl: return m.getControllerNumber();
-        case kNote: return m.getNoteNumber();
-        case kProgram: return m.getProgramChangeNumber();
+        case MidiKind::Control: return m.getControllerNumber();
+        case MidiKind::Note: return m.getNoteNumber();
+        case MidiKind::Program: return m.getProgramChangeNumber();
         default: return 0;
     }
 }
-bool isDown(const juce::MidiMessage& m, int kind) {
+bool isDown(const juce::MidiMessage& m, MidiKind kind) {
     switch (kind) {
-        case kControl: return m.getControllerValue() >= 64;
-        case kNote: return m.isNoteOn();
-        case kProgram: return true;
+        case MidiKind::Control: return m.getControllerValue() >= 64;
+        case MidiKind::Note: return m.isNoteOn();
+        case MidiKind::Program: return true;
         default: return false;
     }
 }
@@ -105,8 +105,8 @@ std::optional<Action> ControlMap::actionForKey(int keyCode, int modifiers) const
 }
 
 std::optional<ControlMap::MidiHit> ControlMap::actionForMidi(const juce::MidiMessage& m) const {
-    const int kind = kindOf(m);
-    if (kind == 0) return std::nullopt;
+    const MidiKind kind = kindOf(m);
+    if (kind == MidiKind::None) return std::nullopt;
     const int number = numberOf(m, kind), channel = m.getChannel();
     for (auto a : actions()) {
         const auto& b = bindings_[static_cast<std::size_t>(a)];
@@ -117,8 +117,8 @@ std::optional<ControlMap::MidiHit> ControlMap::actionForMidi(const juce::MidiMes
 }
 
 std::optional<model::ControlBinding> ControlMap::bindingFromMidi(const juce::MidiMessage& m) {
-    const int kind = kindOf(m);
-    if (kind == 0 || !isDown(m, kind)) return std::nullopt;
+    const MidiKind kind = kindOf(m);
+    if (kind == MidiKind::None || !isDown(m, kind)) return std::nullopt;
     model::ControlBinding b;
     b.midiKind = kind;
     b.midiChannel = m.getChannel();
@@ -142,9 +142,9 @@ juce::String ControlMap::describeKey(const model::ControlBinding& b) {
 juce::String ControlMap::describeMidi(const model::ControlBinding& b) {
     juce::String text;
     switch (b.midiKind) {
-        case kControl: text << "CC " << b.midiNumber; break;
-        case kNote: text << "Note " << b.midiNumber; break;
-        case kProgram: text << "Program " << b.midiNumber; break;
+        case MidiKind::Control: text << "CC " << b.midiNumber; break;
+        case MidiKind::Note: text << "Note " << b.midiNumber; break;
+        case MidiKind::Program: text << "Program " << b.midiNumber; break;
         default: return {};
     }
     if (b.midiChannel != 0) text << ", ch " << b.midiChannel;

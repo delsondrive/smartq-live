@@ -5,6 +5,8 @@
 #include <thread>
 #include <utility>
 
+#include "app/WallClock.h"
+
 namespace sqlive::app {
 
 namespace {
@@ -14,12 +16,10 @@ constexpr double kToneHz = 440.0;
 constexpr float kToneGain = 0.1f;                                // -20 dB
 constexpr int kAllOutputs = 256;                                 // asked for; a device opens the ones it has
 
+// This computer's binding in the rig when it names an interface; nullptr otherwise.
 const model::ComputerBinding* bindingForThisComputer(const Session& session) {
-    const auto* rig = session.model().rig(session.rigId());
-    if (rig == nullptr) return nullptr;
-    const auto found = rig->computers.find(session.settings().computerName());
-    if (found == rig->computers.end() || found->second.deviceName.isEmpty()) return nullptr;
-    return &found->second;
+    const auto* here = session.thisComputer();
+    return here != nullptr && here->deviceName.isNotEmpty() ? here : nullptr;
 }
 
 }  // namespace
@@ -199,7 +199,7 @@ void AudioHost::publishAnchor(bool valid, std::int64_t streamTime, double wallSe
 
 void AudioHost::renderBlock(float* const* out, int numChannels, int frames) noexcept {
     // Before the engine runs: this block's first sample is the engine's stream time now, asked for at this moment.
-    publishAnchor(true, engine_.status().streamTime, juce::Time::getMillisecondCounterHiRes() / 1000.0);
+    publishAnchor(true, engine_.status().streamTime, wallClockSeconds());
     engine_.process(out, numChannels, frames);
     const int channel = tone_channel_.load(std::memory_order_relaxed);
     const double rate = engine_.sampleRate();

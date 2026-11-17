@@ -132,7 +132,7 @@ TEST_CASE("a pedal is learned through the window's ControlInput, and waiting sto
     CHECK(fractionNotBackground(snapshot(page, 1044, 620)) > 0.02);
     input.handle(juce::MidiMessage::controllerEvent(10, 64, 127), 1.0);
     const auto& start = s.model().band().controls.at("start");
-    CHECK(start.midiKind == 1);  CHECK(start.midiChannel == 10);  CHECK(start.midiNumber == 64);
+    CHECK(start.midiKind == model::MidiKind::Control);  CHECK(start.midiChannel == 10);  CHECK(start.midiNumber == 64);
     CHECK(start.keyCode == juce::KeyPress::spaceKey);              // its key kept
     CHECK(page.state().controls[0].midi == "CC 64, ch 10");
     CHECK_FALSE(page.state().controls[0].learning);
@@ -140,7 +140,7 @@ TEST_CASE("a pedal is learned through the window's ControlInput, and waiting sto
     snapshot(page, 1044, 620);
     CHECK_FALSE(page.clearButton(0).isEmpty());                   // ✕ forgets it, keeping the key
     page.mouseDown(eventOn(page, page.clearButton(0).getCentre().toFloat()));
-    CHECK(s.model().band().controls.at("start").midiKind == 0);
+    CHECK(s.model().band().controls.at("start").midiKind == model::MidiKind::None);
     CHECK(s.model().band().controls.at("start").keyCode == juce::KeyPress::spaceKey);
 
     page.learn(3);                                                // Esc cancels

@@ -7,6 +7,7 @@
 
 #include "app/ControlInput.h"
 #include "app/MidiPorts.h"
+#include "app/WallClock.h"
 #include "model/DocumentsJson.h"
 #include "model/JsonObject.h"
 #include "ui/AppShell.h"
@@ -78,8 +79,6 @@ const NamedColour kDeviceColours[] = {{"Teal", juce::Colour(0xff4fcabd)},  {"Pin
                                       {"Sky", juce::Colour(0xff6cc8ff)},   {"Rose", juce::Colour(0xffe889c8)}};
 constexpr int kColourCount = static_cast<int>(std::size(kDeviceColours));
 
-double nowSeconds() { return juce::Time::getMillisecondCounterHiRes() / 1000.0; }
-
 float textWidth(const juce::Font& font, const juce::String& text) { return widthOf(font, text); }
 
 // The mockup's .learn pill, or .learn.wait (ember, at that opacity) when waiting.
@@ -109,9 +108,7 @@ MidiSetupState makeMidiSetupState(const app::Session& session, const app::Contro
     const auto* ports = session.midi();
     if (rig != nullptr) state.rigName = rig->name;
     if (ports != nullptr) state.ports = ports->availableOutputs();
-    const model::ComputerBinding* here = nullptr;
-    if (rig != nullptr)
-        if (const auto found = rig->computers.find(session.settings().computerName()); found != rig->computers.end()) here = &found->second;
+    const auto* here = session.thisComputer();
 
     for (const auto& doc : model.band().midiDevices) {
         MidiSetupState::Device device;
@@ -436,7 +433,7 @@ void MidiSetupPage::updateTimer() {
 }
 
 void MidiSetupPage::timerCallback() {
-    const double now = nowSeconds();
+    const double now = app::wallClockSeconds();
     if (message_.isNotEmpty() && now >= message_until_) {
         message_.clear();
         repaint();
@@ -481,7 +478,7 @@ void MidiSetupPage::say(const juce::String& message, bool inControls, bool probl
     message_ = message;
     message_in_controls_ = inControls;
     message_problem_ = problem;
-    message_until_ = nowSeconds() + kMessageSeconds;
+    message_until_ = app::wallClockSeconds() + kMessageSeconds;
     repaint();
     updateTimer();
 }
@@ -648,8 +645,8 @@ void MidiSetupPage::clearPedal(int row) {
     const auto action = actionOf(row);
     if (!action || !editable()) return;
     auto binding = bindingOf(*action);
-    if (binding.midiKind == 0) return;
-    binding.midiKind = 0;
+    if (binding.midiKind == model::MidiKind::None) return;
+    binding.midiKind = model::MidiKind::None;
     binding.midiChannel = 0;
     binding.midiNumber = 0;
     run("controls.set", jsonObject({{"action", app::actionName(*action)}, {"binding", model::toVar(binding)}}), true);

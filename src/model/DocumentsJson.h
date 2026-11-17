@@ -30,5 +30,7 @@ template <typename Doc> bool fromJson(const juce::String& text, Doc& doc, ParseN
 }
 
 juce::String newId();   // juce::Uuid().toDashedString()
+// The id a document's JSON text gives itself; "" when it gives none (the band has none) or the text isn't JSON.
+juce::String idInText(const juce::String& text);
 
 }  // namespace sqlive::model

@@ -29,9 +29,6 @@ bool sameAsLoaded(const model::BandModel& m, const model::DocKey& key, const juc
     return false;
 }
 
-// The id a document's text gives itself; "" when it gives none (the band has none).
-juce::String idInside(const juce::String& text) { return juce::JSON::parse(text).getProperty("id", {}).toString(); }
-
 // The document as this app would write it; "" when the model hasn't got it.
 juce::String documentText(const model::BandModel& m, const model::DocKey& key) {
     switch (key.kind) {
@@ -51,11 +48,10 @@ bool sameCopies(const std::vector<model::ConflictCopy>& a, const std::vector<mod
 
 // Where a file that lost a conflict goes: trash/<date-time> <its name>, with the song's folder name for a song's file.
 juce::File trashTargetFor(const juce::File& bandRoot, const juce::File& file) {
-    const auto stamp = juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S");
     const auto dir = file.getParentDirectory();
     const bool inSong = dir.getParentDirectory() == bandRoot.getChildFile("songs");
-    const auto name = stamp + " " + (inSong ? dir.getFileName() + " " : juce::String()) + file.getFileNameWithoutExtension();
-    return model::uniqueChild(bandRoot.getChildFile("trash"), name, file.getFileExtension());
+    const auto name = (inSong ? dir.getFileName() + " " : juce::String()) + file.getFileNameWithoutExtension();
+    return model::trashTarget(bandRoot, name, file.getFileExtension());
 }
 
 }  // namespace
@@ -269,7 +265,7 @@ void OutsideChanges::reloadUndoneOrRedone(const std::map<model::DocKey, OutsideC
         if (came.kind == OutsideChange::Kind::Removed && undone) {
             // Back here: in the folder or file it had, if that is there, not a new one beside it. Another document that
             // another computer has put in that file since is about to be written over: it is kept in the trash first.
-            if (came.file.existsAsFile() && idInside(came.file.loadFileAsString()) != key.id) keepInTrash(came.file);
+            if (came.file.existsAsFile() && model::idInText(came.file.loadFileAsString()) != key.id) keepInTrash(came.file);
             takePlace(key, came.file);
         } else if (came.kind == OutsideChange::Kind::Added && !undone) {
             takePlace(key, came.file);
@@ -299,7 +295,7 @@ void OutsideChanges::forgetPlace(const model::DocKey& key) {
 
 bool OutsideChanges::replaceDocument(const OutsideChange& change, const juce::File& file, const juce::String& text,
                               std::map<model::DocKey, juce::String>& texts, std::vector<OutsideChange>& loads) {
-    const model::DocKey added{change.key.kind, idInside(text)};
+    const model::DocKey added{change.key.kind, model::idInText(text)};
     if (documentLoaded(model_, added)) return false;            // a copy of one already here: not a document of its own
     forgetPlace(change.key);
     if (!adoptPlace(added, file)) {
@@ -378,7 +374,7 @@ juce::Result OutsideChanges::take() {
             continue;
         }
         if (change.kind == OutsideChange::Kind::Changed && change.key.kind != model::DocKind::Band) {
-            if (const auto id = idInside(text); id.isNotEmpty() && id != change.key.id) {
+            if (const auto id = model::idInText(text); id.isNotEmpty() && id != change.key.id) {
                 if (replaceDocument(change, file, text, texts, loads)) replaced.emplace_back(change.key, file);
                 else leftOut(change, file);
                 continue;
@@ -438,7 +434,7 @@ juce::Result OutsideChanges::resolve(const model::ConflictCopy& conflict, bool k
         text = conflict.copy.loadFileAsString();
         if (!model::readableAs(key->kind, text)) return finish(juce::Result::fail(conflict.copy.getFullPathName() + " couldn't be read."));
         // A copy that is another document (another id): it comes in as that one, and only when it isn't here already.
-        if (const auto id = idInside(text); key->kind != model::DocKind::Band && id.isNotEmpty() && id != key->id
+        if (const auto id = model::idInText(text); key->kind != model::DocKind::Band && id.isNotEmpty() && id != key->id
                                             && documentLoaded(model_, {key->kind, id}))
             return finish(juce::Result::fail(conflict.copy.getFullPathName() + " is a copy of another document that is already here."));
     }
@@ -459,7 +455,7 @@ juce::Result OutsideChanges::resolve(const model::ConflictCopy& conflict, bool k
     const OutsideChange kept{*key, documentName(model_, *key), OutsideChange::Kind::Changed, conflict.original};
     std::map<model::DocKey, juce::String> texts{{*key, text}};
     std::vector<OutsideChange> loads{kept};
-    const auto id = idInside(text);
+    const auto id = model::idInText(text);
     const bool another = key->kind != model::DocKind::Band && id.isNotEmpty() && id != key->id;   // never under the old id
     if (another) {
         texts.clear();

@@ -13,7 +13,7 @@ TEST_CASE("MIDI parts of the documents survive JSON", "[mididoc]") {
     ParseNotes notes;
     BandDoc band; band.id = "b";
     band.midiDevices = {{"d1", "Guitar 1", juce::Colour(0xff4fcabd), false, false, -20.0, {{4, -1, -1, "Clean"}, {12, 0, 1, "Crunch"}}}};
-    band.controls["start"] = {juce::KeyPress::spaceKey, 0, 1, 10, 64};
+    band.controls["start"] = {juce::KeyPress::spaceKey, 0, MidiKind::Control, 10, 64};
     BandDoc band2; REQUIRE(fromJson(toJson(band), band2, notes)); CHECK(band2 == band);
     SongDoc song; song.id = "s";
     MidiMessageDoc pc; pc.program = 12; pc.bankMsb = 0; pc.bankLsb = 1;
@@ -42,7 +42,7 @@ TEST_CASE("each MIDI part reads and writes on its own, with the same limits", "[
     CHECK(m.id.isNotEmpty());  CHECK(m.bar == 1);  CHECK(m.messages.size() == 1);
     SectionDoc x; REQUIRE(fromVar(juce::JSON::parse(R"({"name":"A","startBar":9,"endBar":3})"), x, notes));
     CHECK(x.id.isNotEmpty());  CHECK(x.endBar == 10);
-    ControlBinding b{'q', 0, 1, 10, 64};  ControlBinding b2; REQUIRE(fromVar(toVar(b), b2, notes));  CHECK(b2 == b);
+    ControlBinding b{'q', 0, MidiKind::Control, 10, 64};  ControlBinding b2; REQUIRE(fromVar(toVar(b), b2, notes));  CHECK(b2 == b);
     CHECK_FALSE(fromVar(juce::var(), b2, notes));
 }
 TEST_CASE("a band file from before MIDI reads with no notes and comes back the same", "[mididoc]") {

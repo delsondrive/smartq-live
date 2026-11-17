@@ -10,6 +10,7 @@
 
 #include "app/MidiPorts.h"
 #include "app/PartFiles.h"
+#include "app/WallClock.h"
 #include "engine/Click.h"
 #include "model/DocumentsJson.h"
 #include "model/JsonObject.h"
@@ -339,7 +340,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
     chips_[2]->onClick = [this] { showKeyMenu(); };
     chips_[3]->onClick = [this] { showCountInMenu(); };
 
-    tap_.onClick = [this] { tap(juce::Time::getMillisecondCounterHiRes() / 1000.0); };
+    tap_.onClick = [this] { tap(app::wallClockSeconds()); };
     play_.onClick = [this] { togglePlay(); };
     setToCursor_.onClick = [this] { setBarOneAtCursor(); };
     emptyNew_.onClick = [this] {

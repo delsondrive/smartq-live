@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "app/WallClock.h"
+
 namespace sqlive::app {
 
 namespace {
@@ -9,8 +11,6 @@ namespace {
 constexpr int kLookMs = 2000;                      // how often the list of inputs is looked at
 constexpr double kBounceSeconds = 0.05;            // a press this soon after a press or a release is a bounce
 constexpr int kControlsPerKind = 16 * 128;
-
-double clockSeconds() { return juce::Time::getMillisecondCounterHiRes() / 1000.0; }
 
 juce::StringArray listInputs() {
     juce::StringArray ids;
@@ -124,7 +124,7 @@ void ControlInput::receive(const juce::MidiMessage& m) {
     Queued item;
     item.size = size;
     for (int i = 0; i < size; ++i) item.bytes[(std::size_t) i] = m.getRawData()[i];
-    item.at = clockSeconds();
+    item.at = wallClockSeconds();
     bool queued = false;
     {
         const juce::SpinLock::ScopedLockType turn(writers_);
@@ -155,7 +155,7 @@ bool ControlInput::wantsInputs() {
     if (learning_) return true;
     const auto& map = controls();
     for (auto a : allActions())
-        if (map.bindingFor(a).midiKind != 0) return true;
+        if (map.bindingFor(a).midiKind != model::MidiKind::None) return true;
     return false;
 }
 

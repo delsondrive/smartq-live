@@ -34,10 +34,8 @@ int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
 
 // This computer's interface in the rig, or nullptr when it names none.
 const model::ComputerBinding* bindingOf(const app::Session& session) {
-    const auto* rig = session.model().rig(session.rigId());
-    if (rig == nullptr) return nullptr;
-    const auto found = rig->computers.find(session.settings().computerName());
-    return found != rig->computers.end() && found->second.deviceName.isNotEmpty() ? &found->second : nullptr;
+    const auto* here = session.thisComputer();
+    return here != nullptr && here->deviceName.isNotEmpty() ? here : nullptr;
 }
 
 }  // namespace

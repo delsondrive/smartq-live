@@ -288,7 +288,7 @@ juce::Image render(const juce::String& name, int width, int height) {
             const auto* info = model::actionInfo(action);
             if (info == nullptr) continue;
             auto binding = info->defaultBinding;
-            binding.midiKind = 1;  binding.midiChannel = 10;  binding.midiNumber = controller;
+            binding.midiKind = model::MidiKind::Control;  binding.midiChannel = 10;  binding.midiNumber = controller;
             auto* params = new juce::DynamicObject();
             params->setProperty("action", action);
             params->setProperty("binding", model::toVar(binding));

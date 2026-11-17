@@ -52,9 +52,11 @@ struct SectionDoc {
     juce::NamedValueSet extra;
     bool operator==(const SectionDoc&) const = default;
 };
+// What a pedal or pad sends that a control answers to.
+enum class MidiKind { None, Control, Note, Program };   // written as 0, 1, 2, 3
 struct ControlBinding {
     int keyCode = 0, keyModifiers = 0;
-    int midiKind = 0;                                              // 0 none, 1 control, 2 note, 3 program
+    MidiKind midiKind = MidiKind::None;
     int midiChannel = 0, midiNumber = 0;                           // channel 0 = any
     juce::NamedValueSet extra;
     bool operator==(const ControlBinding&) const = default;
