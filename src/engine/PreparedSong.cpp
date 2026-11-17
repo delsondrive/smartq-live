@@ -1,9 +1,42 @@
 #include "engine/PreparedSong.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace sqlive::engine {
+
+namespace {
+
+constexpr float kSilentDb = -60.0f;   // this and below is 0
+
+float gainOfDb(double db) noexcept {
+    if (db <= kSilentDb) return 0.0f;
+    if (db == 0.0) return 1.0f;
+    return static_cast<float>(std::pow(10.0, db / 20.0));
+}
+
+} // namespace
+
+float automationGain(std::span<const AutoPoint> points, SamplePos at) noexcept {
+    if (points.empty()) return 1.0f;
+    const auto after = std::upper_bound(points.begin(), points.end(), at, [](SamplePos t, const AutoPoint& p) { return t < p.at; });
+    return automationGainIn(points, (after - points.begin()) - 1, at);
+}
+
+bool automationFlat(std::span<const AutoPoint> points, std::ptrdiff_t last) noexcept {
+    const auto n = static_cast<std::ptrdiff_t>(points.size());
+    return last < 0 || last + 1 >= n || points[static_cast<std::size_t>(last)].db == points[static_cast<std::size_t>(last) + 1].db;
+}
+
+float automationGainIn(std::span<const AutoPoint> points, std::ptrdiff_t last, SamplePos at) noexcept {
+    if (points.empty()) return 1.0f;
+    const AutoPoint& a = points[static_cast<std::size_t>(std::max<std::ptrdiff_t>(last, 0))];
+    if (automationFlat(points, last)) return gainOfDb(a.db);
+    const AutoPoint& b = points[static_cast<std::size_t>(last) + 1];   // later than at, so b.at > a.at
+    const double along = static_cast<double>(at - a.at) / static_cast<double>(b.at - a.at);
+    return gainOfDb(static_cast<double>(a.db) + (static_cast<double>(b.db) - static_cast<double>(a.db)) * along);
+}
 
 SamplePos countOffFloor(const TempoMap& tempo, double sampleRate, SamplePos start) {
     return std::min(start, tempo.sampleAt({0, 1.0}, sampleRate));

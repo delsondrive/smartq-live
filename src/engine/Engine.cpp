@@ -105,6 +105,10 @@ void Engine::setPartMute(std::uint64_t serial, int part, bool mute) {
     push({.type = Command::Type::SetPartMute, .serial = serial, .index = part, .value = mute ? 1.0 : 0.0});
 }
 
+void Engine::setPartOverride(std::uint64_t serial, int part, bool overridden) {
+    push({.type = Command::Type::SetPartOverride, .serial = serial, .index = part, .value = overridden ? 1.0 : 0.0});
+}
+
 void Engine::setClickGain(std::uint64_t serial, float linear) {
     push({.type = Command::Type::SetClickGain, .serial = serial, .value = linear});
 }
@@ -250,6 +254,10 @@ void Engine::handle(Command& command) noexcept {
     case Type::SetPartMute:
         if (command.serial != 0 && command.serial == playing_.serial)
             renderer_.setPartMute(static_cast<int>(command.index), command.value != 0.0);
+        break;
+    case Type::SetPartOverride:
+        if (command.serial != 0 && command.serial == playing_.serial)
+            renderer_.setPartOverride(static_cast<int>(command.index), command.value != 0.0);
         break;
     case Type::SetClickGain:
         if (command.serial != 0 && command.serial == playing_.serial) renderer_.setClickGain(static_cast<float>(command.value));

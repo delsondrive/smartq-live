@@ -108,6 +108,9 @@ public:
     void setMix(std::shared_ptr<const MixSetup>);
     void setPartGain(std::uint64_t serial, int part, float linear);
     void setPartMute(std::uint64_t serial, int part, bool mute);
+    // A hand on a part's fader: true makes the part ignore its automation (its level is its fader alone) until the next song
+    // is set; false lets it follow the automation again. For the playing song only.
+    void setPartOverride(std::uint64_t serial, int part, bool overridden);
     void setClickGain(std::uint64_t serial, float linear);
     void setSolo(std::uint64_t serial, int part);
     bool popEvent(EngineEvent&);
@@ -143,7 +146,7 @@ private:
     struct Command {
         enum class Type : std::uint8_t {
             None, Cue, ClearCue, Start, StartAt, StartAtStep, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute,
-            SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop
+            SetPartOverride, SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for

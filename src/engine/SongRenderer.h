@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <span>
 #include <vector>
 
 #include "engine/MixSetup.h"
@@ -32,6 +33,9 @@ public:
     void setPartMute(int part, bool) noexcept;
     void setClickGain(float linear) noexcept;
     void setSolo(int part) noexcept;                  // -1 = none; a soloed part silences the other parts, never the click
+    // true: ignore that part's automation (its level is its fader alone) until setSong; false: follow it again. A part the song
+    // doesn't have is ignored.
+    void setPartOverride(int part, bool) noexcept;
     // Adds into out; envelope may be null.
     void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
                 RenderParts = {}) noexcept;
@@ -49,6 +53,9 @@ private:
 
     void step(Smoothed&) const noexcept;
     void updatePartTargets() noexcept;
+    bool partSilenced(int part) const noexcept { return part_mute_[part] != 0 || (solo_ >= 0 && solo_ != part); }
+    void followAutomation(SamplePos at, bool snap) noexcept;
+    void countAutomated() noexcept;
     void renderPiece(SamplePos songTime, int frames, int offset, const float* envelope, RenderParts) noexcept;
     std::size_t firstTickAt(SamplePos) const noexcept;   // the first of song_->ticks at or after it; song_ must be set
 
@@ -62,6 +69,18 @@ private:
     std::vector<Smoothed> cells_;           // kMaxRoles × kMaxBuses, row-major by role: the mix level × the bus trim
     Smoothed click_gain_;
 
+    // Where a part's automation has got to: the index of the last point at or before the song time it expects next (-1: before
+    // the first). When the time it is given is not that one (a jump, startAt) it finds its place again by bisection.
+    struct AutoCursor {
+        std::span<const AutoPoint> points;
+        std::ptrdiff_t last = -1;
+        SamplePos expected = 0;
+        bool placed = false;                // last and expected mean something
+        bool held = false;                  // heldGain is the gain of the segment last is in, which is flat
+        float heldGain = 1.0f;
+        bool overridden = false;
+    };
+
     const PreparedSong* song_ = nullptr;
     int part_count_ = 0;
     int solo_ = -1;
@@ -69,6 +88,9 @@ private:
     std::size_t count_in_end_ = 0;          // even with the click off
     std::size_t playable_first_ = 0;        // the first of song->ticks at or after its start: those before are a count-off's
     bool parts_moving_ = false;
+    std::vector<AutoCursor> part_auto_;     // kMaxParts
+    int automated_ = 0;                     // parts that follow automation: it has points, and is not overridden
+    bool snap_pending_ = false;             // the next advancing sample puts every automated part on its target
 
     bool has_mix_ = false;
     int bus_count_ = 0;

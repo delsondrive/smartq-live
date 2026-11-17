@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -18,12 +20,33 @@ struct PartAudio {
     std::vector<float> left, right;   // right empty = mono; otherwise the same length
 };
 
+// A level that changes by itself: at song time `at` the level is `db`. A list of them is sorted by `at` (a tie keeps its written
+// order: a mute is two points at the same time), and the level moves in a straight line in dB from one point to the next, held
+// before the first and after the last.
+struct AutoPoint {
+    SamplePos at = 0;
+    float db = 0.0f;
+};
+
+// The linear gain the points give at song time `at`: 1 when there are none; a straight line in dB between points, flat
+// outside them; -60 dB and below is 0. Where points share a time the last of them counts from that time on. Precondition:
+// the points are sorted by `at`, ties in written order (buildPreparedSong sorts them, stably; never sort on the audio thread).
+// Searches by bisection, allocates nothing. std::pow runs only inside a segment whose two points differ in dB; a held level
+// is worked out once (the renderer does so once per segment, not per sample).
+float automationGain(std::span<const AutoPoint>, SamplePos at) noexcept;
+
+// The same, given where `at` falls: `last` is the index of the last point with a time <= at, or -1 before the first.
+float automationGainIn(std::span<const AutoPoint>, std::ptrdiff_t last, SamplePos at) noexcept;
+// Whether the gain between points `last` and `last + 1` (see above) is one held value: nothing differs in dB.
+bool automationFlat(std::span<const AutoPoint>, std::ptrdiff_t last) noexcept;
+
 struct PreparedPart {
     std::shared_ptr<const PartAudio> audio;
     int role = 0;
     float gain = 1.0f;
     bool mute = false;
     std::string partId;               // the part document this came from, so the control thread can find it again
+    std::vector<AutoPoint> automation;   // this part's level over song time, on top of its fader; empty = none
 };
 
 struct ClickSetup {
@@ -54,6 +77,7 @@ struct PreparedSong {
     std::vector<ClickTick> ticks;      // every tick in [start, end), from the bar before bar 1 if that is earlier (for a
                                        // count-off only); those in [countInStart, 0) sound even with the click off
     ClickSound clickSound;
+    std::vector<AutoPoint> clickAutomation, cuesAutomation;   // the click's level and the cue voice's (not played yet), on top of theirs
     // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
     std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order
     std::vector<std::uint16_t> clockDevices, startStopDevices;

@@ -22,6 +22,7 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     part_level_.assign(kMaxParts, 1.0f);
     part_mute_.assign(kMaxParts, 0);
     part_view_.assign(kMaxParts, {});
+    part_auto_.assign(kMaxParts, {});
     cells_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, {});
     click_gain_ = {};
     song_ = nullptr;
@@ -29,6 +30,8 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     solo_ = -1;
     count_in_first_ = count_in_end_ = 0;
     parts_moving_ = false;
+    automated_ = 0;
+    snap_pending_ = false;
     has_mix_ = false;
     bus_count_ = 0;
     role_rows_ = 0;
@@ -50,6 +53,8 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
         const PreparedPart& part = song->parts[static_cast<std::size_t>(p)];
         part_level_[p] = part.gain;
         part_mute_[p] = part.mute ? 1 : 0;
+        part_auto_[p] = {};
+        part_auto_[p].points = part.automation;
         PartView& v = part_view_[p];
         v = {};
         if (!part.audio || part.role < 0 || part.role >= kMaxRoles) continue;
@@ -65,6 +70,8 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
     updatePartTargets();
     for (int p = 0; p < part_count_; ++p) part_gain_[p].value = part_gain_[p].target;
     parts_moving_ = false;
+    countAutomated();
+    snap_pending_ = true;   // automated parts start at their level at the first sample, not gliding to it
 
     const float clickGain = song != nullptr ? song->click.gain : 1.0f;
     click_gain_ = {clickGain, clickGain};
@@ -135,6 +142,57 @@ void SongRenderer::setPartMute(int part, bool mute) noexcept {
     updatePartTargets();
 }
 
+void SongRenderer::setPartOverride(int part, bool overridden) noexcept {
+    if (part < 0 || part >= part_count_) return;
+    part_auto_[part].overridden = overridden;
+    countAutomated();
+    updatePartTargets();   // an overridden part glides to its fader alone; one that follows again, to its automation next sample
+}
+
+void SongRenderer::countAutomated() noexcept {
+    automated_ = 0;
+    for (int p = 0; p < part_count_; ++p)
+        if (!part_auto_[p].points.empty() && !part_auto_[p].overridden) ++automated_;
+}
+
+// Sets the target of every part that follows automation to its fader (and mute, and solo) times its automation at `at`; with
+// snap, each is put there at once. Called for each sample that advances, in order. A cursor that is not where `at` is
+// expected finds its place by bisection (a jump, a start part way in), so no call but this one has to know about jumps.
+void SongRenderer::followAutomation(SamplePos at, bool snap) noexcept {
+    for (int p = 0; p < part_count_; ++p) {
+        AutoCursor& c = part_auto_[p];
+        if (c.points.empty() || c.overridden) continue;
+        const auto n = static_cast<std::ptrdiff_t>(c.points.size());
+        if (!c.placed || at != c.expected) {
+            const auto after = std::upper_bound(c.points.begin(), c.points.end(), at,
+                                                [](SamplePos t, const AutoPoint& point) { return t < point.at; });
+            c.last = (after - c.points.begin()) - 1;
+            c.placed = true;
+            c.held = false;
+        } else {
+            while (c.last + 1 < n && c.points[static_cast<std::size_t>(c.last) + 1].at <= at) {
+                ++c.last;
+                c.held = false;
+            }
+        }
+        c.expected = at + 1;
+        // A segment whose two points are alike holds one gain: worked out when the segment is entered, not once a sample.
+        float gain;
+        if (automationFlat(c.points, c.last)) {
+            if (!c.held) {
+                c.heldGain = automationGainIn(c.points, c.last, at);
+                c.held = true;
+            }
+            gain = c.heldGain;
+        } else {
+            gain = automationGainIn(c.points, c.last, at);
+        }
+        Smoothed& g = part_gain_[p];
+        g.target = partSilenced(p) ? 0.0 : static_cast<double>(part_level_[p]) * static_cast<double>(gain);
+        if (snap) g.value = g.target;
+    }
+}
+
 void SongRenderer::setClickGain(float linear) noexcept { click_gain_.target = linear; }
 
 void SongRenderer::setSolo(int part) noexcept {
@@ -201,7 +259,9 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             }
             cells_moving_ = moving;
         }
-        if (what.advance && parts_moving_) {
+        if (what.advance && automated_ > 0) followAutomation(songTime + i, snap_pending_);
+        if (what.advance) snap_pending_ = false;
+        if (what.advance && (parts_moving_ || automated_ > 0)) {
             bool moving = false;
             for (int p = 0; p < part_count_; ++p) {
                 step(part_gain_[p]);
@@ -239,7 +299,8 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
         }
 
         if (clickRouted) {
-            const float click = click_[i] * static_cast<float>(click_gain_.value);
+            float click = click_[i] * static_cast<float>(click_gain_.value);
+            if (click != 0.0f && !song.clickAutomation.empty()) click *= automationGain(song.clickAutomation, songTime + i);
             if (click != 0.0f) {
                 const Smoothed* row = &cells_[static_cast<std::size_t>(click_role_) * kMaxBuses];
                 for (int b = 0; b < bus_count_; ++b) {
