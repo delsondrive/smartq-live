@@ -50,6 +50,17 @@ String pickText(const Params& p, const char* key, std::initializer_list<const ch
     refuse(sentence);
 }
 
+// "wood", "beep", "rim", or a sound of the band's own: clicks/<name>.wav, which the band folder may not have yet.
+String clickSound(const Params& p) {
+    const auto sound = p.text("sound");
+    if (sound == "wood" || sound == "beep" || sound == "rim") return sound;
+    const auto name = sound.fromFirstOccurrenceOf("clicks/", false, false).dropLastCharacters(4);
+    if (sound.startsWith("clicks/") && sound.endsWithIgnoreCase(".wav") && name.trim().isNotEmpty() && !sound.contains("..")
+        && !name.containsAnyOf("/\\:"))
+        return sound;
+    refuse("A click sound is wood, beep, rim or a file in clicks/.");
+}
+
 void checkRoleName(const BandModel& m, const String& name, const String& exceptId) {
     nonEmpty(name, "A role needs a name.");
     for (auto& r : m.band().roles)
@@ -172,7 +183,7 @@ void registerCoreCommands(CommandLayer& layer) {
         auto& click = songOf(m, p).click;
         if (p.given("enabled")) click.enabled = p.flag("enabled");
         if (p.given("offsetDb")) click.offsetDb = p.db("offsetDb");
-        if (p.given("sound")) click.sound = pickText(p, "sound", {"wood", "beep", "rim"}, "A click sound is wood, beep or rim.");
+        if (p.given("sound")) click.sound = clickSound(p);
         if (p.given("subdivision"))
             click.subdivision = pickText(p, "subdivision", {"none", "eighths", "triplets", "sixteenths"},
                                          "A subdivision is none, eighths, triplets or sixteenths.");

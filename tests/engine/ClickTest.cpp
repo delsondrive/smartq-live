@@ -2,6 +2,7 @@
 #include <cmath>
 #include <vector>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/Click.h"
@@ -61,4 +62,20 @@ TEST_CASE("rendering in pieces gives the same samples as rendering at once", "[c
     std::vector<float> plain(2000, 0.0f);
     renderClick(ticks, sound, false, 0, 2000, 1.0f, plain.data());
     CHECK(plain[100] == sound.beat[100]);              // no accent: the downbeat uses the beat sound
+}
+TEST_CASE("a click can be made from a recording", "[click]") {
+    std::vector<float> clip(9600, 0.5f);                           // 200 ms: only the first 100 ms is used
+    auto c = clickSoundFromClip(clip, 48000.0);
+    CHECK(c.beat.size() == 4800);  CHECK(c.downbeat.size() == 4800);  CHECK(c.subdivision.size() == 4800);
+    CHECK(c.downbeat[100] == 0.5f);                                // full level
+    CHECK(c.beat[100] == Catch::Approx(0.5f * 0.631f).margin(0.001f));          // -4 dB
+    CHECK(c.subdivision[100] == Catch::Approx(0.5f * 0.316f).margin(0.001f));   // -10 dB
+    CHECK(c.downbeat[4799] == Catch::Approx(0.0f).margin(0.01f));                // a 5 ms fade-out at the end
+}
+TEST_CASE("a click from a short recording keeps its length", "[click]") {
+    std::vector<float> clip(1000, 0.5f);
+    auto c = clickSoundFromClip(clip, 48000.0);
+    CHECK(c.beat.size() == 1000);  CHECK(c.downbeat[500] == 0.5f);  CHECK(c.downbeat[999] == Catch::Approx(0.0f).margin(0.01f));
+    CHECK(c.downbeat[1000 - 240 - 1] == 0.5f);                     // the fade is the last 5 ms only
+    CHECK(clickSoundFromClip({}, 48000.0).beat.empty());
 }

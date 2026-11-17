@@ -124,9 +124,16 @@ TEST_CASE("songs and parts", "[core]") {
     CHECK(f.run("song.setClick", params({{"songId", id}, {"enabled", false}, {"offsetDb", -3}, {"sound", "rim"}, {"subdivision", "triplets"}, {"accentDownbeat", false}})).ok);
     auto click = f.model.song(id)->click;
     CHECK_FALSE(click.enabled);  CHECK(click.sound == "rim");  CHECK(click.subdivision == "triplets");  CHECK(click.offsetDb == -3.0f);
-    CHECK(f.run("song.setClick", params({{"songId", id}, {"sound", "gong"}})).ok == false);
+    CHECK(f.run("song.setClick", params({{"songId", id}, {"sound", "gong"}})).message
+          == "A click sound is wood, beep, rim or a file in clicks/.");
     CHECK(f.run("song.setClick", params({{"songId", id}, {"subdivision", "fifths"}})).ok == false);
     CHECK(f.model.song(id)->click.sound == "rim");
+    for (const char* refused : {"clicks/../band.json", "clicks/..wav", "clicks/.wav", "clicks/a/b.wav", "clicks/C:x.wav", "cues/Cowbell.wav",
+                                "clicks/Cowbell.mp3"})
+        CHECK_FALSE(f.run("song.setClick", params({{"songId", id}, {"sound", refused}})).ok);
+    CHECK(f.run("song.setClick", params({{"songId", id}, {"sound", "clicks/Cowbell.wav"}})).ok);   // the file may come later
+    CHECK(f.model.song(id)->click.sound == "clicks/Cowbell.wav");
+    CHECK(f.run("song.setClick", params({{"songId", id}, {"sound", "rim"}})).ok);
 
     CHECK_FALSE(f.run("part.set", params({{"songId", id}, {"partId", partId}, {"roleId", clickId}})).ok);
     CHECK(f.run("part.set", params({{"songId", id}, {"partId", partId}, {"roleId", f.roleId("Bass")}, {"name", "Low"}, {"mute", true}})).ok);

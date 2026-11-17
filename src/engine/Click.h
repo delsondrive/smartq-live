@@ -28,6 +28,10 @@ struct ClickSound {
 // 0 "wood", 1 "beep", 2 "rim"; any other number is 0.
 ClickSound makeClickSound(int sound, double sampleRate);
 
+// A click made from a recording (mono, at sampleRate): at most its first 100 ms, ending in a 5 ms straight-line fade-out.
+// The downbeat is it at full level, the beat at -4 dB, the subdivision at -10 dB. An empty recording makes an empty sound.
+ClickSound clickSoundFromClip(std::span<const float> mono, double sampleRate);
+
 // Adds the click into out[0..frames), which is the song from `from`. A tick that began earlier contributes its tail.
 // Does not allocate.
 void renderClick(std::span<const ClickTick> ticks, const ClickSound&, bool accentDownbeat,

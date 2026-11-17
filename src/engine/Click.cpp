@@ -68,6 +68,26 @@ ClickSound makeClickSound(int sound, double sampleRate) {
     return s;
 }
 
+ClickSound clickSoundFromClip(std::span<const float> mono, double sampleRate) {
+    ClickSound s;
+    if (!(sampleRate > 0.0)) return s;
+    const auto longest = static_cast<std::size_t>(std::llround(0.100 * sampleRate));
+    const std::size_t length = std::min(mono.size(), longest);
+    const std::size_t fade = std::min(length, static_cast<std::size_t>(std::llround(0.005 * sampleRate)));
+    s.downbeat.assign(mono.begin(), mono.begin() + static_cast<std::ptrdiff_t>(length));
+    for (std::size_t i = length - fade; i < length; ++i)   // falls in a straight line to 0 at the last sample
+        s.downbeat[i] *= static_cast<float>(static_cast<double>(length - 1 - i) / static_cast<double>(fade));
+    const auto scaled = [&](double db) {
+        const auto gain = static_cast<float>(std::pow(10.0, db / 20.0));
+        std::vector<float> v(s.downbeat);
+        for (float& x : v) x *= gain;
+        return v;
+    };
+    s.beat = scaled(-4.0);
+    s.subdivision = scaled(-10.0);
+    return s;
+}
+
 void renderClick(std::span<const ClickTick> ticks, const ClickSound& sound, bool accentDownbeat,
                  SamplePos from, int frames, float gain, float* out) noexcept {
     const auto length = static_cast<SamplePos>(sound.beat.size());

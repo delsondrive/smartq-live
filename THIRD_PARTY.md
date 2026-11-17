@@ -17,3 +17,8 @@ Adapted from Smart Q's list. Re-check the JUCE 9 terms (<https://juce.com/legal/
 |---|---|---|---|
 | Catch2 | v3.16.1 | BSL-1.0 | Test framework, linked into `sqlive_tests` only. |
 | CMake, Visual Studio Build Tools | | Microsoft and Kitware terms | Build tools only. |
+
+## The cue voice
+
+No recorded voice ships with Smart Q Live, so there is nothing to license: the cue clips are spoken by the computer's own
+voice (Windows speech, or `say` on a Mac) on the user's computer.

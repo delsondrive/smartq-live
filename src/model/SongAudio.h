@@ -21,14 +21,30 @@ namespace sqlive::model {
 std::shared_ptr<const engine::PartAudio> loadPartAudio(const juce::File& wav, double targetRate,
                                                        const std::function<bool(double progress)>& keepGoing);
 
+// A clip (a cue's voice, a click sound) by its path inside the band folder: nullptr when it isn't loaded.
+using ClipLookup = std::function<std::shared_ptr<const engine::PartAudio>(const juce::String& pathInBandFolder)>;
+struct PrepareOptions {
+    juce::String arrangementId;                                    // "" = the sections in order
+    ClipLookup clips;                                              // none: no cue clips and the wood block for a click file
+};
+
 // The song as the engine plays it, its parts in song.parts order, each with its part id. Audio is matched to a part by
 // the part's id; a part with no entry, a null one, or a role that isn't in the band is left out, and entries for parts
 // the song doesn't have are ignored. The song ends where its longest loaded part does. Its MIDI is buildMidi's, sent on
 // the rig's device channels, with what a device's offset puts before the song's start moved to its start (in order);
 // with a clock device, clockTicks are buildClockTicks over [countOffFloor, end).
+//
+// Sections: a song with none plays as one section, [0, end). Otherwise tileSections over barsInSong, in samples; those
+// starting at or after `end` are dropped and the last one left ends at `end`; a last section then shorter than a jump's
+// crossfade joins the one before it (steps that named it play that one). The arrangement is resolveArrangement's for
+// options.arrangementId over what is left. Each section's cue is its type's cueClip through options.clips, spoken at
+// announcePlace for the band's cue lead; manual cues are placed at their bar and beat, those whose clip isn't loaded left
+// out. Automation (each part's, "click" and "cues") is in samples, sorted by time, ties in written order. A click sound
+// that isn't wood, beep or rim is a clip in the band folder, made into a click with clickSoundFromClip; while it isn't
+// loaded the song clicks with the wood block.
 engine::PreparedSong buildPreparedSong(const SongDoc&, const BandDoc&, const RigDoc&,
                                        const std::map<juce::String, std::shared_ptr<const engine::PartAudio>>& audioByPartId,
-                                       double sampleRate);
+                                       double sampleRate, const PrepareOptions& = {});
 
 // The song's tempo map, from its tempo points.
 engine::TempoMap tempoMapOf(const SongDoc&);
