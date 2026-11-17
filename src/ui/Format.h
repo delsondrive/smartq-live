@@ -16,6 +16,9 @@ juce::String formatDbNumber(float db);          // "-60", "-2.5", "+3", "0": the
 std::optional<float> parseDb(const juce::String&);
 juce::String formatBpm(double bpm);             // "128", "92.5": up to two decimals, no trailing zeros
 juce::String formatSeconds(double seconds);   // "4", "2.5": seconds to a tenth, with no trailing zero (a gap)
+juce::String formatSecondsExact(double seconds);   // "1.5 s", "0 s": up to three decimals, no trailing zeros ("Bar 1 starts at")
+// A positive number typed by the user ("128", "92.5", "1.5 s"); nullopt when it isn't one.
+std::optional<double> parseTypedNumber(juce::String text);
 juce::String formatChannels(int firstChannel, bool stereo);   // "3/4", "5" (1-based, as the model keeps them)
 juce::String timingText(double offsetMs);       // "20 ms early", "on time", "5 ms late": the one place these words are made
 

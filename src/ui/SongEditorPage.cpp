@@ -32,21 +32,19 @@ namespace {
 
 const juce::String kDash = juce::String::fromUTF8("\xe2\x80\x93");         // –
 
-// The mockup's CSS: .songs (200 px), .ebar, .insp (290 px), .foot. The timeline (.tl) is the Timeline's.
+// The mockup's CSS: .songs (200 px), .ebar, .foot (.insp is the EditorInspector's). The timeline (.tl) is the Timeline's.
 constexpr int kSongsWidth = 200, kSongsPad = 10, kCapsHeight = 14, kCapsGap = 8;
 constexpr int kSongItemHeight = 30, kSongGap = 4, kNewSongGap = 10, kSongPadX = 9;
 constexpr int kBarHeight = 47, kBarPadX = 12, kBarGap = 8, kTitleGap = 6, kChipHeight = 24, kButtonHeight = 30, kToolsRow = 38;
 constexpr int kMinTitleWidth = 60;                                  // narrower than this, the tools go to a second row
 constexpr int kFooterHeight = 32, kFooterPadX = 12, kFooterGap = 14;
-constexpr int kInspectorWidth = 290, kInspectorPad = 12, kCardGap = 10, kCardPadX = 12, kCardPadY = 10, kCardRow = 30;
-constexpr int kValueWidth = 96, kFieldHeight = 24, kChoiceWidth = 130;
 constexpr int kEmptyCardWidth = 460, kEmptyCardHeight = 150;
 
 const juce::StringArray kMajorKeys{"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
 const juce::StringArray kMinorKeys{"Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"};
 const int kCountIns[] = {0, 1, 2, 4};
-const juce::StringArray kSoundNames{"wood", "beep", "rim"}, kSoundWords{"Wood block", "Beep", "Rim"};
-const juce::StringArray kSubdivisionNames{"none", "eighths", "triplets", "sixteenths"}, kSubdivisionWords{"None", "8ths", "Triplets", "16ths"};
+const juce::StringArray kSoundNames{"wood", "beep", "rim"};
+const juce::StringArray kSubdivisionNames{"none", "eighths", "triplets", "sixteenths"};
 
 juce::Font titleFont() { return theme::font(18.0f, true); }
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
@@ -59,22 +57,6 @@ int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
 juce::String countInWords(int bars) {
     if (bars <= 0) return "none";
     return juce::String(bars) + (bars == 1 ? " bar" : " bars");
-}
-
-// "1.5 s", "0 s": up to three decimals, no trailing zeros.
-juce::String secondsText(double seconds) {
-    auto text = juce::String(std::round(seconds * 1000.0) / 1000.0, 3);
-    if (text.containsChar('.')) text = text.trimCharactersAtEnd("0").trimCharactersAtEnd(".");
-    return text + " s";
-}
-
-// A positive number typed by the user ("128", "92.5", "1.5 s"); nullopt when it isn't one.
-std::optional<double> typedNumber(juce::String text) {
-    text = text.trim();
-    if (text.endsWithIgnoreCase("s")) text = text.dropLastCharacters(1).trim();
-    if (!text.containsAnyOf("0123456789") || !text.containsOnly("0123456789.")) return std::nullopt;
-    const double value = text.getDoubleValue();
-    return std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
 }
 
 // "33.1" and "2:14": where the cursor is.
@@ -296,14 +278,11 @@ SongEditorPage::SongEditorPage(app::Session& session)
     : session_(session),
       songs_(std::make_unique<SongsBody>(*this)),
       timeline_(session),
-      markerInspector_(session),
-      sectionCard_(session),
-      jumpCard_(session),
+      inspector_(session),
       arrangementRow_(session),
       title_(std::make_unique<TitleLabel>()),
       tap_("Tap"),
       play_(juce::String::fromUTF8("\xe2\x96\xb6 Play")),
-      setToCursor_("Set to the cursor"),
       emptyNew_("+ New song", PillButton::Style::Primary) {
     setWantsKeyboardFocus(true);
 
@@ -326,15 +305,11 @@ SongEditorPage::SongEditorPage(app::Session& session)
         repaint();
     };
     addAndMakeVisible(timeline_);
-    addChildComponent(tempoCard_);
-    markerInspector_.onSelect = [this](EditorSelection picked) { timeline_.select(std::move(picked)); };
-    markerView_.setViewedComponent(&markerInspector_, false);
-    markerView_.setScrollBarsShown(true, false);
-    markerView_.setScrollBarThickness(10);
-    addChildComponent(markerView_);
-    sectionCard_.onRemoved = [this] { timeline_.select({}); };
-    addChildComponent(sectionCard_);
-    addChildComponent(jumpCard_);
+    inspector_.onSelect = [this](EditorSelection picked) { timeline_.select(std::move(picked)); };
+    inspector_.onBarOne = [this](double seconds) { setBarOneSeconds(seconds); };
+    inspector_.onBarOneAtCursor = [this] { setBarOneAtCursor(); };
+    inspector_.onClick = [this](bool on, int sound, int subdivision, bool accent) { setClick(on, sound, subdivision, accent); };
+    addChildComponent(inspector_);
     arrangementRow_.onPlayAsArranged = [this] { playAsArranged(); };
     addChildComponent(arrangementRow_);
 
@@ -352,43 +327,29 @@ SongEditorPage::SongEditorPage(app::Session& session)
     tap_.onClick = [this] { tap(app::wallClockSeconds()); };
     play_.onClick = [this] { togglePlay(); };
     play_.onMenu = [this] { showPlayMenu(); };
-    setToCursor_.onClick = [this] { setBarOneAtCursor(); };
+    play_.setTooltip("Right-click for Play as arranged");
     emptyNew_.onClick = [this] {
         if (onNewSong) onNewSong();
     };
-    for (PillButton* button : std::initializer_list<PillButton*>{&tap_, &play_, &setToCursor_, &emptyNew_}) {
+    for (PillButton* button : std::initializer_list<PillButton*>{&tap_, &play_, &emptyNew_}) {
         button->setWantsKeyboardFocus(false);
         addAndMakeVisible(*button);
     }
 
-    for (auto* editor : {&bpmEditor_, &barOneEditor_}) {
-        editor->setFont(smallFont());
-        editor->setIndents(8, 3);
-        editor->setJustification(juce::Justification::centredRight);
-    }
+    bpmEditor_.setFont(smallFont());
+    bpmEditor_.setIndents(8, 3);
     bpmEditor_.setJustification(juce::Justification::centredLeft);
     bpmEditor_.setInputRestrictions(7, "0123456789.");
     bpmEditor_.onReturnKey = [this] { finishBpm(true); };
     bpmEditor_.onEscapeKey = [this] { finishBpm(false); };
     bpmEditor_.onFocusLost = [this] { finishBpm(true); };
     addChildComponent(bpmEditor_);
-    barOneEditor_.onReturnKey = [this] { finishBarOne(true); };
-    barOneEditor_.onEscapeKey = [this] { finishBarOne(false); };
-    barOneEditor_.onFocusLost = [this] { finishBarOne(true); };
-    addAndMakeVisible(barOneEditor_);
 
-    clickSound_.setItems(kSoundWords, 0);
-    subdivision_.setItems(kSubdivisionWords, 0);
-    clickOn_.onChange = [this](bool) { sendClick(); };
-    accent_.onChange = [this](bool) { sendClick(); };
-    clickSound_.onChange = [this](int) { sendClick(); };
-    subdivision_.onChange = [this](int) { sendClick(); };
     tools_.setItems({"Select", "Draw"}, 0);
     snapTo_.setItems({"Bar", "Beat", "1/8"}, 1);
     tools_.onChange = [this](int item) { timeline_.setTool(item == 1 ? EditTool::Draw : EditTool::Select); };
     snapTo_.onChange = [this](int item) { timeline_.setSnap(item == 0 ? SnapTo::Bar : item == 2 ? SnapTo::Eighth : SnapTo::Beat); };
-    for (juce::Component* child : std::initializer_list<juce::Component*>{&songsLabel_, &songLabel_, &clickLabel_, &clickOn_, &accent_,
-                                                                          &clickSound_, &subdivision_, &tools_, &snapTo_})
+    for (juce::Component* child : std::initializer_list<juce::Component*>{&songsLabel_, &tools_, &snapTo_})
         addAndMakeVisible(child);
 
     session_.changes().addChangeListener(this);
@@ -499,7 +460,7 @@ void SongEditorPage::buildLanes() {
     laneSong_ = songId_;
     laneParts_ = std::move(parts);
     laneDevices_ = std::move(devices);
-    tempoCard_.show(nullptr, -1, false);                          // before the lane it points at goes
+    inspector_.forgetTempoLane();                                 // before the lane its TEMPO card points at goes
     tempoLane_ = nullptr;
     partLanes_.clear();
     std::vector<std::unique_ptr<Lane>> lanes;
@@ -521,39 +482,16 @@ void SongEditorPage::buildLanes() {
 }
 
 void SongEditorPage::showInspector() {
-    const auto& picked = timeline_.selection();
-    const bool tempo = picked.kind == EditorSelection::Kind::Tempo && tempoLane_ != nullptr && picked.index >= 0
-                       && picked.index < static_cast<int>(tempoLane_->state().points.size());
-    const bool change = picked.kind == EditorSelection::Kind::Marker && findMarker(session_, songId_, picked.deviceId, picked.id) != nullptr;
-    sectionCard_.show(songId_, picked.kind == EditorSelection::Kind::Section ? picked.id : juce::String());
-    const bool section = sectionCard_.state().visible;
-    if ((picked.kind == EditorSelection::Kind::Tempo && !tempo) || (picked.kind == EditorSelection::Kind::Marker && !change)
-        || (picked.kind == EditorSelection::Kind::Section && !section)) {
+    if (!inspector_.show(songId_, timeline_.selection(), tempoLane_, editable()))
         timeline_.select({});                                     // undone away: nothing is selected (and this runs again)
-        return;
-    }
-    const bool open = state_.songId.isNotEmpty();
-    tempoCard_.show(tempo ? tempoLane_ : nullptr, picked.index, editable());
-    tempoCard_.setVisible(tempo && open);
-    sectionCard_.setVisible(section && open);
-    jumpCard_.show(songId_);
-    jumpCard_.setVisible(open);
-    markerInspector_.show(songId_, change ? picked : EditorSelection{});
-    markerView_.setVisible(change && open);
 }
-
-bool SongEditorPage::changeShown() const { return markerView_.isVisible(); }
 
 void SongEditorPage::updateControls() {
     const bool open = state_.songId.isNotEmpty();
     const bool edit = editable();
     for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_,
-                                                                      &snapTo_, &arrangementRow_})
+                                                                      &snapTo_, &arrangementRow_, &inspector_})
         c->setVisible(open);
-    // The song panels give the column to the change inspector.
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&setToCursor_, &barOneEditor_, &songLabel_, &clickLabel_, &clickOn_,
-                                                                      &accent_, &clickSound_, &subdivision_})
-        c->setVisible(open && !changeShown());
     for (auto& chip : chips_) chip->setVisible(open);
     emptyNew_.setVisible(!open);
     emptyNew_.setEnabled(session_.mode() == app::Mode::Edit);
@@ -575,14 +513,7 @@ void SongEditorPage::updateControls() {
     play_.setButtonText(juce::String::fromUTF8(state_.anyPlaying ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
     play_.setEnabled(session_.mode() == app::Mode::Edit && (state_.anyPlaying || !state_.loading));
 
-    if (!barOneEditor_.hasKeyboardFocus(true)) barOneEditor_.setText(secondsText(state_.barOneSeconds), juce::dontSendNotification);
-    barOneEditor_.setReadOnly(!edit);
-    setToCursor_.setEnabled(edit);
-    clickOn_.setOn(state_.clickOn);
-    accent_.setOn(state_.accentFirstBeat);
-    clickSound_.setSelected(state_.clickSound);
-    subdivision_.setSelected(state_.subdivision);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&clickOn_, &accent_, &clickSound_, &subdivision_}) c->setEnabled(edit);
+    inspector_.setSongValues({state_.barOneSeconds, state_.clickOn, state_.accentFirstBeat, state_.clickSound, state_.subdivision}, edit);
 }
 
 void SongEditorPage::resized() {
@@ -595,9 +526,8 @@ void SongEditorPage::resized() {
     songsView_.setBounds(songs);
     fit(songsView_, *songs_, songs_->idealHeight());
 
-    rowLabels_.clear();
     if (state_.songId.isEmpty()) {
-        bar_ = footer_ = inspector_ = songCard_ = clickCard_ = {};
+        bar_ = footer_ = {};
         // A card in the middle: the sentence, then "+ New song" under it.
         emptyCard_ = area.withSizeKeepingCentre(std::min(kEmptyCardWidth, std::max(0, area.getWidth() - 40)),
                                                 std::min(kEmptyCardHeight, area.getHeight()));
@@ -608,7 +538,7 @@ void SongEditorPage::resized() {
     }
 
     emptyCard_ = {};
-    inspector_ = area.removeFromRight(std::min(kInspectorWidth, area.getWidth()));
+    inspector_.setBounds(area.removeFromRight(std::min(EditorInspector::width, area.getWidth())));
     auto edit = area;
 
     // The bar under the top bar: the title, the chips (Tap after the BPM), a gap, the tools, then ▶ Play on the right. When
@@ -654,53 +584,6 @@ void SongEditorPage::resized() {
         const auto chip = chips_[0]->getBounds();
         bpmEditor_.setBounds(chip.withWidth(std::max(chip.getWidth(), 64)).getIntersection(bar));
     }
-
-    // The panel on the right: the change inspector while a change is selected; else TEMPO while a tempo point is selected or
-    // SECTION while a section is, SONG, then CLICK, each a card of labelled rows; and under either, WHEN A SECTION IS CHOSEN
-    // LIVE.
-    auto inspector = inspector_.withTrimmedLeft(1).reduced(kInspectorPad);
-    const auto card = [&](int height) {
-        auto c = inspector.removeFromTop(std::min(inspector.getHeight(), height));
-        inspector.removeFromTop(std::min(kCardGap, inspector.getHeight()));
-        return c;
-    };
-    if (changeShown()) {
-        songCard_ = clickCard_ = {};
-        const int ideal = markerInspector_.idealHeight();
-        const int room = std::max(0, inspector.getHeight() - jumpCard_.idealHeight() - kCardGap);
-        markerView_.setBounds(card(std::min(ideal, room)));
-        const int width = std::max(0, inspector.getWidth() - (ideal > room ? markerView_.getScrollBarThickness() : 0));
-        markerInspector_.setSize(width, ideal);
-        jumpCard_.setBounds(card(jumpCard_.idealHeight()));
-        return;
-    }
-    const auto rowsCard = [&](int rows) { return card(2 * kCardPadY + kCapsHeight + 6 + rows * kCardRow); };
-    if (tempoCard_.isVisible()) tempoCard_.setBounds(card(tempoCard_.idealHeight()));
-    if (sectionCard_.isVisible()) sectionCard_.setBounds(card(sectionCard_.idealHeight()));
-    const auto rowOf = [this](juce::Rectangle<int>& inner, const juce::String& label, juce::Component* control, int width, int height) {
-        auto r = inner.removeFromTop(std::min(kCardRow, inner.getHeight()));
-        if (control != nullptr) {
-            const int w = std::min(width, r.getWidth());
-            control->setBounds(r.removeFromRight(w).withSizeKeepingCentre(w, std::min(height, r.getHeight())));
-            r.removeFromRight(std::min(10, r.getWidth()));
-        }
-        if (label.isNotEmpty()) rowLabels_.push_back({r, label});
-    };
-    songCard_ = rowsCard(2);
-    auto songInner = songCard_.reduced(kCardPadX, kCardPadY);
-    songLabel_.setBounds(songInner.removeFromTop(kCapsHeight));
-    songInner.removeFromTop(6);
-    rowOf(songInner, "Bar 1 starts at", &barOneEditor_, kValueWidth, kFieldHeight);
-    rowOf(songInner, {}, &setToCursor_, setToCursor_.idealWidth(), 28);
-    clickCard_ = rowsCard(4);
-    auto clickInner = clickCard_.reduced(kCardPadX, kCardPadY);
-    clickLabel_.setBounds(clickInner.removeFromTop(kCapsHeight));
-    clickInner.removeFromTop(6);
-    rowOf(clickInner, "On", &clickOn_, 34, 18);
-    rowOf(clickInner, "Sound", &clickSound_, kChoiceWidth, kFieldHeight);
-    rowOf(clickInner, "Subdivision", &subdivision_, kChoiceWidth, kFieldHeight);
-    rowOf(clickInner, "Accent the first beat", &accent_, 34, 18);
-    jumpCard_.setBounds(card(jumpCard_.idealHeight()));
 }
 
 void SongEditorPage::paint(juce::Graphics& g) {
@@ -761,17 +644,6 @@ void SongEditorPage::paint(juce::Graphics& g) {
         g.drawText(words, foot, juce::Justification::centredRight, false);
     }
 
-    // The panel on the right, its cards and their row labels (the TEMPO card draws its own).
-    g.setColour(juce::Colours::black.withAlpha(0.15f));
-    g.fillRect(inspector_);
-    g.setColour(theme::hairline);
-    g.fillRect(inspector_.getX(), inspector_.getY(), 1, inspector_.getHeight());
-    for (const auto& card : {songCard_, clickCard_})
-        if (!card.isEmpty()) theme::paintPanel(g, card.toFloat());
-    g.setColour(theme::mid);
-    g.setFont(bodyFont());
-    for (const auto& [area, label] : rowLabels_)
-        g.drawText(shorten(label, bodyFont(), static_cast<float>(area.getWidth())), area, juce::Justification::centredLeft, false);
 }
 
 bool SongEditorPage::keyPressed(const juce::KeyPress& key) {
@@ -865,8 +737,6 @@ void SongEditorPage::setClick(bool on, int sound, int subdivision, bool accentFi
                                  {"accentDownbeat", accentFirstBeat}}));
 }
 
-void SongEditorPage::sendClick() { setClick(clickOn_.isOn(), clickSound_.selected(), subdivision_.selected(), accent_.isOn()); }
-
 void SongEditorPage::togglePlay() {
     if (session_.mode() != app::Mode::Edit) return;
     if (session_.now().playing) {
@@ -958,15 +828,8 @@ void SongEditorPage::finishBpm(bool keep) {
     const auto text = bpmEditor_.getText();
     bpmEditor_.setVisible(false);
     if (keep)
-        if (const auto bpm = typedNumber(text)) setBpm(*bpm);
+        if (const auto bpm = parseTypedNumber(text)) setBpm(*bpm);
     if (isShowing()) grabKeyboardFocus();
-}
-
-void SongEditorPage::finishBarOne(bool keep) {
-    if (keep)
-        if (const auto seconds = typedNumber(barOneEditor_.getText()); seconds && *seconds != state_.barOneSeconds) setBarOneSeconds(*seconds);
-    barOneEditor_.setText(secondsText(state_.barOneSeconds), juce::dontSendNotification);
-    if (barOneEditor_.hasKeyboardFocus(false) && isShowing()) grabKeyboardFocus();
 }
 
 void SongEditorPage::showSignatureMenu() {

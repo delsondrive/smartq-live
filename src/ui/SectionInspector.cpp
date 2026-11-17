@@ -50,7 +50,7 @@ SectionCardState makeSectionCardState(const app::Session& session, const juce::S
     for (const auto& type : session.model().band().sectionTypes) {
         if (type.id == found->typeId) state.type = state.types.size();
         state.types.add(type.name);
-        state.typeColours.push_back(type.colour);
+        state.typeColours.push_back(theme::sectionColour(session.model().band(), type.id));
     }
     if (state.type < 0) state.type = state.types.size();          // none, or one the band no longer has
     state.types.add(kNoType);
@@ -88,7 +88,8 @@ bool SectionCard::editable() const {
 }
 
 void SectionCard::show(const juce::String& songId, const juce::String& sectionId) {
-    if (sectionId != state_.sectionId) {                          // another section: what was typed goes to the one it was for
+    // Another section: what was typed goes to the one it was for, while the song still has it (an undo may have taken it).
+    if (sectionId != state_.sectionId && makeSectionCardState(session_, songId_, state_.sectionId).visible) {
         finishName(true);
         finishStart(true);
     }

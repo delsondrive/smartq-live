@@ -70,9 +70,13 @@ juce::MouseEvent eventOn(juce::Component& component, juce::Point<float> at,
                             0.0f, 0.0f, 0.0f, &component, &component, now, at, now, 1, false);
 }
 
+// The first visible component of that type anywhere under parent (the TEMPO card is in the page's EditorInspector).
 template <typename T> T* visibleChild(juce::Component& parent) {
-    for (auto* child : parent.getChildren())
-        if (auto* found = dynamic_cast<T*>(child); found != nullptr && found->isVisible()) return found;
+    for (auto* child : parent.getChildren()) {
+        if (!child->isVisible()) continue;
+        if (auto* found = dynamic_cast<T*>(child)) return found;
+        if (auto* deeper = visibleChild<T>(*child)) return deeper;
+    }
     return nullptr;
 }
 
@@ -155,7 +159,7 @@ TEST_CASE("the tempo lane adds with the Draw tool, and Delete removes the select
     d.settle();
     auto* card = visibleChild<ui::TempoCard>(page);
     REQUIRE(card != nullptr);                                     // the TEMPO card, on the right
-    CHECK(card->getX() >= 1280 - 290);
+    CHECK(card->getScreenX() - page.getScreenX() >= 1280 - 290);
     tempo->setPoint(1, 140.0, 0, 0);
     CHECK(s.model().song(song)->tempo[1].bpm == 140.0);
     CHECK(makeTempoLaneState(s, song, timeline.selection()).points[1].text == juce::String::fromUTF8("140 · 4/4"));

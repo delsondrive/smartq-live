@@ -95,4 +95,18 @@ juce::String shorten(const juce::String& text, const juce::Font& font, float wid
     return fits < 0 ? juce::String() : cutTo(fits);
 }
 
+juce::String formatSecondsExact(double seconds) {
+    auto text = juce::String(std::round(seconds * 1000.0) / 1000.0, 3);
+    if (text.containsChar('.')) text = text.trimCharactersAtEnd("0").trimCharactersAtEnd(".");
+    return text + " s";
+}
+
+std::optional<double> parseTypedNumber(juce::String text) {
+    text = text.trim();
+    if (text.endsWithIgnoreCase("s")) text = text.dropLastCharacters(1).trim();
+    if (!text.containsAnyOf("0123456789") || !text.containsOnly("0123456789.")) return std::nullopt;
+    const double value = text.getDoubleValue();
+    return std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+}
+
 }  // namespace sqlive::ui

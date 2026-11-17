@@ -11,8 +11,7 @@
 
 #include "app/Session.h"
 #include "ui/ArrangementRow.h"
-#include "ui/MarkerInspector.h"
-#include "ui/SectionInspector.h"
+#include "ui/EditorInspector.h"
 #include "ui/TapTempo.h"
 #include "ui/TempoLane.h"
 #include "ui/Timeline.h"
@@ -61,9 +60,9 @@ SongEditorState makeSongEditorState(const app::Session&, const juce::String& son
 // band's, then any the song still has changes for), one PartLane per part (a click on its name: Rename, Role, Remove) and
 // the ClickLane, under the BARS ruler, with the white cursor line (moved by a click or drag on the ruler or a lane's empty
 // space, snapped as the snap says; Alt for no snap), which follows the playhead while the song plays. Right (290 px): the
-// MarkerInspector while a change is selected; else TEMPO while a tempo point is selected or SECTION while a section is,
-// then SONG ("Bar 1 starts at") and CLICK; and under either, WHEN A SECTION IS CHOSEN LIVE. Footer: where the cursor is,
-// the key hints and how the save went. With no song open: "Choose a song on the left, or add one." and "+ New song".
+// EditorInspector (the change inspector, or TEMPO or SECTION, SONG and CLICK; and WHEN A SECTION IS CHOSEN LIVE).
+// Footer: where the cursor is, the key hints and how the save went. With no song open: "Choose a song on the left, or add
+// one." and "+ New song".
 //
 // Every edit is a command (Session::commands()), and only in Edit mode. Space (Edit mode) plays from the cursor or stops;
 // Delete removes what is selected.
@@ -95,6 +94,7 @@ public:
 
     const SongEditorState& state() const { return state_; }
     ArrangementRow& arrangementRow() { return arrangementRow_; }  // for tests and the screenshots
+    EditorInspector& inspector() { return inspector_; }           // for tests: the right-hand column
     const juce::Viewport& lanesViewport() const;                  // for tests: the timeline's scrolling lanes
     Timeline& timeline() { return timeline_; }                    // for tests
     const juce::Viewport& songsViewport() const;                  // for tests: the scrolling list of songs
@@ -115,7 +115,6 @@ private:
     void updateControls();
     void buildLanes();                                            // the open song's lanes, when it or its parts changed
     void showInspector();                                         // the cards, or the change inspector, for the selection
-    bool changeShown() const;                                     // the change inspector heads the right-hand column
 
     bool editable() const;                                        // Edit mode, with a song open
     bool run(const juce::String& command, const juce::var& params, const juce::String& coalesceKey = {});
@@ -127,12 +126,10 @@ private:
     void chooseMidiFile();
     void editBpm();
     void finishBpm(bool keep);
-    void finishBarOne(bool keep);
     void showSignatureMenu();
     void showKeyMenu();
     void showCountInMenu();
     void showPlayMenu();                                          // "▶ Play from the cursor" and "▶ Play as arranged"
-    void sendClick();
 
     app::Session& session_;
     SongEditorState state_;
@@ -153,42 +150,20 @@ private:
     std::vector<juce::String> laneParts_, laneDevices_;
     TempoLane* tempoLane_ = nullptr;                              // the timeline's, while it has them
     std::vector<PartLane*> partLanes_;
-    TempoCard tempoCard_;
-    MarkerInspector markerInspector_;
-    juce::Viewport markerView_;                                   // the change inspector, scrolling when it is taller than the column
-    SectionCard sectionCard_;
-    JumpTimingCard jumpCard_;
+    EditorInspector inspector_;                                   // the right-hand column
     ArrangementRow arrangementRow_;
     std::vector<model::SectionTypeDoc> typesShown_;               // the band's section types, as last shown
     std::vector<model::MidiDeviceDoc> devicesShown_;              // the band's devices, and their ports' states, as last shown
     std::vector<int> portsShown_;
     std::unique_ptr<TitleLabel> title_;
     std::array<std::unique_ptr<EditChip>, 4> chips_;             // BPM, signature, key, count-in
-    // ▶ Play: a right-click opens its menu (showPlayMenu) in place of a press.
-    class PlayButton : public PillButton {
-    public:
-        using PillButton::PillButton;
-        std::function<void()> onMenu;
-        void mouseDown(const juce::MouseEvent& e) override {
-            if (!e.mods.isPopupMenu()) PillButton::mouseDown(e);
-            else if (isEnabled() && onMenu) onMenu();
-        }
-        void mouseUp(const juce::MouseEvent& e) override {
-            if (!e.mods.isPopupMenu()) PillButton::mouseUp(e);
-        }
-    };
-    PillButton tap_;
-    PlayButton play_;
-    PillButton setToCursor_, emptyNew_;
-    juce::TextEditor bpmEditor_, barOneEditor_;
-    CapsLabel songsLabel_{"ALL SONGS"}, songLabel_{"SONG"}, clickLabel_{"CLICK"};
-    Switch clickOn_, accent_;
-    Choice clickSound_, subdivision_;
+    PillButton tap_, play_, emptyNew_;                            // a right-click on ▶ Play: showPlayMenu
+    juce::TextEditor bpmEditor_;
+    CapsLabel songsLabel_{"ALL SONGS"};
     Segmented tools_, snapTo_;                                    // "Select · Draw", "Bar · Beat · 1/8"
 
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<int> songsColumn_, bar_, footer_, inspector_, songCard_, clickCard_, emptyCard_;
-    std::vector<std::pair<juce::Rectangle<int>, juce::String>> rowLabels_;   // the cards' row labels
+    juce::Rectangle<int> songsColumn_, bar_, footer_, emptyCard_;
     juce::ScopedMessageBox dialog_;
     std::unique_ptr<juce::FileChooser> chooser_;
     std::unique_ptr<Veil> midiImport_;                            // the MIDI import dialog while it is open

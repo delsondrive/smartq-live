@@ -18,13 +18,15 @@ namespace {
 const juce::String kInOrder = "In order", kNew = "+ New arrangement";
 const juce::String kSeparator = juce::String::fromUTF8("\xe2\x80\xba");   // ›
 const juce::String kMore = juce::String::fromUTF8("\xe2\x8b\xaf");        // ⋯
+const juce::String kPlayAsArranged = juce::String::fromUTF8("\xe2\x96\xb6 Play as arranged");
 
 // The mockup's .arr: 7 px above and below, 12 px either side, 5 px between things, 12 px words in dim; its chips (span.c)
 // 11 px bold in the dark ink, 8 px either side, 2 px above and below, 5 px corners; the length (em) mint and semibold, 6 px
 // further off.
 constexpr float kPadX = 12.0f, kGap = 5.0f, kLengthGap = 6.0f, kChipPad = 8.0f, kChipHeight = 19.0f, kChipRadius = 5.0f;
 constexpr float kChoiceHeight = 22.0f, kMoreWidth = 24.0f, kRightGap = 10.0f;
-constexpr float kTightChipPad = 5.0f, kTightGap = 3.0f;                 // when they don't all fit otherwise
+constexpr float kTightChipPad = 5.0f, kTightGap = 3.0f, kTightestChipPad = 3.0f, kTightestGap = 2.0f;   // when they don't all fit
+constexpr float kTextButtonPad = 6.0f;
 constexpr int kChoiceMaxWidth = 180, kChoiceRoom = 30, kOutlineMs = 2000, kDragStart = 4;   // kChoiceRoom: the .dd's padding and chevron
 
 juce::Font wordsFont() { return theme::font(theme::sizeSmall); }
@@ -62,6 +64,7 @@ ArrangementRowState makeArrangementRowState(const app::Session& session, const j
 
 ArrangementRow::ArrangementRow(app::Session& session) : session_(session) {
     choice_.setWantsKeyboardFocus(false);
+    choice_.setBold(true);                                        // the mockup's .dd here is font-weight 600
     choice_.onChange = [this](int item) {
         if (item == state_.names.size() - 1) {                    // "+ New arrangement": the one showing stays chosen
             choice_.setSelected(state_.chosen);
@@ -74,6 +77,17 @@ ArrangementRow::ArrangementRow(app::Session& session) : session_(session) {
 }
 
 bool ArrangementRow::editable() const { return session_.mode() == app::Mode::Edit && session_.model().song(songId_) != nullptr; }
+
+bool ArrangementRow::canPlay() const {
+    return onPlayAsArranged != nullptr && session_.mode() == app::Mode::Edit && !session_.now().playing && songId_.isNotEmpty();
+}
+
+juce::String ArrangementRow::getTooltip() {
+    const auto at = getMouseXYRelative().toFloat();
+    if (moreArea_.contains(at)) return "Play as arranged, rename or remove";
+    if (playArea_.contains(at)) return "Play the song from its start, as this arrangement plays it";
+    return {};
+}
 
 void ArrangementRow::show(const juce::String& songId) {
     if (songId != songId_) {
@@ -96,7 +110,9 @@ void ArrangementRow::reread() {
                                                     [this](const model::ArrangementDoc& a) { return a.id == arrangementId_; });
     if (!has) arrangementId_.clear();                             // removed, or undone away: the sections in order
     state_ = makeArrangementRowState(session_, songId_, arrangementId_);
-    if (newChip_ >= static_cast<int>(state_.chips.size())) newChip_ = -1;
+    // The outline is for the chip just put in: once anything else changes the steps (an undo, a redo, another edit), it goes,
+    // so it never lands on another chip.
+    if (arrangementId_ != newArrangement_ || stepIds() != newSteps_) newChip_ = -1;
     choice_.setItems(state_.names, state_.chosen);
     resized();
     repaint();
@@ -145,6 +161,8 @@ bool ArrangementRow::sendSteps(const std::vector<juce::String>& steps, int newCh
         return false;
     }
     newChip_ = newChip;
+    newArrangement_ = arrangementId_;
+    newSteps_ = steps;
     if (newChip_ >= 0) startTimer(kOutlineMs);
     reread();
     return true;
@@ -222,8 +240,7 @@ void ArrangementRow::askNewArrangement() {
 void ArrangementRow::showMoreMenu() {
     const bool can = editable() && arrangementId_.isNotEmpty();
     juce::PopupMenu menu;
-    const bool canPlay = onPlayAsArranged != nullptr && session_.mode() == app::Mode::Edit && !session_.now().playing;
-    menu.addItem(3, juce::String::fromUTF8("\xe2\x96\xb6 Play as arranged"), canPlay);
+    menu.addItem(3, kPlayAsArranged, canPlay());
     menu.addSeparator();
     menu.addItem(1, "Rename" + kEllipsis, can);
     menu.addItem(2, "Remove", can);
@@ -262,57 +279,66 @@ void ArrangementRow::resized() {
     cut_ = false;
     const auto inner = getLocalBounds().toFloat().withTrimmedBottom(1.0f).reduced(kPadX, 0.0f);
     const float cy = inner.getCentreY();
+    label_ = lengthArea_ = newArea_ = playArea_ = moreArea_ = {};
     if (songId_.isEmpty() || inner.getWidth() <= 0.0f) {
         choice_.setBounds({});
-        label_ = lengthArea_ = newArea_ = moreArea_ = {};
         return;
     }
-    // "⋯" on the right, and "+ New arrangement" before it while there is room (the Choice offers it too).
+    // On the right: "⋯"; before it "▶ Play as arranged" while an arrangement is chosen; before that "+ New arrangement" while
+    // there is room for it (the Choice offers it too).
     moreArea_ = {inner.getRight() - kMoreWidth, cy - kChoiceHeight / 2.0f, kMoreWidth, kChoiceHeight};
+    float right = moreArea_.getX();
+    if (arrangementId_.isNotEmpty()) {
+        const float w = widthOf(strongFont(), kPlayAsArranged) + 2.0f * kTextButtonPad;
+        playArea_ = {right - kGap - w, cy - kChoiceHeight / 2.0f, w, kChoiceHeight};
+        right = playArea_.getX();
+    }
     const float newWidth = widthOf(strongFont(), kNew);
-    const juce::Rectangle<float> newArea(moreArea_.getX() - kGap - newWidth, inner.getY(), newWidth, inner.getHeight());
+    const juce::Rectangle<float> newArea(right - kRightGap - newWidth, inner.getY(), newWidth, inner.getHeight());
 
-    float x = inner.getX();
-    label_ = {x, inner.getY(), widthOf(wordsFont(), "Arrangement"), inner.getHeight()};
-    x = label_.getRight() + kGap;
-    // As wide as the arrangement showing (the mockup's .dd fits its words).
-    const auto shown = state_.names[juce::jlimit(0, std::max(0, state_.names.size() - 1), state_.chosen)];
-    const int wanted = widthInPixels(theme::font(theme::sizeBody), shown) + kChoiceRoom;
-    const int choiceWidth = std::max(0, std::min({wanted, kChoiceMaxWidth, static_cast<int>(moreArea_.getX() - kRightGap - x)}));
-    choice_.setBounds(juce::Rectangle<float>(x, cy - kChoiceHeight / 2.0f, static_cast<float>(choiceWidth), kChoiceHeight).toNearestInt());
-    x += static_cast<float>(choiceWidth) + kGap;
-
-    // The chips and the length come first: with "+ New arrangement" when they all fit beside it, else without it, else drawn
-    // tighter, and only then cut, with "…" after the last chip that fits.
+    // The chips and the length come first. Tried in turn: with "+ New arrangement"; without it; the chips drawn tighter;
+    // without the word "Arrangement"; tighter still; and only then cut, with "…" after the last chip that fits.
     const float lengthWidth = widthOf(strongFont(), state_.length);
-    const auto lay = [&](float pad, float gap, float limit, bool cutAllowed) {
+    const auto lay = [&](bool label, float pad, float gap, float limit, bool cutAllowed) {
         chipAreas_.clear();
         cut_ = false;
-        float at = x;
+        float x = inner.getX();
+        label_ = label ? juce::Rectangle<float>(x, inner.getY(), widthOf(wordsFont(), "Arrangement"), inner.getHeight())
+                       : juce::Rectangle<float>();
+        if (label) x = label_.getRight() + kGap;
+        // As wide as the arrangement showing (the mockup's .dd fits its words).
+        const auto shown = state_.names[juce::jlimit(0, std::max(0, state_.names.size() - 1), state_.chosen)];
+        const int wanted = widthInPixels(theme::font(theme::sizeBody, true), shown) + kChoiceRoom;
+        const int choiceWidth = std::max(0, std::min({wanted, kChoiceMaxWidth, static_cast<int>(limit - x)}));
+        const juce::Rectangle<float> choiceArea(x, cy - kChoiceHeight / 2.0f, static_cast<float>(choiceWidth), kChoiceHeight);
+        choice_.setBounds(choiceArea.toNearestInt());
+        x += static_cast<float>(choiceWidth) + kGap;
         const float separator = gap + widthOf(wordsFont(), kSeparator) + gap;
         const float ellipsis = separator + widthOf(wordsFont(), kEllipsis);
         for (std::size_t i = 0; i < state_.chips.size(); ++i) {
             const float before = i == 0 ? 0.0f : separator;
             const float width = widthOf(chipFont(), state_.chips[i].name) + 2.0f * pad;
             const float after = (i + 1 < state_.chips.size() ? ellipsis : 0.0f) + kLengthGap + kGap + lengthWidth;
-            if (at + before + width + after > limit) {
+            if (x + before + width + after > limit) {
                 if (!cutAllowed) return false;
                 cut_ = true;
                 break;
             }
-            at += before;
-            chipAreas_.push_back({at, cy - kChipHeight / 2.0f, width, kChipHeight});
-            at += width;
+            x += before;
+            chipAreas_.push_back({x, cy - kChipHeight / 2.0f, width, kChipHeight});
+            x += width;
         }
-        if (cut_) at += ellipsis;
-        lengthArea_ = {at + kGap + kLengthGap, inner.getY(), lengthWidth, inner.getHeight()};
+        if (cut_) x += ellipsis;
+        lengthArea_ = {x + kGap + kLengthGap, inner.getY(), lengthWidth, inner.getHeight()};
         return true;
     };
-    const float withNew = newArea.getX() - kRightGap, withoutNew = moreArea_.getX() - kRightGap;
+    const float withNew = newArea.getX() - kRightGap, withoutNew = right - kRightGap;
     newArea_ = newArea;
-    if (lay(kChipPad, kGap, withNew, false)) return;
+    if (lay(true, kChipPad, kGap, withNew, false)) return;
     newArea_ = {};
-    if (!lay(kChipPad, kGap, withoutNew, false)) lay(kTightChipPad, kTightGap, withoutNew, true);
+    if (lay(true, kChipPad, kGap, withoutNew, false) || lay(true, kTightChipPad, kTightGap, withoutNew, false)) return;
+    if (lay(false, kTightChipPad, kTightGap, withoutNew, false)) return;
+    lay(false, kTightestChipPad, kTightestGap, withoutNew, true);
 }
 
 void ArrangementRow::paint(juce::Graphics& g) {
@@ -322,7 +348,7 @@ void ArrangementRow::paint(juce::Graphics& g) {
 
     g.setFont(wordsFont());
     g.setColour(theme::dim);
-    g.drawText("Arrangement", label_, juce::Justification::centredLeft, false);
+    if (!label_.isEmpty()) g.drawText("Arrangement", label_, juce::Justification::centredLeft, false);
     for (std::size_t i = 0; i < chipAreas_.size(); ++i) {
         const auto area = chipAreas_[i];
         if (i > 0) {                                              // "›" between this chip and the one before
@@ -354,7 +380,7 @@ void ArrangementRow::paint(juce::Graphics& g) {
     if (gap_ >= 0 && !chipAreas_.empty()) {                       // where the chip carried would go
         const float x = gap_ < static_cast<int>(chipAreas_.size()) ? chipAreas_[static_cast<std::size_t>(gap_)].getX() - 3.0f
                                                                    : chipAreas_.back().getRight() + 3.0f;
-        g.setColour(theme::mint);
+        g.setColour(theme::text);                                // neutral: mint means "now"
         g.fillRect(juce::Rectangle<float>(x - 1.0f, chipAreas_.front().getY() - 2.0f, 2.0f, kChipHeight + 4.0f));
     }
 
@@ -363,6 +389,14 @@ void ArrangementRow::paint(juce::Graphics& g) {
     g.drawText(state_.length, lengthArea_, juce::Justification::centredLeft, false);
     g.setColour(editable() ? (hoverNew_ ? theme::text : theme::mint) : theme::mint.withAlpha(0.4f));
     g.drawText(kNew, newArea_, juce::Justification::centredLeft, false);
+    if (!playArea_.isEmpty()) {                                   // a text button, in the page's own ink (mint means "now")
+        if (hoverPlay_ && canPlay()) {
+            g.setColour(theme::fieldHover);
+            g.fillRoundedRectangle(playArea_, theme::radiusField);
+        }
+        g.setColour(canPlay() ? theme::text : theme::text.withAlpha(0.4f));
+        g.drawText(kPlayAsArranged, playArea_, juce::Justification::centred, false);
+    }
 
     if (hoverMore_) {
         g.setColour(theme::fieldHover);
@@ -390,17 +424,19 @@ int ArrangementRow::gapAt(float x) const {
 
 void ArrangementRow::mouseMove(const juce::MouseEvent& e) {
     const bool overNew = newArea_.contains(e.position), overMore = moreArea_.contains(e.position);
-    const bool overChip = editable() && chipAt(e.position) >= 0;
-    setMouseCursor(overNew || overMore || overChip ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
-    if (overNew == hoverNew_ && overMore == hoverMore_) return;
+    const bool overPlay = playArea_.contains(e.position), overChip = editable() && chipAt(e.position) >= 0;
+    const bool pointing = overNew || overMore || overPlay || overChip;
+    setMouseCursor(pointing ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    if (overNew == hoverNew_ && overMore == hoverMore_ && overPlay == hoverPlay_) return;
     hoverNew_ = overNew;
     hoverMore_ = overMore;
+    hoverPlay_ = overPlay;
     repaint();
 }
 
 void ArrangementRow::mouseExit(const juce::MouseEvent&) {
-    if (!hoverNew_ && !hoverMore_) return;
-    hoverNew_ = hoverMore_ = false;
+    if (!hoverNew_ && !hoverMore_ && !hoverPlay_) return;
+    hoverNew_ = hoverMore_ = hoverPlay_ = false;
     repaint();
 }
 
@@ -412,6 +448,10 @@ void ArrangementRow::mouseDown(const juce::MouseEvent& e) {
     }
     if (moreArea_.contains(e.position)) {
         showMoreMenu();
+        return;
+    }
+    if (playArea_.contains(e.position)) {
+        if (!e.mods.isPopupMenu() && canPlay()) onPlayAsArranged();
         return;
     }
     const int chip = chipAt(e.position);

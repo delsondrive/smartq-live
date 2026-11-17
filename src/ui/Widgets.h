@@ -26,8 +26,12 @@ public:
     Style style() const { return style_; }
     int idealWidth() const;
     void setPadding(int pixels);                                  // either side of the words: the mockup's 12 unless set
+    // A right-click (a popup-menu click) calls this in place of a press, when it is set; unset, it presses as any click does.
+    std::function<void()> onMenu;
 
     void paintButton(juce::Graphics&, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
 
 private:
     Style style_;
@@ -93,6 +97,7 @@ public:
     void setNeedsAttention(bool);
     void setPlaceholder(const juce::String&);
     void setDots(std::vector<juce::Colour>);                      // one per item, in the items' order
+    void setBold(bool);                                           // semibold words, as a .dd with font-weight 600
     const juce::String& placeholder() const { return placeholder_; }
     std::function<void(int)> onChange;
 
@@ -111,6 +116,8 @@ private:
     bool needsAttention_ = false;
     juce::String placeholder_;
     std::vector<juce::Colour> dots_;
+    bool bold_ = false;
+    juce::Font font() const;
 };
 
 // The mockup's .tools switch: segments on a field, the chosen one raised on the popup colour in bright text. The

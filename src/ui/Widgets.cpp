@@ -60,7 +60,6 @@ juce::Font buttonFont() { return theme::font(theme::sizeBody, true); }
 juce::Font chipFont(bool bold) { return theme::font(theme::sizeBody, bold); }
 juce::Font pillFont() { return theme::font(theme::sizeSmall); }
 juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
-juce::Font choiceFont() { return theme::font(theme::sizeBody); }
 juce::Font segmentFont() { return theme::font(theme::sizeSmall, true); }
 
 }  // namespace
@@ -80,6 +79,19 @@ int PillButton::idealWidth() const { return ceilToInt(widthOf(buttonFont(), getB
 void PillButton::setPadding(int pixels) {
     padding_ = std::max(0, pixels);
     repaint();
+}
+
+void PillButton::mouseDown(const juce::MouseEvent& e) {
+    if (e.mods.isPopupMenu() && onMenu) {
+        if (isEnabled()) onMenu();
+        return;
+    }
+    juce::Button::mouseDown(e);
+}
+
+void PillButton::mouseUp(const juce::MouseEvent& e) {
+    if (e.mods.isPopupMenu() && onMenu) return;
+    juce::Button::mouseUp(e);
 }
 
 void PillButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
@@ -221,6 +233,14 @@ constexpr float kChoiceDot = 8.0f, kChoiceDotGap = 6.0f;          // .dd i, and 
 
 Choice::Choice() = default;
 
+juce::Font Choice::font() const { return theme::font(theme::sizeBody, bold_); }
+
+void Choice::setBold(bool bold) {
+    if (bold == bold_) return;
+    bold_ = bold;
+    repaint();
+}
+
 void Choice::setItems(const juce::StringArray& items, int selected) {
     items_ = items;
     selected_ = juce::isPositiveAndBelow(selected, items_.size()) ? selected : -1;
@@ -253,8 +273,8 @@ void Choice::setDots(std::vector<juce::Colour> dots) {
 }
 
 int Choice::idealWidth() const {
-    float widest = widthOf(choiceFont(), placeholder_);
-    for (int i = 0; i < items_.size(); ++i) widest = std::max(widest, dotRoom(i) + widthOf(choiceFont(), items_[i]));
+    float widest = widthOf(font(), placeholder_);
+    for (int i = 0; i < items_.size(); ++i) widest = std::max(widest, dotRoom(i) + widthOf(font(), items_[i]));
     return ceilToInt(widest + kChoicePadLeft + kChoiceChevronSpace);
 }
 
@@ -281,12 +301,12 @@ void Choice::paint(juce::Graphics& g) {
             textArea.removeFromLeft(room);
         }
         g.setColour(needsAttention_ ? theme::caution : theme::text);
-        g.setFont(choiceFont());
-        g.drawText(shorten(items_[selected_], choiceFont(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);
+        g.setFont(font());
+        g.drawText(shorten(items_[selected_], font(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);
     } else if (placeholder_.isNotEmpty()) {
         g.setColour(needsAttention_ ? theme::caution : theme::dim);
-        g.setFont(choiceFont());
-        g.drawText(shorten(placeholder_, choiceFont(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);
+        g.setFont(font());
+        g.drawText(shorten(placeholder_, font(), textArea.getWidth()), textArea, juce::Justification::centredLeft, false);
     }
     drawChevron(g, {area.getRight() - 12.0f, area.getCentreY()}, theme::dim);
 }

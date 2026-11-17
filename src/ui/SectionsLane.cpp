@@ -125,10 +125,14 @@ bool SectionsLane::removeSelected() {
 }
 
 void SectionsLane::addOrRenameAt(int bar) {
+    const auto* song = session_.model().song(songId_);
+    if (song == nullptr) return;
+    bar = std::clamp(bar, 1, model::barsInSong(*song));           // the line at the song's end is its last bar's
     for (const auto& block : state_.blocks)
         if (block.startBar == bar && block.id.isNotEmpty()) {    // a section already starts there: its name, then
-            if (onSelect) onSelect({EditorSelection::Kind::Section, {}, block.id, -1});
-            editInPlace(block.id);
+            const auto id = block.id;                             // selecting it reads the blocks again
+            if (onSelect) onSelect({EditorSelection::Kind::Section, {}, id, -1});
+            editInPlace(id);
             return;
         }
     const auto id = addAt(bar);

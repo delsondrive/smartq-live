@@ -5,9 +5,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "ui/SectionsLane.h"
-#include "ui/ArrangementRow.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
+#include "ui/ArrangementRow.h"
 #include "ui/LiveLookAndFeel.h"
 #include "ui/Theme.h"
 

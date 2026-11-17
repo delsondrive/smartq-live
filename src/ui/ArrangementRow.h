@@ -30,12 +30,15 @@ ArrangementRowState makeArrangementRowState(const app::Session&, const juce::Str
 
 // The Song editor's arrangement row, under the title bar (the mockup's .arr): "Arrangement", a Choice of "In order", the
 // song's arrangements and "+ New arrangement" (which asks for a name and copies the one showing), the chips in the order
-// they play joined by "›", the total length in mint, then "+ New arrangement" and "⋯" ("▶ Play as arranged", Rename…,
-// Remove) on the right. A drag moves a chip; a section dragged from the Sections lane (kSectionDragPrefix) is put in where it is dropped; a
-// right-click on a chip offers "Play again after this" and "Take out". An edit while "In order" shows first makes
-// "Arrangement 1" (or the next free number) from the sections in order, in the same command, and shows it. The chip just
-// put in has a white outline for two seconds. Every edit is one arrangement.* command (one undo step), in Edit mode only.
-class ArrangementRow : public juce::Component, public juce::DragAndDropTarget, private juce::Timer {
+// they play joined by "›", the total length in mint; on the right "+ New arrangement" (while there is room), "▶ Play as
+// arranged" (a text button, while an arrangement is chosen) and "⋯" ("▶ Play as arranged", Rename…, Remove). When the chips
+// don't fit, the link goes, then the chips tighten, then the word "Arrangement" goes, and only then are chips cut. A drag
+// moves a chip; a section dragged from the Sections lane (kSectionDragPrefix) is put in where it is dropped; a right-click
+// on a chip offers "Play again after this" and "Take out". An edit while "In order" shows first makes "Arrangement 1" (or
+// the next free number) from the sections in order, in the same command, and shows it. The chip just put in has a white
+// outline for two seconds, or until anything else changes the steps. Every edit is one arrangement.* command (one undo
+// step), in Edit mode only.
+class ArrangementRow : public juce::Component, public juce::DragAndDropTarget, public juce::TooltipClient, private juce::Timer {
 public:
     static constexpr int height = 34;                             // with its 1 px border at the foot
 
@@ -54,6 +57,11 @@ public:
     void removeArrangement();                                     // then "In order" shows
     std::function<void()> onPlayAsArranged;                       // the "⋯" menu's "▶ Play as arranged"
 
+    const std::vector<juce::Rectangle<float>>& chipAreas() const { return chipAreas_; }   // for tests: the chips drawn
+    juce::Rectangle<float> playAsArrangedArea() const { return playArea_; }   // for tests: "▶ Play as arranged"; empty: none
+    int outlinedChip() const { return newChip_; }                  // for tests: the chip just put in; -1 for none
+    juce::String getTooltip() override;                            // on "⋯" and "▶ Play as arranged"
+
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseMove(const juce::MouseEvent&) override;
@@ -71,6 +79,7 @@ public:
 private:
     void timerCallback() override;
     bool editable() const;                                        // Edit mode, and the song is still there
+    bool canPlay() const;                                         // "▶ Play as arranged" would start it
     void reread();                                                // state_ from the song as it is now
     juce::String freeName() const;                                // "Arrangement <n>", the first number no arrangement has
     // The steps sent: to the arrangement showing, or as a new "Arrangement <n>" while "In order" shows. newChip is
@@ -89,12 +98,14 @@ private:
     ArrangementRowState state_;
     Choice choice_;
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<float> label_, lengthArea_, newArea_, moreArea_;
+    juce::Rectangle<float> label_, lengthArea_, newArea_, playArea_, moreArea_;
     std::vector<juce::Rectangle<float>> chipAreas_;               // the chips that fit, in order
     bool cut_ = false;                                            // some chips didn't fit: "…" after the last that did
     int newChip_ = -1;                                            // outlined for two seconds
+    juce::String newArrangement_;                                 // the arrangement and steps it was put into: any other
+    std::vector<juce::String> newSteps_;                          // steps (an undo, a redo, an edit) take the outline away
     int pressed_ = -1, gap_ = -1;                                 // the chip pressed; where a drag or a drop would put it
-    bool hoverNew_ = false, hoverMore_ = false;
+    bool hoverNew_ = false, hoverMore_ = false, hoverPlay_ = false;
     juce::ScopedMessageBox message_;
 };
 
