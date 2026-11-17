@@ -22,7 +22,8 @@ struct DemoSession {
     std::unique_ptr<app::Settings> settings;
     std::unique_ptr<app::Session> session;
 
-    // full: the demo band with its MIDI too (model::addDemoMidi), as the app and the screenshots make it.
+    // full: the demo band with its MIDI and its sections too (model::addDemoMidi, model::addDemoSections), as the app and
+    // the screenshots make it.
     explicit DemoSession(bool full = false) {
         const auto root = dir.dir().getChildFile("Demo band");
         model::createDemoBand(root);
@@ -31,6 +32,7 @@ struct DemoSession {
         session->setDevice(48000.0, 2);
         if (full) {
             REQUIRE(model::addDemoMidi(session->commands()).wasOk());
+            REQUIRE(model::addDemoSections(session->commands()).wasOk());
             session->commands().clearHistory();
         }
         settle();

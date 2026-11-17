@@ -229,4 +229,68 @@ juce::Result addDemoMidi(CommandLayer& commands) {
     return juce::Result::ok();
 }
 
+namespace {
+
+// Each section ends where the next starts, the last at the song's end.
+struct DemoSection { const char* name; const char* type; int startBar; };
+struct DemoSections { const char* title; std::vector<DemoSection> sections; };
+
+const DemoSections kSections[] = {
+    {"First Light", {{"Intro", "Intro", 1}, {"Verse 1", "Verse", 5}, {"Chorus", "Chorus", 9}, {"Outro", "Outro", 13}}},
+    {"Low Tide", {{"Intro", "Intro", 1}, {"Verse 1", "Verse", 2}, {"Pre-chorus", "Pre-chorus", 4}, {"Chorus", "Chorus", 5},
+                  {"Verse 2", "Verse", 7}, {"Chorus", "Chorus", 8}, {"Solo", "Solo", 10}, {"Outro", "Outro", 11}}},
+    {"Run", {{"Intro", "Intro", 1}, {"Verse 1", "Verse", 5}, {"Chorus", "Chorus", 9}, {"Bridge", "Bridge", 17},
+             {"Outro", "Outro", 21}}},
+};
+
+}  // namespace
+
+juce::Result addDemoSections(CommandLayer& commands) {
+    const auto run = [&commands](const char* name, const juce::var& params, juce::var* value = nullptr) {
+        auto done = commands.run(name, params);
+        if (value != nullptr) *value = done.value;
+        return done.ok ? juce::Result::ok() : juce::Result::fail(done.message);
+    };
+    const auto& model = commands.model();
+    const auto songTitled = [&model](const char* title) {
+        for (const auto& id : model.songIds())
+            if (model.song(id)->title == title) return id;
+        return juce::String();
+    };
+    const auto typeNamed = [&model](const char* name) {
+        for (const auto& type : model.band().sectionTypes)
+            if (type.name == name) return type.id;
+        return juce::String();
+    };
+
+    for (const auto& song : kSections) {
+        const auto songId = songTitled(song.title);
+        if (songId.isEmpty()) return juce::Result::fail(juce::String("The demo band has no song called ") + song.title + ".");
+        juce::StringArray ids;                                   // the sections' ids, in bar order
+        for (const auto& section : song.sections) {
+            const auto typeId = typeNamed(section.type);
+            if (typeId.isEmpty())
+                return juce::Result::fail(juce::String("The demo band has no section type called ") + section.type + ".");
+            juce::var made;
+            const auto params = object(
+                {{"songId", songId}, {"name", section.name}, {"startBar", section.startBar}, {"typeId", typeId}});
+            if (auto r = run("section.add", params, &made); r.failed()) return r;
+            ids.add(made.toString());
+        }
+        if (juce::String(song.title) != "First Light") continue;
+
+        // Intro, Verse 1, Chorus, Chorus, Outro: the Chorus once more before the end.
+        juce::Array<juce::var> steps;
+        for (const int i : {0, 1, 2, 2, 3}) steps.add(ids[i]);
+        if (auto r = run("arrangement.add", object({{"songId", songId}, {"name", "Long ending"}, {"steps", steps}})); r.failed())
+            return r;
+        const auto* doc = model.song(songId);
+        const auto perc = std::find_if(doc->parts.begin(), doc->parts.end(), [](const PartDoc& p) { return p.name == "Perc"; });
+        if (perc == doc->parts.end()) return juce::Result::fail("First Light has no Perc part.");
+        const auto fade = object({{"songId", songId}, {"target", perc->id}, {"sectionId", ids[0]}});
+        if (auto r = run("automation.fadeIn", fade); r.failed()) return r;
+    }
+    return juce::Result::ok();
+}
+
 }  // namespace sqlive::model

@@ -1,29 +1,29 @@
-# Smart Q Live acceptance checklist, stages 1 and 2
+# Smart Q Live acceptance checklist, stages 1 to 3
 
 This is for you, on the laptop you play shows from, with your real audio interface. Tick each line. Each line is one thing to do and what should happen. If something sounds, looks or feels wrong, write it down with the screen's name, what you did and what you saw. A note like "Setlists page, dragged song 3 above song 1, the list jumped back" is exactly what is needed.
 
 Use the Release build (`build\SmartQLive_artefacts\Release\Smart Q Live.exe`). Use a real song of yours with real stems, not only the demo band. Use headphones or in-ears you trust.
 
-Every section here is needed. Stage 1 (sections 1 to 10) and stage 2 (sections 11 to 17) are each accepted when every line in their sections is ticked, or when what is left is written down.
+Every section here is needed. Stage 1 (sections 1 to 10), stage 2 (sections 11 to 17) and stage 3 (sections 18 to 25) are each accepted when every line in their sections is ticked, or when what is left is written down.
 
-Lines that need your ears are marked **(by ear)**. Lines that need a second computer are marked **(two computers)**. Stage 2 needs at least one MIDI pedalboard (or other MIDI gear that changes patch on a program change) on a USB MIDI port, and one MIDI footswitch.
+Lines that need your ears are marked **(by ear)**. Lines that need a second computer are marked **(two computers)**. Stage 2 needs at least one MIDI pedalboard (or other MIDI gear that changes patch on a program change) on a USB MIDI port, and one MIDI footswitch. Stage 3 needs a real song of yours with markers for its sections in its MIDI file.
 
 ## What Smart Q Live is at this stage
 
-Smart Q Live plays your backing tracks for a show. It keeps your songs and setlists in a band folder, a normal folder that is best kept in OneDrive. It makes its own click. It has one mix for each output of your audio interface, so each person can have their own mix in their own in-ears. It changes your pedalboards' patches at set points in each song, and can send them MIDI clock. In Show mode you run it from the keyboard or from MIDI footswitches.
+Smart Q Live plays your backing tracks for a show. It keeps your songs and setlists in a band folder, a normal folder that is best kept in OneDrive. It makes its own click. It has one mix for each output of your audio interface, so each person can have their own mix in their own in-ears. It changes your pedalboards' patches at set points in each song, and can send them MIDI clock. It knows each song's sections, and in Show mode you can choose the next section, loop one, or go on to the next song early; a spoken cue in the in-ears says which section comes next. Songs can follow one another with a gap, a crossfade or no gap at all, and a part or the click can be faded or muted over a section. In Show mode you run it from the keyboard or from MIDI footswitches.
 
 These are the screens:
 
-- **Song editor**: one song, with its tempo, its count-in, a lane of pedal changes for each MIDI device, and its parts.
+- **Song editor**: one song, with its arrangements, its tempo, its count-in, its sections, its cues, a lane of pedal changes for each MIDI device, and its parts with their automation.
 - **Mixer**: the levels of one song, or the mix of one output.
 - **Setlists**: the running order of a show.
-- **Setup**: your audio interface, your outputs and your roles on its **Audio & routing** page; your MIDI devices and what each action is triggered by on its **MIDI & controls** page.
+- **Setup**: your audio interface, your outputs and your roles on its **Audio & routing** page; your MIDI devices and what each action is triggered by on its **MIDI & controls** page; the section types and their spoken cues on its **Cue voice** page.
 - **Snapshots**: the button at the top in Edit mode. A copy of every song, setlist and setting, to go back to.
 - **Show mode**: the same screens, locked, with only the faders live. **Tab** switches to the stage view, made for the drum throne.
 
 The **EDIT** and **SHOW** switch at the top changes between Edit mode and Show mode.
 
-Not built yet, so do not look for them: sections you can see and jump to, spoken cues, the pad, the phone remote and the backup laptop.
+Not built yet, so do not look for them: the pad, the phone remote and the backup laptop.
 
 ## 1. Starting up
 
@@ -303,6 +303,38 @@ Set a latching footswitch to momentary on the footswitch itself before you learn
 - [ ] Right-click **Before soundcheck**. The menu has **Rename…** and **Remove**. Rename it (the window is called **Rename the snapshot**). Remove it: it asks **Remove the snapshot “**its name**”?** and says **It can't be brought back.**
 - [ ] Go to Show mode. **Snapshots** is not in the top bar. Play a song, leave Show mode and open **Snapshots**: nothing was saved during the show.
 - [ ] Look in the band folder in Explorer. The snapshots are in its **snapshots** folder, and the audio files were never copied there.
+
+## 18. Sections
+
+- [ ] **Sections:** import a song with markers, check the types and colours, add and move a section by hand.
+
+## 19. Live arrangement
+
+- [ ] **Live arrangement:** during a real song choose a later section, an earlier one, cancel, loop a section for a few rounds and leave it; listen at each bar line for a click or a cut that sounds wrong (note the song and bar); try "the next bar" timing; play an arrangement that ends before the song does and listen to its last bar fade.
+
+## 20. The cue voice
+
+- [ ] **The cue voice:** make the voice, hear each cue in the in-ears and nowhere else, the announcement following a late change, the lead set to 2 beats and to 2 bars, a cue of your own recording.
+
+## 21. Pedalboards across a jump
+
+- [ ] **Pedalboards across a jump:** jump to a section with a different patch and back; loop a section and check the pedal doesn't glitch; with a pedalboard's MIDI Thru on, check its echo of the app's own messages chooses nothing.
+
+## 22. Arrangements
+
+- [ ] **Arrangements:** make a long ending, choose it in the setlist, play it.
+
+## 23. Between songs
+
+- [ ] **Between songs:** a 4 s crossfade, a seamless change, hold → to go early with each kind, hold → with nothing next; tap a "go to the next song now" pedal once (nothing happens) and twice (it goes).
+
+## 24. Automation
+
+- [ ] **Automation:** fade a part in over a section, mute the click through a section, grab the fader mid-fade in Show mode.
+
+## 25. Starting from a section
+
+- [ ] **Starting from a section:** stopped, press a number, hear one bar of click, then that section, with the right patch.
 
 ## What to write down
 

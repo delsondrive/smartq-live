@@ -84,8 +84,11 @@ public:
         settings_->noteOpened(root);
         session_ = std::make_unique<app::Session>(*settings_, root);
         session_->setDevice(kRate, 2);
-        // As the app makes the demo band: with its pedalboards and their changes, which Undo can't take away.
-        if (model::addDemoMidi(session_->commands()).failed() || !bindPorts()) return;
+        // As the app makes the demo band: with its pedalboards and their changes, then its sections, which Undo can't take
+        // away.
+        if (model::addDemoMidi(session_->commands()).failed() || model::addDemoSections(session_->commands()).failed()
+            || !bindPorts() || !tuneDevices())
+            return;
         session_->commands().clearHistory();
         session_->flushNow();                                     // saved, as a band opened a moment ago is
         midi_ = std::make_unique<app::MidiPorts>(
@@ -142,7 +145,7 @@ public:
     // Plays the setlist's next song until its clock reads `seconds`.
     void playUntil(double seconds) {
         session_->perform(Action::Start);
-        for (int i = 0; i < 2000 && session_->now().seconds < seconds; ++i) session_->advanceWithoutDevice(kRate / 100);
+        for (int i = 0; i < 6000 && session_->now().seconds < seconds; ++i) session_->advanceWithoutDevice(kRate / 100);
     }
 
     // Plays the next song to its end (the demo set stops after each song).
@@ -171,6 +174,15 @@ private:
             if (!session_->commands().run("rig.setMidi", juce::var(params)).ok) return false;
         }
         return true;
+    }
+
+    // As the mockup's screens 9 and 12 have them: Guitar 1 nudged 20 ms early, Guitar 2 sent the clock.
+    bool tuneDevices() {
+        const auto& devices = session_->model().band().midiDevices;
+        if (devices.size() < 2) return false;
+        const auto first = devices[0].id, second = devices[1].id;
+        return session_->commands().run("device.set", model::jsonObject({{"deviceId", first}, {"offsetMs", -20}})).ok
+            && session_->commands().run("device.set", model::jsonObject({{"deviceId", second}, {"clock", true}})).ok;
     }
 
     juce::File folder_;
@@ -253,46 +265,38 @@ juce::String changeAt(const app::Session& session, const juce::String& songId, c
     return {};
 }
 
-// The song's sections, as the mockup's screen 9 has them (on the demo's 16 bars), and its arrangement "Long ending" (the
-// Chorus once more before the Outro, still to be put in by the editor). The id of the arrangement and of the last Chorus;
-// "" when a command was refused.
-std::pair<juce::String, juce::String> addMockupSections(app::Session& session, const juce::String& songId) {
-    struct Start { const char* name; int bar; };
-    const Start starts[] = {{"Intro", 1}, {"Verse 1", 3}, {"Chorus", 5}, {"Verse 2", 7}, {"Chorus", 9}, {"Bridge", 11}, {"Outro", 14}};
-    juce::StringArray ids;
-    for (const auto& start : starts) {
-        const auto made = session.commands().run(
-            "section.add", model::jsonObject({{"songId", songId}, {"name", start.name}, {"startBar", start.bar}}));
-        if (!made.ok) return {};
-        ids.add(made.value.toString());
-    }
-    juce::Array<juce::var> steps;
-    for (const int i : {0, 1, 2, 3, 4, 5, 4, 6}) steps.add(ids[i]);
-    const auto made = session.commands().run(
-        "arrangement.add", model::jsonObject({{"songId", songId}, {"name", "Long ending"}, {"steps", steps}}));
-    return made.ok ? std::pair{made.value.toString(), ids[4]} : std::pair<juce::String, juce::String>{};
+// The demo song's "Long ending" (model::addDemoSections) and its Chorus; "" when it has none.
+std::pair<juce::String, juce::String> longEndingOf(const app::Session& session, const juce::String& songId) {
+    const auto* song = session.model().song(songId);
+    if (song == nullptr) return {};
+    juce::String arrangementId, chorusId;
+    for (const auto& arrangement : song->arrangements)
+        if (arrangement.name == "Long ending") arrangementId = arrangement.id;
+    for (const auto& section : song->sections)
+        if (section.name == "Chorus") chorusId = section.id;
+    return {arrangementId, chorusId};
 }
 
-// As the mockup's screen 9 has them: "Watch me" said in the second Chorus, between the automatic cues, and the second part
-// faded in over the first Chorus (the mockup's Gtr FX lane).
-void addMockupCuesAndAutomation(app::Session& session, const juce::String& songId) {
+// As the mockup's screens 1, 2 and 7 have the set: carrying on, the first song on its "Long ending" and then a 4 s
+// crossfade into the second, which is followed by a 4 s gap.
+void longEndingThenCrossfade(app::Session& session, const juce::String& songId) {
+    const auto arrangementId = longEndingOf(session, songId).first;
+    const auto* list = session.model().setlist(session.setlistId());
+    if (arrangementId.isEmpty() || list == nullptr || list->entries.size() < 2) return;
+    const auto first = list->entries[0].id, second = list->entries[1].id, setlistId = session.setlistId();
+    session.commands().run("setlist.set", model::jsonObject({{"setlistId", setlistId}, {"playMode", "continuous"}}));
+    session.commands().run("setlist.setArrangement",
+                           model::jsonObject({{"setlistId", setlistId}, {"entryId", first}, {"arrangementId", arrangementId}}));
+    session.commands().run("setlist.setTransition", model::jsonObject({{"setlistId", setlistId}, {"entryId", first},
+                                                                       {"kind", "crossfade"}, {"seconds", 4}}));
+    session.commands().run("setlist.setTransition", model::jsonObject({{"setlistId", setlistId}, {"entryId", second},
+                                                                       {"kind", "gap"}, {"seconds", 4}}));
+}
+
+// As the mockup's screens 1 and 9 have it: "Watch me" said in the Chorus, between the automatic cues.
+void addWatchMe(app::Session& session, const juce::String& songId) {
     session.commands().run("cue.add", model::jsonObject({{"songId", songId}, {"bar", 10}, {"beat", 1.0},
                                                          {"clip", "cues/built-in/Watch me.wav"}, {"text", "Watch me"}}));
-    const auto* song = session.model().song(songId);
-    if (song == nullptr || song->parts.size() < 2) return;
-    const auto chorus = std::find_if(song->sections.begin(), song->sections.end(), [](const auto& s) { return s.startBar == 5; });
-    if (chorus == song->sections.end()) return;
-    session.commands().run("automation.fadeIn",
-                           model::jsonObject({{"songId", songId}, {"target", song->parts[1].id}, {"sectionId", chorus->id}}));
-}
-
-// The mockup's screen 3 has the next song in eight sections; on the second demo song's 12 bars.
-void addBetweenSections(app::Session& session, const juce::String& songId) {
-    struct Start { const char* name; int bar; };
-    const Start starts[] = {{"Intro", 1}, {"Verse 1", 2}, {"Pre-chorus", 4}, {"Chorus", 5},
-                            {"Verse 2", 7}, {"Chorus", 8}, {"Solo", 10}, {"Outro", 11}};
-    for (const auto& start : starts)
-        session.commands().run("section.add", model::jsonObject({{"songId", songId}, {"name", start.name}, {"startBar", start.bar}}));
 }
 
 juce::Image render(const juce::String& name, int width, int height) {
@@ -302,22 +306,21 @@ juce::Image render(const juce::String& name, int width, int height) {
     auto& shell = scene.shell();
 
     if (name == "main-view" || name == "stage-playing" || name == "stage-looping") {
-        // The first song with the mockup's sections and cues, played into its first Chorus; the second Chorus chosen to
-        // come next with ↓ (or, looping, the Chorus looped with L).
-        addMockupSections(session, scene.songIdAt(0));
-        addMockupCuesAndAutomation(session, scene.songIdAt(0));
+        // The first song on its "Long ending", then a crossfade, with "Watch me" in its Chorus; played into that Chorus,
+        // and the Outro chosen to come next with ↓, so the Chorus isn't played again (or, looping, the Chorus looped with L).
+        longEndingThenCrossfade(session, scene.songIdAt(0));
+        addWatchMe(session, scene.songIdAt(0));
         scene.settle();
         session.enterShow();
         scene.wantStageView(name != "main-view");
         const auto* band = &session.model().band();
         session.setLevel({app::LevelTarget::Kind::BandClick, {}, {}, {}, {}}, band->clickDb + 2.0f, "screens");
-        scene.playUntil(10.0);
+        scene.playUntil(22.0);                                    // bar 10
         session.perform(name == "stage-looping" ? Action::LoopSection : Action::NextSectionLater);
         session.advanceWithoutDevice(kRate / 100);
         pump();
     } else if (name == "stage-between" || name == "stage-loading") {
-        addBetweenSections(session, scene.songIdAt(1));
-        scene.settle();
+        // The second song next, in its eight sections.
         session.enterShow();
         scene.wantStageView(true);
         scene.playThrough();
@@ -347,35 +350,25 @@ juce::Image render(const juce::String& name, int width, int height) {
         return snapshot(page, width, height);
     } else if (name == "setlists") {
         // The mockup's row 3: the first song on its "Long ending" arrangement, then a 4 s crossfade; the second, a gap.
-        const auto arrangementId = addMockupSections(session, scene.songIdAt(0)).first;
-        const auto* list = session.model().setlist(session.setlistId());
-        if (arrangementId.isNotEmpty() && list != nullptr && list->entries.size() > 1) {
-            const auto first = list->entries[0].id, second = list->entries[1].id, setlistId = session.setlistId();
-            session.commands().run("setlist.set", model::jsonObject({{"setlistId", setlistId}, {"playMode", "continuous"}}));
-            session.commands().run("setlist.setArrangement",
-                                   model::jsonObject({{"setlistId", setlistId}, {"entryId", first}, {"arrangementId", arrangementId}}));
-            session.commands().run("setlist.setTransition", model::jsonObject({{"setlistId", setlistId}, {"entryId", first},
-                                                                               {"kind", "crossfade"}, {"seconds", 4}}));
-            session.commands().run("setlist.setTransition", model::jsonObject({{"setlistId", setlistId}, {"entryId", second},
-                                                                               {"kind", "gap"}, {"seconds", 4}}));
-        }
+        longEndingThenCrossfade(session, scene.songIdAt(0));
         scene.page<SetlistsPage>(Page::Setlists);
     } else if (name == "new-song") {
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onNewSong)
             setlists->onNewSong(stemsFor(scene));
     } else if (name == "song-editor") {
-        const auto [arrangementId, chorusId] = addMockupSections(session, scene.songIdAt(0));
-        addMockupCuesAndAutomation(session, scene.songIdAt(0));
+        const auto [arrangementId, chorusId] = longEndingOf(session, scene.songIdAt(0));
+        addWatchMe(session, scene.songIdAt(0));
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onOpenSong)
             setlists->onOpenSong(scene.songIdAt(0));              // as a double-click does: the editor, and the Mixer's song
         if (auto* editor = scene.page<SongEditorPage>(Page::SongEditor)) {
-            editor->arrangementRow().choose(arrangementId);       // "Long ending", with its last Chorus just put in again
-            editor->arrangementRow().insertSection(chorusId, 7);
-            editor->setCursorSeconds(12.0);
+            editor->arrangementRow().choose(arrangementId);       // "Long ending", with its Chorus just put in once more
+            editor->arrangementRow().insertSection(chorusId, 4);
+            editor->setCursorSeconds(14.4);                       // bar 7
             juce::String deviceId;                                // Guitar 1's Crunch selected, so the inspector shows
             const auto markerId = changeAt(session, scene.songIdAt(0), "Guitar 1", 9, deviceId);
             if (markerId.isNotEmpty()) editor->timeline().select({EditorSelection::Kind::Marker, deviceId, markerId});
         }
+        session.flushNow();                                       // "Saved ✓", as the mockup has it
     } else if (name == "midi-setup") {
         // A footswitch learned for Start and one for Stop, as the mockup has them: CC 64 and CC 65 on channel 10.
         for (const auto& [action, controller] : {std::pair{"start", 64}, std::pair{"stop", 65}}) {

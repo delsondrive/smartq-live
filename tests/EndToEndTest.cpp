@@ -150,3 +150,51 @@ TEST_CASE("the demo band's MIDI is two pedalboards with changes in every song, a
     }
     CHECK_FALSE(d.session->commands().canUndo());
 }
+
+TEST_CASE("the demo band's sections have types, First Light has a long ending and a fade, and Undo can't take them away",
+          "[e2e]") {
+    sqlive::test::DemoSession plain;
+    for (const auto& entry : plain.setlist().entries)              // createDemoBand alone stays as it was
+        CHECK(plain.session->model().song(entry.songId)->sections.empty());
+    sqlive::test::DemoSession d(true);
+    const auto& m = d.session->model();
+    const auto typeName = [&](const juce::String& typeId) {
+        for (const auto& type : m.band().sectionTypes)
+            if (type.id == typeId) return type.name;
+        return juce::String("?");
+    };
+    const auto sections = [&](const SongDoc& song) {
+        juce::StringArray all;
+        for (const auto& s : song.sections)
+            all.add(s.name + " (" + typeName(s.typeId) + ") " + juce::String(s.startBar) + "-" + juce::String(s.endBar - 1));
+        return all.joinIntoString(", ");
+    };
+    const auto& entries = d.setlist().entries;
+    REQUIRE(entries.size() == 3);
+    const auto& first = *m.song(entries[0].songId);
+    REQUIRE(first.title == "First Light");
+    CHECK(sections(first) == "Intro (Intro) 1-4, Verse 1 (Verse) 5-8, Chorus (Chorus) 9-12, Outro (Outro) 13-16");
+    CHECK(sections(*m.song(entries[1].songId))
+          == "Intro (Intro) 1-1, Verse 1 (Verse) 2-3, Pre-chorus (Pre-chorus) 4-4, Chorus (Chorus) 5-6, Verse 2 (Verse) 7-7, "
+             "Chorus (Chorus) 8-9, Solo (Solo) 10-10, Outro (Outro) 11-12");
+    CHECK(sections(*m.song(entries[2].songId))
+          == "Intro (Intro) 1-4, Verse 1 (Verse) 5-8, Chorus (Chorus) 9-16, Bridge (Bridge) 17-20, Outro (Outro) 21-24");
+
+    REQUIRE(first.arrangements.size() == 1);
+    CHECK(first.arrangements[0].name == "Long ending");
+    juce::StringArray steps;
+    for (const auto& id : first.arrangements[0].steps)
+        for (const auto& s : first.sections)
+            if (s.id == id) steps.add(s.name);
+    CHECK(steps.joinIntoString(", ") == "Intro, Verse 1, Chorus, Chorus, Outro");
+
+    const auto perc = std::find_if(first.parts.begin(), first.parts.end(), [](const PartDoc& p) { return p.name == "Perc"; });
+    REQUIRE(perc != first.parts.end());
+    REQUIRE(first.automation.count(perc->id) == 1);
+    const auto& fade = first.automation.at(perc->id);
+    REQUIRE(fade.size() == 2);                                     // silent at the Intro's start, full by the Verse
+    CHECK(fade[0].bar == 1);  CHECK(fade[0].db == kMinDb);
+    CHECK(fade[1].bar == 5);  CHECK(fade[1].db == 0.0f);
+    CHECK(first.automation.size() == 1);                           // nothing else is automated
+    CHECK_FALSE(d.session->commands().canUndo());
+}

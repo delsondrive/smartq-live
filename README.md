@@ -13,7 +13,7 @@ The first runs the tests with that Catch2 filter; the second builds `build\Smart
 
 ## Status
 
-Stage 2 done: pedalboards change by themselves, with MIDI clock, MIDI-file import, footswitch control and snapshots.
+Stage 3 done: sections, live arrangement, the cue voice, crossfades and automation.
 
 ## Using it
 
@@ -23,7 +23,19 @@ Stage 2 done: pedalboards change by themselves, with MIDI clock, MIDI-file impor
 4. In the Song editor, set the tempo, **Bar 1 starts at** and the count-in.
 5. On Setup's **MIDI & controls** page, click **+ Add a device** for each pedalboard, choose its port and channel, and paste in its patch names. In the Song editor, place its changes on its lane.
 6. Make a setlist, drag songs in, and set what happens after each song. Set up an output and a mix for each band member.
-7. Click **SHOW**. **Ready for the show?** opens: click **Go to Show mode**. Then play the show from the keyboard: Space to start, hold Space or press Esc twice to stop. A footswitch learned for Start starts the song; one learned for Stop stops it when tapped twice.
+7. Click **SHOW**. **Ready for the show?** opens: click **Go to Show mode**. Then play the show from the keyboard or from footswitches (see **Show controls** below).
 8. Before changing things at the venue, click **Snapshots** and **+ Save a snapshot now**. If the changes go wrong, choose that snapshot and click **Go back to this snapshot**.
+
+## Show controls
+
+In Show mode:
+
+- **Space** starts the song. Hold **Space** (1 s) or press **Esc** twice to stop. A footswitch learned for Start starts the song; one learned for Stop stops it when tapped twice.
+- **←** / **→** choose the next song.
+- **↑** / **↓** choose the next section.
+- **1**–**9** and **0** choose sections 1 to 10; with the song stopped, they start the next song from that section. Only sections 1 to 10 can be chosen by number key or pedal; reach a later one with **↑** / **↓**.
+- **L** loops the section playing. **Backspace** cancels the chosen section or the loop.
+- Hold **→** (1 s), or tap a pedal learned for **Go to the next song now** twice, to go to the next song now.
+- **Tab** switches between the main view and the stage view.
 
 The things to try by hand with your real interface are listed in `docs/acceptance.md`.

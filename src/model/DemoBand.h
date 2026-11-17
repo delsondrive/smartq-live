@@ -19,4 +19,11 @@ juce::Result createDemoBand(const juce::File& root);
 // Undo can't take the demo's MIDI away. Fails, with the refusal, if a command is refused.
 juce::Result addDemoMidi(CommandLayer&);
 
+// Gives a freshly made demo band (its session's commands) its sections, through commands, each with the type of its name:
+// "First Light" Intro bars 1-4, Verse 1 5-8, Chorus 9-12, Outro 13-16, with the arrangement "Long ending" (Intro, Verse 1,
+// Chorus, Chorus, Outro) and its Perc part faded in over the Intro; "Low Tide" Intro 1, Verse 1 2-3, Pre-chorus 4, Chorus 5-6,
+// Verse 2 7, Chorus 8-9, Solo 10, Outro 11-12; "Run" Intro 1-4, Verse 1 5-8, Chorus 9-16, Bridge 17-20, Outro 21-24. Called
+// after addDemoMidi; the caller clears the undo history afterwards. Fails, with the refusal, if a command is refused.
+juce::Result addDemoSections(CommandLayer&);
+
 }  // namespace sqlive::model

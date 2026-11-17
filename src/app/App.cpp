@@ -187,8 +187,9 @@ void App::openDemoBand() {
     }
     openBand(root);
     if (fresh && session_ != nullptr) {
-        // Its pedalboards and their changes, which Undo can't take away. An existing demo folder already has them.
-        model::addDemoMidi(session_->commands());
+        // Its pedalboards and their changes, then its sections, which Undo can't take away. An existing demo folder already
+        // has them.
+        if (model::addDemoMidi(session_->commands()).wasOk()) model::addDemoSections(session_->commands());
         session_->commands().clearHistory();
     }
 }
