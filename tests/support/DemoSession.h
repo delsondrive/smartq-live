@@ -46,6 +46,10 @@ struct DemoSession {
     }
 
     const model::SetlistDoc& setlist() const { return *session->model().setlist(session->setlistId()); }
+
+    // For view tests that change the documents while a show runs, to see the views follow (a song renamed, an entry gone):
+    // lets every command through in Show mode too, which the app itself never does (Session's guard; SessionTest tests it).
+    void allowEditsInShow() { session->commands().setGuard({}); }
 };
 
 }  // namespace sqlive::test

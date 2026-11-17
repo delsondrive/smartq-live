@@ -114,6 +114,7 @@ TEST_CASE("the show state says when the next song isn't ready", "[show]") {
 
 TEST_CASE("the main view draws the mockup's parts and survives extremes", "[show]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     sqlive::test::ScopedLook look;
     ui::MainView view(s);
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 12);  d.settle();
@@ -136,6 +137,7 @@ TEST_CASE("the main view draws the mockup's parts and survives extremes", "[show
 
 TEST_CASE("the show state's notes, texts and hints follow the setlist and the view", "[show]") {
     DemoSession d; auto& s = *d.session;
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     const auto& list = d.setlist();
     s.commands().run("setlist.setTransition", params({{"setlistId", list.id}, {"entryId", list.entries[0].id}, {"kind", "gap"}, {"seconds", 4.0}}));
     s.commands().run("setlist.setTransition", params({{"setlistId", list.id}, {"entryId", list.entries[1].id}, {"kind", "seamless"}}));
@@ -269,6 +271,7 @@ TEST_CASE("a click on a card chooses it as the next song, and the strip keeps th
 
 TEST_CASE("the main view with an empty setlist, and with a song of thirty parts", "[show]") {
     DemoSession d; auto& s = *d.session;
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     const auto thirty = addThirtyPartSong(d);
     s.enterShow();
     sqlive::test::ScopedLook look;
@@ -349,6 +352,7 @@ TEST_CASE("the shell shows the main view in Show mode", "[show]") {
 
 TEST_CASE("the played song is the one that last ended or was stopped, whatever the arrows choose", "[show]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     const auto isPlayed = [](const ShowState::After& a) { return a.kind == ShowState::After::Kind::Played; };
 
     // Nothing played yet: no played item, wherever the next song is.

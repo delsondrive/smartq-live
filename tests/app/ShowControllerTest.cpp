@@ -118,6 +118,7 @@ TEST_CASE("holding the right arrow during a song goes to the next song now; a ta
 }
 TEST_CASE("going to the next song now needs two taps or a hold, never one", "[keys]") {
     DemoSession d; auto& s = *d.session; s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(kPastCountIn);
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     app::ShowController c(s); std::vector<Action> seen; c.onAction = [&](Action a) { seen.push_back(a); };
     c.buttonDown(Action::GoToNextSongNow, 10.0, app::PedalKind::Tap);
     CHECK(seen.empty());                                           // one pedal tap does nothing
@@ -204,6 +205,7 @@ TEST_CASE("a song started by a number key forgets a Stop tap from before it", "[
 }
 TEST_CASE("no hold toward the next song fills in a count-in or while stopping", "[keys]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     REQUIRE(s.commands().run("controls.set", params({{"action", "goToNextSongNow"}, {"binding", binding('N')}})).ok);
     s.perform(Action::Start);  s.advanceWithoutDevice(4800);      // in the count-in
     REQUIRE(s.now().countIn);  REQUIRE_FALSE(s.now().inStep);

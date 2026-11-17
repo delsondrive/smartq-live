@@ -66,6 +66,7 @@ TEST_CASE("the stage view between songs is one clear instruction", "[stage]") {
 
 TEST_CASE("the stage view while playing is big and lays out at every size", "[stage]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     sqlive::test::ScopedLook look;
     ui::StageView view(s, nullptr);
     s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 12);  d.settle();
@@ -89,6 +90,7 @@ TEST_CASE("the stage view while playing is big and lays out at every size", "[st
 
 TEST_CASE("the stage view's title is 72 px at the mockup's size and scales with the window", "[stage]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     sqlive::test::ScopedLook look;
     ui::StageView view(s, nullptr);
     snapshot(view, 1280, 698);
@@ -182,6 +184,7 @@ TEST_CASE("holding Space to stop draws the ring around the beat lights", "[stage
 
 TEST_CASE("the stage view at the end of the set", "[stage]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     sqlive::test::ScopedLook look;
     ui::StageView view(s, nullptr);
     playToTheLastSong(d);
@@ -214,6 +217,7 @@ TEST_CASE("the stage view at the end of the set", "[stage]") {
 
 TEST_CASE("a stage view tick with nothing new lays nothing out again", "[stage]") {
     DemoSession d; auto& s = *d.session; s.enterShow();
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     sqlive::test::ScopedLook look;
     ui::StageView view(s, nullptr);
     view.setVisible(true);

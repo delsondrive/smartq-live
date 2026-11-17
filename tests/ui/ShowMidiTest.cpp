@@ -71,6 +71,7 @@ TEST_CASE("the chips sit where the map draws their bars, in the lane's order", "
 
 TEST_CASE("the sentences and hints name the learned keys, or Start's pedal", "[showmidi]") {
     DemoSession d; auto& s = *d.session;
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding(0, 1, 10, 64)}}));   // a pedal only
     s.commands().run("controls.set", params({{"action", "stop"}, {"binding", binding('S')}}));
     s.commands().run("controls.set", params({{"action", "nextSongLater"}, {"binding", binding('D')}}));
@@ -154,6 +155,7 @@ TEST_CASE("the stage view's key names Start's key", "[showmidi]") {
 
 TEST_CASE("the pedalboards sentence counts only changes that send a patch", "[showmidi]") {
     DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
     s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 5}, {"beat", 1}, {"messages", messages({cc(11, 90)})}}));
     s.enterShow();
@@ -200,6 +202,7 @@ TEST_CASE("a learned key in a hint is drawn as a key", "[showmidi]") {
 
 TEST_CASE("after a cut-off, the banner and the box name the band's keys and the pedalboards", "[showmidi]") {
     DemoSession d; auto& s = *d.session; app::AudioHost host(s);
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('Q')}}));
     s.commands().run("controls.set", params({{"action", "nextSongLater"}, {"binding", binding('D')}}));
     sqlive::test::ScopedLook look;
@@ -230,6 +233,7 @@ TEST_CASE("after a cut-off, the banner and the box name the band's keys and the 
 
 TEST_CASE("a tick with nothing changed doesn't work the box's words out again", "[showmidi]") {
     DemoSession d; auto& s = *d.session; app::AudioHost host(s);
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     sqlive::test::ScopedLook look;
     ui::AppShell shell(s, &host);  shell.setBounds(0, 0, 1280, 760);
     const auto ticks = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil(200); };   // six of the shell's ticks

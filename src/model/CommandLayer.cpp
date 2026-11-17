@@ -1,5 +1,7 @@
 #include "model/CommandLayer.h"
 
+#include <utility>
+
 namespace sqlive::model {
 
 CommandResult CommandResult::success(juce::var v, juce::String m) {
@@ -28,6 +30,8 @@ void CommandLayer::notify(const std::vector<BandModel::Change>& changes) {
 CommandResult CommandLayer::run(const juce::String& name, const juce::var& params, const juce::String& coalesceKey) {
     const auto it = handlers_.find(name);
     if (it == handlers_.end()) return CommandResult::failure("Unknown command: " + name);
+    if (guard_)
+        if (const auto why = guard_(name); why.isNotEmpty()) return CommandResult::failure(why);
 
     band_model_.beginChanges();
     CommandResult result;
@@ -67,8 +71,12 @@ bool CommandLayer::canRedo() const { return !redo_stack_.empty(); }
 juce::String CommandLayer::undoName() const { return undo_stack_.empty() ? juce::String() : undo_stack_.back().name; }
 juce::String CommandLayer::redoName() const { return redo_stack_.empty() ? juce::String() : redo_stack_.back().name; }
 
+void CommandLayer::setGuard(Guard guard) { guard_ = std::move(guard); }
+
 CommandResult CommandLayer::undo() {
     if (undo_stack_.empty()) return CommandResult::failure("Nothing to undo.");
+    if (guard_)
+        if (const auto why = guard_(undo_stack_.back().name); why.isNotEmpty()) return CommandResult::failure(why);
     Entry e = std::move(undo_stack_.back());
     undo_stack_.pop_back();
     apply(e.changes, false);
@@ -80,6 +88,8 @@ CommandResult CommandLayer::undo() {
 
 CommandResult CommandLayer::redo() {
     if (redo_stack_.empty()) return CommandResult::failure("Nothing to redo.");
+    if (guard_)
+        if (const auto why = guard_(redo_stack_.back().name); why.isNotEmpty()) return CommandResult::failure(why);
     Entry e = std::move(redo_stack_.back());
     redo_stack_.pop_back();
     apply(e.changes, true);

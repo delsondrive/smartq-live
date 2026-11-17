@@ -129,6 +129,7 @@ juce::String typeIdOf(const app::Session& s, const juce::String& name) {
 TEST_CASE("the tiles' colours come from the band's section types, worked out again only when those or the steps change",
           "[showsections]") {
     DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    d.allowEditsInShow();                                         // this test changes documents mid-show
     fourSections(s, song);
     d.settle();  s.enterShow();
     const auto first = makeShowState(s);

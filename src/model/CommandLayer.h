@@ -34,6 +34,12 @@ public:
     void clearHistory();
     void clearRedo();                                           // a step just undone that must never be redone
 
+    // The one guard on changing the band: asked before every run, undo and redo with the command's name (for an undo or a
+    // redo, the name of the step it takes back or makes again). A sentence it gives refuses it, plainly, and nothing
+    // changes. Session sets one that refuses every command while in Show mode, which never changes the band folder.
+    using Guard = std::function<juce::String(const juce::String& command)>;
+    void setGuard(Guard);
+
     std::function<void(const std::vector<DocKey>& changed)> onChanged;  // after a run, undo or redo that changed something
     // The run, undo or redo that changed something last: its command's name and how. Set before onChanged is called, so a
     // listener can tell an undo of a command from the command itself.
@@ -56,6 +62,7 @@ private:
     std::map<juce::String, Handler> handlers_;
     std::deque<Entry> undo_stack_, redo_stack_;
     Step last_step_;
+    Guard guard_;
 };
 
 }  // namespace sqlive::model

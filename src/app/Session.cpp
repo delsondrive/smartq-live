@@ -43,11 +43,16 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     model::registerMidiCommands(commands_);
     model::registerSectionCommands(commands_);
     OutsideChanges::registerReloadCommand(commands_);
-    // Going back to a snapshot (SnapshotStore::restore): every document at once. Show mode never changes the band folder.
-    commands_.registerCommand("snapshot.apply", [this](model::BandModel& m, const juce::var& params) {
-        if (mode_ == Mode::Show)
-            return model::CommandResult::failure("Show mode never changes the band folder. Go back to a snapshot after the show.");
+    // Going back to a snapshot (SnapshotStore::restore): every document at once.
+    commands_.registerCommand("snapshot.apply", [](model::BandModel& m, const juce::var& params) {
         return model::applyDocuments(m, params, "This snapshot couldn't be read, so nothing was changed.");
+    });
+    // Show mode never changes the band folder: the one guard, for every command, undo and redo. Tonight's levels are the
+    // session's own (Tonight), not commands, so they still move.
+    commands_.setGuard([this](const juce::String& command) -> juce::String {
+        if (mode_ != Mode::Show) return {};
+        if (command == "snapshot.apply") return "Show mode never changes the band folder. Go back to a snapshot after the show.";
+        return "Show mode never changes the band folder. Change it after the show.";
     });
     commands_.onChanged = [this](const std::vector<model::DocKey>& keys) {
         autosaver_.noteChanged(keys);

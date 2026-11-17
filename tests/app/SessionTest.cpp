@@ -320,3 +320,24 @@ TEST_CASE("playing a song in Edit mode from its start sends its first patch befo
     std::vector<engine::OutMidi> out; engine::OutMidi m; while (s.engine().popMidi(m)) out.push_back(m);
     REQUIRE(out.size() == 1);  CHECK(out[0].data[1] == 12);  CHECK(out[0].streamTime == base);
 }
+
+TEST_CASE("in Show mode every command, undo and redo is refused in a plain sentence, while tonight's levels still move", "[session]") {
+    DemoSession d; auto& s = *d.session;
+    const auto song = d.setlist().entries[0].songId;
+    REQUIRE(s.commands().run("song.setInfo", params({{"songId", song}, {"key", "E"}})).ok);
+    s.enterShow();
+    const auto refused = s.commands().run("song.setInfo", params({{"songId", song}, {"key", "F"}}));
+    CHECK_FALSE(refused.ok);
+    CHECK(refused.message == "Show mode never changes the band folder. Change it after the show.");
+    CHECK(s.model().song(song)->key == "E");
+    CHECK_FALSE(s.commands().undo().ok);
+    CHECK(s.model().song(song)->key == "E");
+    const auto back = s.commands().run("snapshot.apply", juce::var());
+    CHECK(back.message == "Show mode never changes the band folder. Go back to a snapshot after the show.");
+    const auto* band = &s.model().band();
+    s.setLevel({LevelTarget::Kind::BandClick, {}, {}, {}, {}}, band->clickDb + 3.0f, "show");   // the session's own: still heard
+    CHECK(s.hasTonightChanges());
+    REQUIRE(s.leaveShow());
+    CHECK(s.commands().run("song.setInfo", params({{"songId", song}, {"key", "F"}})).ok);   // after the show, as ever
+    CHECK(s.model().song(song)->key == "F");
+}

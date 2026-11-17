@@ -106,3 +106,22 @@ TEST_CASE("a listener can tell a command from its undo and its redo", "[commands
     CHECK(steps[1].how == CommandLayer::Step::How::Undo);
     CHECK(steps[2].how == CommandLayer::Step::How::Redo);
 }
+TEST_CASE("the guard refuses a command, an undo and a redo with its sentence, and nothing changes", "[commands]") {
+    BandModel m; m.editBand().name = "Old"; CommandLayer c(m); addRename(c);
+    REQUIRE(c.run("test.rename", params({{"name", "New"}})).ok);
+    REQUIRE(c.run("test.rename", params({{"name", "Newer"}})).ok);
+    REQUIRE(c.undo().ok);                                          // "New", with "Newer" to redo
+    juce::StringArray asked;
+    bool locked = true;
+    c.setGuard([&](const juce::String& command) { asked.add(command); return locked ? juce::String("Not now.") : juce::String(); });
+    int changes = 0;  c.onChanged = [&](const std::vector<DocKey>&) { ++changes; };
+    auto run = c.run("test.rename", params({{"name", "Other"}}));
+    CHECK_FALSE(run.ok);  CHECK(run.message == "Not now.");
+    CHECK_FALSE(c.undo().ok);  CHECK_FALSE(c.redo().ok);
+    CHECK(m.band().name == "New");  CHECK(changes == 0);
+    CHECK(c.canUndo());  CHECK(c.canRedo());                       // the history is as it was
+    CHECK(asked == juce::StringArray{"test.rename", "test.rename", "test.rename"});   // an undo or redo asks with its step's name
+    locked = false;
+    CHECK(c.run("test.rename", params({{"name", "Other"}})).ok);
+    CHECK(m.band().name == "Other");
+}
