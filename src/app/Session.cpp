@@ -376,7 +376,7 @@ void Session::enterShow() {
     if (mode_ == Mode::Show) return;
     // A song played on its own from an Edit page isn't part of the show: it stops before the show starts.
     if (playing_.active() && playing_.single) perform(Action::Stop);
-    stopVoice(false);                                            // Show mode never writes the band folder
+    stopVoice(false);                                            // and waited for: Show mode never writes the band folder
     mode_ = Mode::Show;
     writeShowMemory();
     flushNow();                                                  // what is waiting is written now, not left for the show
@@ -612,6 +612,7 @@ std::vector<model::ConflictCopy> Session::conflictCopies() const { return outsid
 void Session::pollFolder() {
     if (mode_ == Mode::Show) return;                             // a show goes on with what it started with
     if (outside_->poll()) changed();
+    cues_.lookAgain();                                           // a clip a bandmate replaced: the songs saying it are built again
 }
 
 void Session::flushForClose() {

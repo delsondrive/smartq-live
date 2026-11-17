@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 
 #include <juce_core/juce_core.h>
@@ -15,6 +16,7 @@ struct VoiceCommand {
     juce::String program;
     juce::StringArray arguments;
     juce::File textFile, wavFile;
+    const std::atomic<bool>* stop = nullptr;                      // the maker's stop flag: once true, a runner gives up at once
 };
 
 // The command that has the computer's own voice say `text` (already stripped by VoiceMaker::make) into a WAV file in
@@ -26,9 +28,11 @@ VoiceCommand voiceCommand(const juce::String& text, const juce::File& tempFolder
 // clips. Runs on whatever thread calls it.
 class VoiceMaker {
 public:
-    using Runner = std::function<bool(const VoiceCommand&)>;      // runs it and waits; true when it finished well
-    explicit VoiceMaker(Runner = {});                             // the default runs it with juce::ChildProcess, waiting up to 20 s
-    static Runner systemRunner();                                 // that default, for a caller that wraps it
+    using Runner = std::function<bool(const VoiceCommand&)>;      // runs it and waits; true when it finished well. One that
+                                                                  // can be stopped watches command.stop
+    // The default runner runs it with juce::ChildProcess, waiting up to 20 s, and kills it as soon as `stop` is true. Once
+    // `stop` is true (it outlives the maker; nullptr: never stopped), make() says no more and puts nothing more in place.
+    explicit VoiceMaker(Runner = {}, const std::atomic<bool>* stop = nullptr);
 
     // Says the text, kept to letters, digits, spaces and , . ' - and at most 80 characters, into wavTarget (its folder is
     // made). The voice is made in a temporary folder outside the band folder, deleted either way, and wavTarget is
@@ -44,6 +48,7 @@ public:
 
 private:
     Runner runner_;
+    const std::atomic<bool>* stop_ = nullptr;
 };
 
 }  // namespace sqlive::app

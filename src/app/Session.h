@@ -165,8 +165,9 @@ public:
     // outside the band folder that is moved in once whole; then, on the message thread, forgets them in the CueLibrary and
     // calls onDone. onProgress (0 to 1) comes on the message thread too. Fails at once in Show mode or while a voice is
     // already being made. evenIfPresent replaces the built-in clips already there (a bandmate's included): the page asks
-    // first. Entering Show mode stops it after the clip being made, which is then not put in place; closing the band stops it
-    // the same way and waits for that clip, and onDone is never called once the session has gone.
+    // first. Entering Show mode stops it and waits for its thread before the show begins: the voice being said is killed
+    // (the runner watches VoiceCommand::stop), nothing more is put in place, and onDone then says it stopped. Closing the band
+    // does the same, and onDone is never called once the session has gone.
     juce::Result makeVoice(bool evenIfPresent, std::function<void(double)> onProgress, std::function<void(juce::Result)> onDone);
     bool makingVoice() const;
     void setVoiceRunner(VoiceMaker::Runner);                     // tests: how the voice is made (default: the system's speech)
@@ -311,7 +312,7 @@ private:
     void forgetDeadCues(const engine::EngineStatus&);
     void noteSaveState();
     void changed();
-    void pollFolder();                                           // Edit mode: outside changes and conflict copies
+    void pollFolder();                                           // Edit mode: outside changes, conflict copies, cue clips
 
     model::BandDoc bandAsHeard() const;
     void restoreShow();                                          // from the show memory, when opening
@@ -323,7 +324,7 @@ private:
     // The voice being made (SessionVoice.cpp): its thread, what it may write, and its callbacks.
     struct VoiceJob;
     void finishVoice(const std::shared_ptr<VoiceJob>&, juce::Result);   // message thread, once the thread has finished
-    void stopVoice(bool wait);                                   // the clip being made is the last; wait: its thread is joined
+    void stopVoice(bool closing);                                // stops it and joins its thread; closing: onDone is dropped
     juce::String importAudio(const juce::File&, const juce::String& folderName);
 
     Settings& settings_;

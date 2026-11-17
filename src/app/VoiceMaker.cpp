@@ -12,6 +12,9 @@ namespace {
 
 constexpr int kMaxCharacters = 80;
 constexpr int kTimeoutMs = 20000;
+constexpr int kStopLookMs = 20;                                  // how often a running voice looks at the stop flag
+
+bool stopped(const std::atomic<bool>* stop) { return stop != nullptr && stop->load(); }
 
 // Only letters, digits, spaces and , . ' - are kept, at most kMaxCharacters of them.
 juce::String wordsOnly(const juce::String& text) {
@@ -28,9 +31,13 @@ bool runAndWait(const VoiceCommand& command) {
     args.addArray(command.arguments);
     juce::ChildProcess process;
     if (!process.start(args, 0)) return false;                     // 0: no output is read, so none can fill a pipe
-    if (!process.waitForProcessToFinish(kTimeoutMs)) {
-        process.kill();
-        return false;
+    // Waited for in short steps, so a stop (Show mode, the band closing) kills it at once rather than after 20 s.
+    const auto deadline = juce::Time::getMillisecondCounter() + static_cast<juce::uint32>(kTimeoutMs);
+    while (!process.waitForProcessToFinish(kStopLookMs)) {
+        if (stopped(command.stop) || juce::Time::getMillisecondCounter() >= deadline) {
+            process.kill();
+            return false;
+        }
     }
     return process.getExitCode() == 0;
 }
@@ -46,24 +53,26 @@ juce::Result placeVoice(const juce::File& voice, const juce::File& target) {
 
 }  // namespace
 
-VoiceMaker::VoiceMaker(Runner runner) : runner_(runner ? std::move(runner) : Runner(runAndWait)) {}
-
-VoiceMaker::Runner VoiceMaker::systemRunner() { return runAndWait; }
+VoiceMaker::VoiceMaker(Runner runner, const std::atomic<bool>* stop)
+    : runner_(runner ? std::move(runner) : Runner(runAndWait)), stop_(stop) {}
 
 juce::Result VoiceMaker::make(const juce::String& text, const juce::File& wavTarget) {
     const auto words = wordsOnly(text);
     if (words.isEmpty()) return juce::Result::fail("There are no words to say.");
+    if (stopped(stop_)) return juce::Result::fail("Making the voice was stopped.");
     // In the system's temporary folder, outside the band folder: the clip is moved in only once it is whole.
     const auto temp = juce::File::getSpecialLocation(juce::File::tempDirectory)
                           .getNonexistentChildFile("Smart Q Live voice", {}, false);
     if (temp.createDirectory().failed())
         return juce::Result::fail("The computer's voice couldn't be used: no temporary folder could be made.");
     const auto result = [&] {
-        const auto command = voiceCommand(words, temp);
+        auto command = voiceCommand(words, temp);
+        command.stop = stop_;
         if (!command.textFile.existsAsFile())
             return juce::Result::fail("The computer's voice couldn't be used: the words couldn't be written down.");
         if (!runner_(command) || !command.wavFile.existsAsFile() || command.wavFile.getSize() <= 0)
             return juce::Result::fail("The computer's voice couldn't say \"" + words + "\".");
+        if (stopped(stop_)) return juce::Result::fail("Making the voice was stopped.");   // said, but never put in place
         return placeVoice(command.wavFile, wavTarget);
     }();
     temp.deleteRecursively();

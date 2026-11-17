@@ -156,13 +156,23 @@ TEST_CASE("one output per role replaces the rig's outputs, as one undo step", "[
     CHECK(rig.outputs[0].name == "Keys");  CHECK(rig.outputs[0].firstChannel == 1);  CHECK(rig.outputs[0].stereo);
     CHECK(rig.outputs[8].name == "FX");  CHECK(rig.outputs[8].firstChannel == 17);
     CHECK(rig.outputs[9].name == "Click");  CHECK(rig.outputs[9].firstChannel == 19);  CHECK_FALSE(rig.outputs[9].stereo);
+    const juce::String cuesId = makeRoutingState(s, nullptr).rows[1].roleId;
     for (const auto& out : rig.outputs) {
         CHECK(out.label == model::OutputLabel::Monitor);
-        REQUIRE(out.mix.size() == 1);
-        CHECK(s.model().role(out.mix.begin()->first)->name == out.name);
+        CHECK(std::any_of(out.mix.begin(), out.mix.end(), [&](const auto& m) { return s.model().role(m.first)->name == out.name; }));
+        if (out.name == "Click") {                                // the click's output carries the cues too, at 0 dB
+            REQUIRE(out.mix.size() == 2);
+            REQUIRE(out.mix.count(cuesId) == 1);
+            CHECK(out.mix.at(cuesId) == 0.0f);
+        } else {
+            CHECK(out.mix.size() == 1);                           // and the cues go nowhere else
+            CHECK(out.mix.count(cuesId) == 0);
+        }
     }
     auto state = makeRoutingState(s, nullptr);
     CHECK(state.rows[2].cells[0].sent);  CHECK_FALSE(state.rows[2].cells[1].sent);
+    CHECK(state.rows[1].name == "Cues");  CHECK(state.rows[1].cells[9].sent);   // in the Click output only
+    CHECK(std::count_if(state.rows[1].cells.begin(), state.rows[1].cells.end(), [](const auto& c) { return c.sent; }) == 1);
     s.commands().undo();
     REQUIRE(s.model().rig(s.rigId())->outputs.size() == 1);
     CHECK(s.model().rig(s.rigId())->outputs[0].name == "Headphones");

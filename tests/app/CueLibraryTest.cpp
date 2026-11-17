@@ -11,6 +11,7 @@
 #include "app/VoiceMaker.h"
 #include "model/Defaults.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/Params.h"
 #include "tests/support/Signals.h"
 
 using namespace sqlive;
@@ -158,11 +159,12 @@ TEST_CASE("the built-in cues are made for each section type and the extra phrase
     CHECK(root.getChildFile("cues/built-in/Verse.wav").loadFileAsString() == "made");       // made again when asked to
     CHECK(said.size() == 8 + 4);
 }
-TEST_CASE("a cue clip a bandmate rewrote on disk is read again, at most once a second", "[cuelib]") {
+TEST_CASE("a cue clip a bandmate rewrote on disk is read again, at most once a check interval", "[cuelib]") {
     DemoSession d; auto root = d.session->folder().root();
     const auto file = root.getChildFile("cues/Watch me.wav");
     writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);
     app::CueLibrary lib(d.session->folder(), 48000.0);
+    lib.setCheckIntervalMs(60000.0);                               // as good as never, until the test says so
     int changes = 0;  lib.onChanged = [&] { ++changes; };
     lib.clip("cues/Watch me.wav");
     REQUIRE(lib.waitUntilIdle(5000));
@@ -170,10 +172,11 @@ TEST_CASE("a cue clip a bandmate rewrote on disk is read again, at most once a s
     REQUIRE(first != nullptr);
     CHECK(first->left.size() == 24000);
     writeSine(file, 48000.0, 1, 0.25, 440.0, 0.5f);               // rewritten: another size
-    CHECK(lib.clip("cues/Watch me.wav") == first);                 // looked at again only after a second
+    CHECK(lib.clip("cues/Watch me.wav") == first);                 // not looked at again within the interval
+    lib.lookAgain();
     REQUIRE(lib.waitUntilIdle(5000));
-    CHECK(lib.clip("cues/Watch me.wav") == first);
-    juce::Thread::sleep(1100);
+    CHECK(lib.clip("cues/Watch me.wav") == first);  CHECK(changes == 1);
+    lib.setCheckIntervalMs(0.0);                                   // the interval has passed
     const auto revision = lib.revision();
     CHECK(lib.clip("cues/Watch me.wav") == first);                 // the change is seen; the clip read before is given meanwhile
     REQUIRE(lib.waitUntilIdle(5000));
@@ -181,20 +184,45 @@ TEST_CASE("a cue clip a bandmate rewrote on disk is read again, at most once a s
     REQUIRE(second != nullptr);
     CHECK(second->left.size() == 12000);
     CHECK(lib.revision() > revision);  CHECK(changes == 2);
-    juce::Thread::sleep(1100);
     CHECK(lib.clip("cues/Watch me.wav") == second);                // unchanged: still the same clip
     REQUIRE(lib.waitUntilIdle(5000));
     CHECK(lib.clip("cues/Watch me.wav") == second);  CHECK(changes == 2);
-    file.deleteFile();                                             // a bandmate took it away
-    juce::Thread::sleep(1100);
-    lib.clip("cues/Watch me.wav");
+    file.deleteFile();                                             // a bandmate took it away: lookAgain sees it, unasked
+    lib.lookAgain();
     REQUIRE(lib.waitUntilIdle(5000));
     CHECK(lib.clip("cues/Watch me.wav") == nullptr);  CHECK(changes == 3);
     writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);                 // and put it back
-    juce::Thread::sleep(1100);
-    lib.clip("cues/Watch me.wav");
+    lib.lookAgain();
     REQUIRE(lib.waitUntilIdle(5000));
     REQUIRE(lib.clip("cues/Watch me.wav") != nullptr);
     CHECK(lib.clip("cues/Watch me.wav")->left.size() == 24000);
     CHECK(lib.clickSoundsInFolder().isEmpty());
+}
+TEST_CASE("a cue clip replaced on disk reaches the songs already prepared, in Edit mode only", "[cuelib][session]") {
+    DemoSession d; auto& s = *d.session;
+    const auto file = s.folder().root().getChildFile("cues/Count in.wav");
+    writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);
+    const auto song = d.setlist().entries[0].songId;               // the next song: kept prepared
+    REQUIRE(s.commands().run("cue.add", sqlive::test::params({{"songId", song}, {"bar", 3}, {"beat", 1.0},
+                                                               {"clip", "cues/Count in.wav"}})).ok);
+    d.settle();
+    REQUIRE(s.cues().clip("cues/Count in.wav") != nullptr);         // read, and in the prepared song
+    s.cues().setCheckIntervalMs(0.0);
+    s.advanceWithoutDevice(0);  d.settle();                         // a look at the folder with nothing changed: nothing built
+    const auto builds = s.preparedBuilds();
+    s.advanceWithoutDevice(0);  d.settle();
+    CHECK(s.preparedBuilds() == builds);
+
+    writeSine(file, 48000.0, 1, 0.25, 440.0, 0.5f);                // a bandmate's new take
+    s.advanceWithoutDevice(0);  d.settle();                         // the look at the folder sees it; it is read again
+    CHECK(s.preparedBuilds() > builds);                             // and the song saying it is built again
+    REQUIRE(s.cues().clip("cues/Count in.wav") != nullptr);
+    CHECK(s.cues().clip("cues/Count in.wav")->left.size() == 12000);
+
+    s.enterShow();
+    d.settle();
+    const auto inShow = s.preparedBuilds();
+    writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);                 // changed again, during the show
+    s.advanceWithoutDevice(0);  d.settle();
+    CHECK(s.preparedBuilds() == inShow);                            // a show goes on with what it started with
 }

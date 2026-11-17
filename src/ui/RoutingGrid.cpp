@@ -643,8 +643,9 @@ void RoutingGrid::setOutputLabel(const juce::String& outputId, model::OutputLabe
 }
 
 // Each part in stereo from output 1/2 on, then the click in mono after them, each an in-ear output with only its own role
-// in its mix. One key for every command, so one undo takes it all back. Refused before anything changes when the rig can't
-// have that many outputs; should a command still refuse, what was done is undone, so the rig is never left half-replaced.
+// in its mix, but for the click's, which carries the cues too: they never get an output of their own, and never none. One
+// key for every command, so one undo takes it all back. Refused before anything changes when the rig can't have that many
+// outputs; should a command still refuse, what was done is undone, so the rig is never left half-replaced.
 void RoutingGrid::oneOutputPerRole() {
     const auto* rig = session_.model().rig(session_.rigId());
     if (!editable() || rig == nullptr) return;
@@ -655,6 +656,9 @@ void RoutingGrid::oneOutputPerRole() {
     for (const bool parts : {true, false})
         for (const auto& role : session_.model().band().roles)
             if (role.kind == (parts ? model::RoleKind::Part : model::RoleKind::Click)) roles.push_back(role);
+    juce::StringArray cueRoles;                                   // copied: each command builds the documents again
+    for (const auto& role : session_.model().band().roles)
+        if (role.kind == model::RoleKind::Cues) cueRoles.add(role.id);
     if (roles.size() > static_cast<std::size_t>(engine::kMaxBuses)) {
         say("One output per role needs " + juce::String(static_cast<int>(roles.size())) + " outputs, and a rig can have up to "
             + juce::String(engine::kMaxBuses) + ".");
@@ -681,6 +685,12 @@ void RoutingGrid::oneOutputPerRole() {
             if (const auto r = step("mix.setLevel", jsonObject({{"rigId", rigId}, {"outputId", added.value}, {"roleId", role.id}, {"db", 0.0f}}));
                 !r.ok)
                 return r.message;
+            if (role.kind == model::RoleKind::Click)
+                for (const auto& cues : cueRoles)
+                    if (const auto r = step("mix.setLevel", jsonObject({{"rigId", rigId}, {"outputId", added.value}, {"roleId", cues},
+                                                                        {"db", 0.0f}}));
+                        !r.ok)
+                        return r.message;
             channel += stereo ? 2 : 1;
         }
         return juce::String();

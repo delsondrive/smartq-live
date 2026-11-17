@@ -3,13 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
-#include <set>
 
-#include "app/VoiceMaker.h"
-#include "model/Defaults.h"
 #include "model/FileNames.h"
 #include "model/JsonObject.h"
-#include "model/MeaningColours.h"
+#include "ui/CueVoiceRows.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/OutputLabelPill.h"
@@ -18,18 +15,17 @@
 namespace sqlive::ui {
 
 using model::jsonObject;
+using namespace cuevoice;
 
 namespace {
 
 // The mockup's CSS: .col (gap 12), .box (padding 10 12; the top one a row with a gap of 18), h4 (11 px bold, letter-spaced
 // 0.8, dim, 6 px under it), .val (a field, 6 px corners, padding 3 8, semibold, at least 80 wide, right-aligned), th
-// (11 px bold letter-spaced 0.6 in dim, padding 7 8, a hairline under it), td (padding 7 8, 13 px in mid, a faint line
-// under it), td.f (text, semibold), .pills span (11 px bold on the colour, 4 px corners, padding 1 6), .addl (12 px
-// semibold mint), .hint (12 px dim), the footer (padding 10 12, gap 16).
+// (11 px bold letter-spaced 0.6 in dim, padding 7 8, a hairline under it), .addl (12 px semibold mint), .hint (12 px dim),
+// the footer (padding 10 12, gap 16). The rows' measures are in CueVoiceRows.h.
 constexpr int kBoxPadX = 12, kBoxPadY = 10, kGroupGap = 18, kCaptionHeight = 15, kCaptionGap = 6, kControlHeight = 28;
 constexpr int kColumnGap = 12, kMessageHeight = 18, kButtonGap = 10, kValueMinWidth = 80, kValuePadX = 8;
-constexpr int kCellPadX = 8, kHeaderHeight = 30, kRowHeight = 36, kChoiceHeight = 24, kPlayWidth = 36;
-constexpr int kPillPadX = 6, kPillHeight = 16, kFooterHeight = 38, kFooterPadX = 12, kFooterGap = 16, kHintGap = 8;
+constexpr int kHeaderHeight = 30, kFooterHeight = 38, kFooterPadX = 12, kFooterGap = 16;
 constexpr int kMinColumnWidth = 560, kMinCueWidth = 200, kChoiceExtra = 34;   // a .dd: padding, the chevron and its gap
 constexpr int kTickHz = 20;
 constexpr double kMessageSeconds = 4.0, kRefreshEveryMs = 200.0, kBetweenClipsSeconds = 0.3;
@@ -38,41 +34,13 @@ constexpr int kLoadTicks = 40;                                    // ticks a cli
 const juce::String kVoice = utf8("Built-in \xc2\xb7 this computer's voice");
 const juce::String kCouldNotMake = "This computer couldn't make the voice. You can still record your own clips.";
 const juce::String kNotWhilePlaying = "Cues can only be heard while no song is playing.";
-const juce::String kBuiltIn = "cues/built-in/";
-const juce::String kNotMadeYet = "not made yet", kFileMissing = "file missing";
-const juce::String kPlay = utf8("\xe2\x96\xb6");                  // ▶
 const juce::String kAddType = "+ Add a section type", kImport = "+ Import a recording";
-const juce::StringArray kLeads{"2 beats before", "1 bar before", "2 bars before"};
+const juce::StringArray kLeads{"2 beats before", "1 bar before", "2 bars before"};   // as makeCueVoiceState says them
 const juce::StringArray kLeadNames{"twoBeats", "oneBar", "twoBars"};
 
 juce::Font captionFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
 juce::Font headFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.6f); }
-juce::Font bodyFont() { return theme::font(theme::sizeBody); }
-juce::Font nameFont() { return theme::font(theme::sizeBody, true); }
-juce::Font hintFont() { return theme::font(theme::sizeSmall); }
 juce::Font linkFont() { return theme::font(theme::sizeSmall, true); }
-juce::Font pillFont() { return theme::font(theme::sizeCaption, true); }
-
-juce::String quoted(const juce::String& words) { return utf8("\xe2\x80\x9c") + words + utf8("\xe2\x80\x9d"); }
-
-// A clip's name: its file's, without the folder or the extension.
-juce::String stemOf(const juce::String& path) {
-    const auto name = path.fromLastOccurrenceOf("/", false, false);
-    return name.containsChar('.') ? name.upToLastOccurrenceOf(".", false, false) : name;
-}
-
-// What a clip says, as the CUE column reads: "“Chorus”" for a built-in one, "Your recording · “Solo, Jeff”", "No cue".
-juce::String cueText(const juce::String& clip) {
-    if (clip.isEmpty()) return "No cue";
-    if (clip.startsWith(kBuiltIn)) return quoted(stemOf(clip));
-    return "Your recording" + kDot + quoted(stemOf(clip));
-}
-
-juce::String builtInOf(const juce::String& name) { return kBuiltIn + name + ".wav"; }
-
-bool onDisk(const app::Session& session, const juce::String& clip) {
-    return clip.isNotEmpty() && model::isPathInsideFolder(clip) && session.folder().root().getChildFile(clip).existsAsFile();
-}
 
 // HEARD IN as drawn: "In-ears mixes only" as the In-ears pill and "mixes only"; anything else as words.
 int heardWidth(const juce::String& heardIn) {
@@ -82,251 +50,6 @@ int heardWidth(const juce::String& heardIn) {
 }
 
 }  // namespace
-
-// ---- The state ---------------------------------------------------------------------------------------------------------
-
-CueVoiceState makeCueVoiceState(const app::Session& session) {
-    CueVoiceState state;
-    const auto& band = session.model().band();
-    state.leadIndex = band.cueLead == model::CueLead::TwoBeats ? 0 : band.cueLead == model::CueLead::TwoBars ? 2 : 1;
-    state.lead = kLeads[state.leadIndex];
-    const auto level = session.level({app::LevelTarget::Kind::BandCues, {}, {}, {}, {}});
-    state.level = formatLevelDb(level.value_or(band.cuesDb));
-
-    std::set<juce::String> cueRoles;
-    for (const auto& role : band.roles)
-        if (role.kind == model::RoleKind::Cues) cueRoles.insert(role.id);
-    bool heard = false;
-    for (const auto& out : session.rigAsHeard().outputs)
-        if (out.label == model::OutputLabel::Monitor)
-            for (const auto& id : cueRoles) heard = heard || out.mix.count(id) > 0;
-    state.heardIn = heard ? "In-ears mixes only" : "No output yet";
-
-    std::set<juce::String> defaults;
-    for (const auto& type : model::defaultSectionTypes()) defaults.insert(type.id);
-    std::set<juce::String> used;
-    bool made = true;
-    for (const auto& type : band.sectionTypes) {
-        CueVoiceState::Row row;
-        row.typeId = type.id;
-        row.name = type.name;
-        row.cue = cueText(type.cueClip);
-        row.colour = theme::sectionColour(band, type.id);
-        row.builtIn = defaults.count(type.id) > 0;
-        row.hasClip = type.cueClip.isNotEmpty();
-        row.clipMissing = row.hasClip && !onDisk(session, type.cueClip);
-        row.clip = type.cueClip;
-        if (type.cueClip.startsWith(kBuiltIn) && row.clipMissing) made = false;
-        if (type.cueClip == builtInOf(type.name) && !row.clipMissing) state.madeBuiltIns.addIfNotAlreadyThere(type.name);
-        used.insert(type.cueClip);
-        state.rows.push_back(std::move(row));
-    }
-    for (const auto& phrase : app::VoiceMaker::extraPhrases()) {
-        state.otherClips.add(quoted(phrase));
-        if (onDisk(session, builtInOf(phrase))) state.madeBuiltIns.addIfNotAlreadyThere(phrase);
-        else made = false;
-        used.insert(builtInOf(phrase));
-    }
-    state.voiceMade = made;
-    state.clips = session.cues().clipsInFolder();
-    for (const auto& clip : state.clips)
-        if (!clip.startsWith(kBuiltIn) && used.count(clip) == 0) state.otherClips.add(quoted(stemOf(clip)));
-    return state;
-}
-
-CueChoice makeCueChoice(const CueVoiceState& state, const CueVoiceState::Row& row) {
-    CueChoice choice;
-    const auto add = [&](const juce::String& clip) {
-        if (clip.isEmpty() || choice.clips.contains(clip)) return;
-        choice.items.add(cueText(clip));
-        choice.clips.add(clip);
-    };
-    if (const auto own = builtInOf(row.name); model::isPathInsideFolder(own)) add(own);
-    for (const auto& clip : state.clips) add(clip);
-    add(row.clip);                                                // a missing one: still what the type says
-    choice.importItem = choice.items.size();
-    choice.items.add("Import a recording" + kEllipsis);
-    choice.clips.add({});
-    choice.noCueItem = choice.items.size();
-    choice.items.add("No cue");
-    choice.clips.add({});
-    choice.selected = row.clip.isEmpty() ? choice.noCueItem : choice.clips.indexOf(row.clip);
-    return choice;
-}
-
-const std::vector<std::pair<juce::String, juce::Colour>>& sectionTypeColours() {
-    // The nine the band starts with, then four more from the part colours; none of them a meaning colour.
-    static const std::vector<std::pair<juce::String, juce::Colour>> colours{
-        {"Indigo", juce::Colour(0xff8491ff)}, {"Blue", juce::Colour(0xff6ea8ff)},    {"Cyan", juce::Colour(0xff58d3e8)},
-        {"Gold", juce::Colour(0xffffc163)},   {"Lilac", juce::Colour(0xffb69dff)},   {"Pink", juce::Colour(0xffff8fd2)},
-        {"Green", juce::Colour(0xff9fd8a0)},  {"Yellow", juce::Colour(0xffe9d568)},  {"Grey", juce::Colour(0xffa79fb0)},
-        {"Rose", juce::Colour(0xffe889c8)},   {"Violet", juce::Colour(0xffe070ff)},  {"Teal", juce::Colour(0xff4fcabd)},
-        {"Sky", juce::Colour(0xff6cc8ff)}};
-    return colours;
-}
-
-// ---- The rows ----------------------------------------------------------------------------------------------------------
-
-// The table's rows, which scroll when there are many: each type's name, its colour pill, its CUE choice (a child) with
-// "not made yet" after a missing clip, and ▶.
-class CueVoicePage::Rows : public juce::Component {
-public:
-    explicit Rows(CueVoicePage& page) : page_(page) {}
-
-    void update() {
-        const auto& rows = page_.state_.rows;
-        while (choices_.size() > rows.size()) {
-            choices_.pop_back();
-            shown_.pop_back();
-        }
-        while (choices_.size() < rows.size()) {
-            const int index = static_cast<int>(choices_.size());
-            auto choice = std::make_unique<Choice>();
-            choice->onChange = [this, index](int item) { page_.chooseCue(index, item); };
-            addAndMakeVisible(*choice);
-            choices_.push_back(std::move(choice));
-            shown_.emplace_back();
-        }
-        const bool edit = page_.editable();
-        for (std::size_t i = 0; i < rows.size(); ++i) {
-            auto next = makeCueChoice(page_.state_, rows[i]);
-            auto& choice = *choices_[i];
-            if (!(next == shown_[i]) || choice.items() != next.items) choice.setItems(next.items, next.selected);
-            else choice.setSelected(next.selected);
-            shown_[i] = std::move(next);
-            choice.setNeedsAttention(rows[i].clipMissing);
-            choice.setEnabled(edit);
-        }
-        layout();
-        repaint();
-    }
-
-    void layout() {
-        setSize(getWidth(), static_cast<int>(page_.state_.rows.size()) * kRowHeight);
-        const int x = page_.name_width_ + page_.colour_width_ + kCellPadX;
-        for (std::size_t i = 0; i < choices_.size(); ++i) {
-            const auto& row = page_.state_.rows[i];
-            const int room = page_.cue_width_ - 2 * kCellPadX - (row.clipMissing ? hintWidth(row) + kHintGap : 0);
-            const int w = std::clamp(choices_[i]->idealWidth(), std::min(120, room), std::max(0, room));
-            choices_[i]->setBounds(x, static_cast<int>(i) * kRowHeight + (kRowHeight - kChoiceHeight) / 2, w, kChoiceHeight);
-        }
-    }
-
-    void resized() override { layout(); }
-
-    const Choice* choice(int row) const {
-        return juce::isPositiveAndBelow(row, static_cast<int>(choices_.size())) ? choices_[static_cast<std::size_t>(row)].get() : nullptr;
-    }
-
-    void paint(juce::Graphics& g) override {
-        const auto& rows = page_.state_.rows;
-        for (std::size_t i = 0; i < rows.size(); ++i) {
-            const auto& row = rows[i];
-            const auto area = juce::Rectangle<int>(0, static_cast<int>(i) * kRowHeight, getWidth(), kRowHeight);
-            g.setColour(theme::rowLine);
-            g.fillRect(area.withTop(area.getBottom() - 1));
-
-            // SECTION TYPE: the name, semibold; "· yours" after a type the band added.
-            auto name = area.withWidth(page_.name_width_).reduced(kCellPadX, 0);
-            const float nameW = std::min(widthOf(nameFont(), row.name), static_cast<float>(name.getWidth()));
-            g.setColour(theme::text);
-            g.setFont(nameFont());
-            g.drawText(shorten(row.name, nameFont(), nameW + 1.0f), name.withWidth(juce::roundToInt(nameW) + 1),
-                       juce::Justification::centredLeft, false);
-            if (!row.builtIn) {
-                const auto yours = name.withTrimmedLeft(juce::roundToInt(nameW) + 4);
-                g.setColour(theme::dim);
-                g.setFont(hintFont());
-                g.drawText(shorten(kMiddleDot + " yours", hintFont(), static_cast<float>(yours.getWidth())), yours,
-                           juce::Justification::centredLeft, false);
-            }
-
-            // COLOUR: the type's pill.
-            const auto pill = pillArea(static_cast<int>(i)).toFloat();
-            g.setColour(row.colour);
-            g.fillRoundedRectangle(pill, 4.0f);
-            g.setColour(theme::onAccent);
-            g.setFont(pillFont());
-            const auto words = shorten(row.name, pillFont(), pill.getWidth() - 2.0f * kPillPadX);
-            g.drawText(words, pill.reduced(static_cast<float>(kPillPadX), 0.0f),
-                       juce::Justification::centred, false);
-
-            // CUE: after a missing clip, why it is in caution.
-            if (row.clipMissing) {
-                const auto* c = choice(static_cast<int>(i));
-                const int x = c != nullptr ? c->getRight() + kHintGap : page_.name_width_ + page_.colour_width_ + kCellPadX;
-                const int right = page_.name_width_ + page_.colour_width_ + page_.cue_width_ - kCellPadX;
-                g.setColour(theme::caution);
-                g.setFont(hintFont());
-                g.drawText(shorten(hintOf(row), hintFont(), static_cast<float>(right - x)), x, area.getY(), std::max(0, right - x),
-                           kRowHeight, juce::Justification::centredLeft, false);
-            }
-
-            // ▶: to hear it, when there is a clip on disk.
-            if (row.hasClip) {
-                g.setColour(row.clipMissing ? theme::dim.withAlpha(0.4f) : hovered_ == static_cast<int>(i) ? theme::text : theme::mid);
-                g.setFont(bodyFont());
-                g.drawText(kPlay, playArea(static_cast<int>(i)), juce::Justification::centred, false);
-            }
-        }
-    }
-
-    void mouseDown(const juce::MouseEvent& e) override {
-        const int i = e.y / kRowHeight;
-        if (!juce::isPositiveAndBelow(i, static_cast<int>(page_.state_.rows.size()))) return;
-        const auto& row = page_.state_.rows[static_cast<std::size_t>(i)];
-        if (playArea(i).contains(e.getPosition())) {
-            page_.hear(i);
-        } else if (pillArea(i).expanded(2).contains(e.getPosition())) {
-            page_.colourMenu(i);
-        } else if (e.x < page_.name_width_ && page_.editable()) {
-            askUserText(page_, "Rename the section type", row.name, "Rename",
-                        [safe = juce::Component::SafePointer<CueVoicePage>(&page_), typeId = row.typeId](const juce::String& name) {
-                            if (safe == nullptr) return;
-                            for (int r = 0; r < static_cast<int>(safe->state_.rows.size()); ++r)
-                                if (safe->state_.rows[static_cast<std::size_t>(r)].typeId == typeId) safe->renameType(r, name);
-                        });
-        }
-    }
-
-    void mouseMove(const juce::MouseEvent& e) override {
-        const int i = e.y / kRowHeight;
-        const bool inRow = juce::isPositiveAndBelow(i, static_cast<int>(page_.state_.rows.size()));
-        const bool play = inRow && page_.state_.rows[static_cast<std::size_t>(i)].hasClip && playArea(i).contains(e.getPosition());
-        const bool click = inRow && (play || pillArea(i).expanded(2).contains(e.getPosition())
-                                     || (e.x < page_.name_width_ && page_.editable()));
-        setMouseCursor(click ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
-        const int hovered = play ? i : -1;
-        if (hovered != hovered_) {
-            hovered_ = hovered;
-            repaint();
-        }
-    }
-
-    void mouseExit(const juce::MouseEvent&) override {
-        if (hovered_ < 0) return;
-        hovered_ = -1;
-        repaint();
-    }
-
-    static juce::String hintOf(const CueVoiceState::Row& row) { return row.clip.startsWith(kBuiltIn) ? kNotMadeYet : kFileMissing; }
-    static int hintWidth(const CueVoiceState::Row& row) { return widthInPixels(hintFont(), hintOf(row)); }
-
-private:
-    juce::Rectangle<int> pillArea(int i) const {
-        const auto& row = page_.state_.rows[static_cast<std::size_t>(i)];
-        const int w = std::min(page_.colour_width_ - 2 * kCellPadX, widthInPixels(pillFont(), row.name) + 2 * kPillPadX);
-        return {page_.name_width_ + kCellPadX, i * kRowHeight + (kRowHeight - kPillHeight) / 2, std::max(0, w), kPillHeight};
-    }
-    juce::Rectangle<int> playArea(int i) const {
-        return {page_.name_width_ + page_.colour_width_ + page_.cue_width_, i * kRowHeight, kPlayWidth, kRowHeight};
-    }
-
-    CueVoicePage& page_;
-    std::vector<std::unique_ptr<Choice>> choices_;
-    std::vector<CueChoice> shown_;
-    int hovered_ = -1;
-};
 
 // ---- The page ----------------------------------------------------------------------------------------------------------
 
@@ -546,7 +269,7 @@ void CueVoicePage::hear(int index) {
     const auto* r = row(index);
     if (r == nullptr || !r->hasClip) return;
     if (r->clipMissing) {
-        say(r->clip.startsWith(kBuiltIn) ? "This cue hasn't been made yet: click " + makeButtonText() + "."
+        say(isBuiltInClip(r->clip) ? "This cue hasn't been made yet: click " + makeButtonText() + "."
                                          : "This recording isn't in the band folder on this computer.",
             true);
         return;
@@ -636,7 +359,7 @@ void CueVoicePage::importRecording(const juce::File& file, const juce::String& t
 void CueVoicePage::askTypeFor(const juce::String& path) {
     if (!isShowing()) return;
     juce::PopupMenu menu;
-    menu.addSectionHeader("Use " + quoted(stemOf(path)) + " as the cue for");
+    menu.addSectionHeader("Use " + quoted(clipName(path)) + " as the cue for");
     for (int i = 0; i < static_cast<int>(state_.rows.size()); ++i) menu.addItem(i + 1, state_.rows[static_cast<std::size_t>(i)].name);
     menu.addSeparator();
     menu.addItem(-1, "None yet");
@@ -657,7 +380,7 @@ void CueVoicePage::renameType(int index, const juce::String& name) {
     const juce::var holder(params);
     params->setProperty("typeId", typeId);
     params->setProperty("name", name.trim());
-    if (const auto renamed = builtInOf(name.trim()); clip == builtInOf(oldName) && model::isPathInsideFolder(renamed))
+    if (const auto renamed = builtInClip(name.trim()); clip == builtInClip(oldName) && model::isPathInsideFolder(renamed))
         params->setProperty("cueClip", renamed);
     run("sectionType.set", holder);
 }
@@ -676,7 +399,7 @@ void CueVoicePage::addType(const juce::String& name) {
         say(added.message, true);
         return;
     }
-    if (const auto clip = builtInOf(name.trim()); model::isPathInsideFolder(clip))
+    if (const auto clip = builtInClip(name.trim()); model::isPathInsideFolder(clip))
         run("sectionType.set", jsonObject({{"typeId", added.value.toString()}, {"cueClip", clip}}), key);
     else
         refresh(true);

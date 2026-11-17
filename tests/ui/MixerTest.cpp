@@ -105,7 +105,7 @@ TEST_CASE("a mixer with thirty strips still lays out", "[mixer]") {
     CHECK(childrenInside(page));
     auto& row = page.panel().viewport();
     REQUIRE(row.getViewedComponent() != nullptr);
-    CHECK(row.getViewedComponent()->getWidth() >= 34 * 56);      // strips keep a minimum width of 56 px
+    CHECK(row.getViewedComponent()->getWidth() >= 35 * 56);      // strips keep a minimum width of 56 px
     CHECK(row.getViewedComponent()->getWidth() > row.getViewWidth());   // and the row scrolls sideways
 }
 

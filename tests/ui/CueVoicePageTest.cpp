@@ -35,9 +35,19 @@ juce::MouseEvent eventOn(juce::Component& component, juce::Point<float> at) {
                             0.0f, 0.0f, 0.0f, 0.0f, &component, &component, now, at, now, 1, false);
 }
 
-// Until the session has finished making the voice (and called onDone), at most 10 s.
+// Until the session has finished making the voice (and called onDone): fails, rather than hangs, after 10 s.
 void waitUntilMade(app::Session& s) {
-    for (int i = 0; i < 500 && s.makingVoice(); ++i) pumpFor(20);
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+    while (s.makingVoice() && juce::Time::getMillisecondCounterHiRes() < deadline) pumpFor(20);
+    REQUIRE_FALSE(s.makingVoice());
+}
+
+// Until the condition holds, on any thread's say: fails, rather than hangs, after 10 s.
+template <typename Condition>
+void waitFor(Condition condition) {
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+    while (!condition() && juce::Time::getMillisecondCounterHiRes() < deadline) juce::Thread::sleep(2);
+    REQUIRE(condition());
 }
 
 // A runner that never starts PowerShell: it writes something where the voice would be, and counts.
@@ -47,6 +57,23 @@ app::VoiceMaker::Runner countingRunner(std::shared_ptr<std::atomic<int>> ran, in
         ++*ran;
         return c.wavFile.replaceWithText("not really a wav");
     };
+}
+
+// Says the first two clips at once, then hangs on the third until it is stopped, as a voice that takes its time would.
+app::VoiceMaker::Runner hangingRunner(std::shared_ptr<std::atomic<int>> ran) {
+    return [ran](const app::VoiceCommand& c) {
+        if (++*ran >= 3)
+            while (c.stop == nullptr || !c.stop->load()) juce::Thread::sleep(1);   // a deadline-free hang: only a stop ends it
+        return c.wavFile.replaceWithText("not really a wav");
+    };
+}
+
+juce::StringArray builtInFiles(const juce::File& root) {
+    juce::StringArray names;
+    for (const auto& file : root.getChildFile("cues/built-in").findChildFiles(juce::File::findFiles, false))
+        names.add(file.getFileName());
+    names.sort(true);
+    return names;
 }
 
 int rowOf(const CueVoiceState& state, const juce::String& typeId) {
@@ -193,31 +220,39 @@ TEST_CASE("a voice this computer can't make is said plainly", "[cuevoice]") {
 TEST_CASE("entering Show mode stops the voice being made", "[cuevoice]") {
     DemoSession d; auto& s = *d.session;
     auto ran = std::make_shared<std::atomic<int>>(0);
-    s.setVoiceRunner(countingRunner(ran, 40));
+    s.setVoiceRunner(hangingRunner(ran));
     auto result = std::make_shared<juce::Result>(juce::Result::ok());
     auto done = std::make_shared<bool>(false);
     REQUIRE(s.makeVoice(false, {}, [result, done](juce::Result r) { *result = r; *done = true; }).wasOk());
     CHECK(s.makeVoice(false, {}, {}).failed());                   // one at a time
-    while (*ran < 2) juce::Thread::sleep(5);
-    s.enterShow();
-    for (int i = 0; i < 500 && !*done; ++i) pumpFor(20);
+    waitFor([&] { return ran->load() >= 3; });                    // two made; the third being said
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+    s.enterShow();                                                // stops it, and waits for it
+    CHECK(juce::Time::getMillisecondCounterHiRes() - started < 1000.0);   // a moment, not a voice's 20 s
+    const auto atShow = builtInFiles(s.folder().root());
+    CHECK(atShow.size() == 2);
+    waitUntilMade(s);                                             // onDone, through the message loop
     REQUIRE(*done);
     CHECK(result->failed());
     CHECK(result->getErrorMessage() == "Show mode never changes the band folder. Make the voice after the show.");
-    CHECK(*ran < 13);
-    CHECK_FALSE(s.makingVoice());
+    CHECK(ran->load() == 3);                                      // nothing more was said
+    CHECK(builtInFiles(s.folder().root()) == atShow);             // and nothing landed once the show began
 }
 
 TEST_CASE("closing the band while the voice is being made stops it safely", "[cuevoice]") {
     DemoSession d;
     auto ran = std::make_shared<std::atomic<int>>(0);
-    d.session->setVoiceRunner(countingRunner(ran, 40));
+    d.session->setVoiceRunner(hangingRunner(ran));
     auto progressed = std::make_shared<int>(0);
     auto done = std::make_shared<bool>(false);
     REQUIRE(d.session->makeVoice(false, [progressed](double) { ++*progressed; }, [done](juce::Result) { *done = true; }).wasOk());
-    while (*ran < 2) juce::Thread::sleep(5);
-    const auto builtIn = d.session->folder().root().getChildFile("cues/built-in");
-    d.session.reset();                                            // the band closes: it waits for the clip being made, at most
+    waitFor([&] { return ran->load() >= 3; });
+    const auto root = d.session->folder().root();
+    const auto builtIn = root.getChildFile("cues/built-in");
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+    d.session.reset();                                            // the band closes: the voice being said is stopped at once
+    CHECK(juce::Time::getMillisecondCounterHiRes() - started < 2000.0);
+    CHECK(builtInFiles(root).size() == 2);
     const auto ranAtClose = ran->load();
     const int progressAtClose = *progressed;
     pumpFor(300);                                                 // what the job posted reaches no session

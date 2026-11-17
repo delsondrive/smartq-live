@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -10,12 +11,9 @@
 
 namespace sqlive::app {
 
-namespace {
-constexpr double kCheckEveryMs = 1000.0;                         // how often clip() looks at a file again, at most
-}  // namespace
-
 CueLibrary::CueLibrary(const model::BandFolder& folder, double sampleRate)
-    : juce::Thread("Smart Q Live cues"), root_(folder.root()), sampleRate_(sampleRate) {
+    : juce::Thread("Smart Q Live cues"), root_(folder.root()), sampleRate_(sampleRate),
+      lastLookMs_(juce::Time::getMillisecondCounterHiRes()) {
     startThread();
 }
 
@@ -61,7 +59,7 @@ std::shared_ptr<const engine::PartAudio> CueLibrary::clip(const juce::String& pa
         if (const auto found = entries_.find(key); found != entries_.end()) {
             auto& entry = found->second;
             const bool settled = entry.state == State::Loaded || entry.state == State::Failed;
-            if (!settled || now - entry.checkedMs < kCheckEveryMs) return entry.clip;
+            if (!settled || now - entry.checkedMs < checkEveryMs_) return entry.clip;
             entry.checkedMs = now;
             seen = entry.stamp;
         } else {
@@ -80,19 +78,54 @@ std::shared_ptr<const engine::PartAudio> CueLibrary::clip(const juce::String& pa
     bool queued = false;
     {
         const juce::ScopedLock sl(lock_);
+        queued = requeueIfChanged(key, *seen, stamp);
         const auto found = entries_.find(key);
         if (found == entries_.end()) return nullptr;               // forgotten meanwhile
-        auto& entry = found->second;
-        const bool settled = entry.state == State::Loaded || entry.state == State::Failed;
-        if (settled && entry.stamp == *seen && !(stamp == *seen)) {
-            entry.state = State::Queued;                           // read again; the clip read before is given until then
-            queue_.push_back(key);
-            queued = true;
-        }
-        clip = entry.clip;
+        clip = found->second.clip;                                 // read again or not, the clip read before is given
     }
     if (queued) notify();
     return clip;
+}
+
+bool CueLibrary::requeueIfChanged(const juce::String& key, const Stamp& seen, const Stamp& now) {
+    const auto found = entries_.find(key);
+    if (found == entries_.end()) return false;
+    auto& entry = found->second;
+    const bool settled = entry.state == State::Loaded || entry.state == State::Failed;
+    if (!settled || !(entry.stamp == seen) || now == seen) return false;   // being read, read meanwhile, or unchanged
+    entry.state = State::Queued;
+    queue_.push_back(key);
+    return true;
+}
+
+void CueLibrary::lookAgain() {
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    std::vector<std::pair<juce::String, Stamp>> settled;
+    {
+        const juce::ScopedLock sl(lock_);
+        if (now - lastLookMs_ < checkEveryMs_) return;
+        lastLookMs_ = now;
+        for (auto& [key, entry] : entries_)
+            if (entry.state == State::Loaded || entry.state == State::Failed) {
+                entry.checkedMs = now;
+                settled.emplace_back(key, entry.stamp);
+            }
+    }
+    // The files' dates and sizes, read without the lock: the loader never waits on a look at the disk.
+    std::vector<Stamp> seenNow;
+    for (const auto& [key, stamp] : settled) seenNow.push_back(stampOf(juce::File(key)));
+    bool queued = false;
+    {
+        const juce::ScopedLock sl(lock_);
+        for (std::size_t i = 0; i < settled.size(); ++i)
+            queued = requeueIfChanged(settled[i].first, settled[i].second, seenNow[i]) || queued;
+    }
+    if (queued) notify();
+}
+
+void CueLibrary::setCheckIntervalMs(double ms) {
+    const juce::ScopedLock sl(lock_);
+    checkEveryMs_ = ms;
 }
 
 void CueLibrary::forget(const juce::String& pathInBandFolder) {

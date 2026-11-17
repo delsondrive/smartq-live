@@ -24,11 +24,15 @@ public:
     // The clip, mono at the library's rate, once loaded. nullptr until then (a path not asked for before is queued for the
     // loader), and when the file is missing, unreadable, outside the band folder, or not on this computer yet
     // (model::isOnThisComputer: it is asked for again later).
-    // A file a bandmate changed is read again: at most once a second, this looks at the date and size of the file a clip
-    // was read from (or found missing or unreadable), and one that changed is loaded again in the background. Until it
-    // arrives the clip read before is still given; one that can no longer be read goes (both bump revision()).
+    // A file a bandmate changed is read again: at most once a check interval (a second), this looks at the date and size of
+    // the file a clip was read from (or found missing or unreadable), and one that changed is loaded again in the background.
+    // Until it arrives the clip read before is still given; one that can no longer be read goes (both bump revision()).
     std::shared_ptr<const engine::PartAudio> clip(const juce::String& pathInBandFolder);
     void forget(const juce::String& pathInBandFolder);            // loaded again when next asked for
+    // The same look at the files of every clip read (or found missing or unreadable), at most once a check interval: what
+    // reaches a song already prepared, which asks for none of its clips again. Session::pollFolder calls it, in Edit mode.
+    void lookAgain();
+    void setCheckIntervalMs(double);                              // tests: how often a file is looked at again (1000 ms)
     juce::StringArray clipsInFolder() const;                      // every audio file under cues/, as paths inside the band folder
     juce::StringArray clickSoundsInFolder() const;                // every audio file under clicks/, as paths inside the band folder
     std::uint64_t revision() const;                               // goes up whenever a clip arrives, goes or is forgotten
@@ -52,6 +56,7 @@ private:
     };
 
     static Stamp stampOf(const juce::File&);
+    bool requeueIfChanged(const juce::String& key, const Stamp& seen, const Stamp& now);   // under the lock
     void run() override;
     void handleAsyncUpdate() override;
     void deliverArrivals();
@@ -67,6 +72,8 @@ private:
     std::map<juce::String, Entry> entries_;                      // by full path
     std::deque<juce::String> queue_;                             // full paths, in the order asked for
     std::atomic<std::uint64_t> revision_{0};
+    double checkEveryMs_ = 1000.0;
+    double lastLookMs_ = 0.0;                                    // lookAgain's last look; the first comes an interval in
     juce::WaitableEvent stateChanged_;
 };
 

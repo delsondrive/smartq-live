@@ -56,11 +56,10 @@ juce::Result Session::makeVoice(bool evenIfPresent, std::function<void(double)> 
     job->paths = builtInPaths(model_.band());
     voice_job_ = job;
 
-    auto runner = voice_runner_ ? voice_runner_ : VoiceMaker::systemRunner();
     job->thread = std::thread([root = folder_.root(), band = model_.band(), evenIfPresent, stop = job->stop,
-                               weak = std::weak_ptr<VoiceJob>(job), runner = std::move(runner)] {
-        // Once stopped, no clip is said, and one said meanwhile isn't put in place (make() takes it as failed).
-        VoiceMaker maker([&](const VoiceCommand& command) { return !stop->load() && runner(command) && !stop->load(); });
+                               weak = std::weak_ptr<VoiceJob>(job), runner = voice_runner_] {
+        // Once stopped, the voice being said is killed (the runner watches the flag), and nothing more is put in place.
+        VoiceMaker maker(runner, stop.get());
         const model::BandFolder folder(root);
         auto result = maker.makeBuiltIns(folder, band, evenIfPresent, [&](double progress) {
             if (stop->load()) return;
@@ -91,13 +90,14 @@ void Session::finishVoice(const std::shared_ptr<VoiceJob>& job, juce::Result res
     if (onDone) onDone(result);
 }
 
-void Session::stopVoice(bool wait) {
+void Session::stopVoice(bool closing) {
     if (voice_job_ == nullptr) return;
     voice_job_->stop->store(true);
-    if (!wait) return;                                           // it ends after the clip being made, and says so through onDone
-    voice_job_->session = nullptr;
+    if (closing) voice_job_->session = nullptr;                  // nothing it posted reaches a session that is going
+    // The voice being said is killed at once, so this is a moment, not a clip's 20 s; once it returns, nothing more is
+    // written into the band folder.
     if (voice_job_->thread.joinable()) voice_job_->thread.join();
-    voice_job_ = nullptr;
+    if (closing) voice_job_ = nullptr;                           // else finishVoice, already posted, calls onDone
 }
 
 // ---- Importing the band's own clips ------------------------------------------------------------------------------------
