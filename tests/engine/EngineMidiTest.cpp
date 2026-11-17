@@ -55,6 +55,22 @@ TEST_CASE("a device restart ends the notes that were sounding", "[enginemidi]") 
     e.prepare(48000.0, 512);                                          // the sound card restarted: the song stops at once
     auto out = drainMidi(e);
     REQUIRE(out.size() == 1);  CHECK(out[0].data[0] == 0x80);  CHECK(out[0].data[1] == 60);
+    CHECK(out[0].streamTime == 2048);                                 // at once: where the last block ended
+}
+TEST_CASE("a device that stops by itself ends the notes and stops the transport at once, and only once", "[enginemidi]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = midiSong({ev(100, 0, 0x90, 60, 100), ev(40000, 0, 0x80, 60, 0)});
+    song.startStopDevices = {1};
+    e.cue(share(std::move(song)));  e.start();
+    renderOffline(e, 2, 2048, 512);
+    REQUIRE(drainMidi(e).size() == 2);                                // 0xFA and the note-on
+    e.deviceStopped();                                                // the interface went away mid-song
+    auto out = drainMidi(e);
+    REQUIRE(out.size() == 2);
+    CHECK(out[0].data[0] == 0x80);  CHECK(out[0].data[1] == 60);  CHECK(out[0].streamTime == 2048);   // where the last block ended
+    CHECK(out[1].data[0] == 0xFC);  CHECK(out[1].device == 1);  CHECK(out[1].streamTime == 2048);
+    e.prepare(48000.0, 512);                                          // it comes back: nothing is sent twice
+    CHECK(drainMidi(e).empty());
 }
 TEST_CASE("emitting MIDI allocates nothing, and a full queue drops rather than blocks", "[enginemidi]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());

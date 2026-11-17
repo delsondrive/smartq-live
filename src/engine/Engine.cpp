@@ -47,6 +47,10 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     publishStatus();
 }
 
+// With process not running, this is the MIDI queue's producer, as prepare is. MidiOut lets go of the song here, so a block
+// that ran by mistake before prepare would send none of its MIDI.
+void Engine::deviceStopped() { midi_.end(stream_time_); }
+
 // ---- Control thread ----------------------------------------------------------------------------------------------------
 
 bool Engine::push(Command&& command) {

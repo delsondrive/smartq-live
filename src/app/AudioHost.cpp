@@ -259,7 +259,12 @@ void AudioHost::audioDeviceError(const juce::String&) {
 
 // A device that restarts by itself (a rate changed in its own panel) prepares the engine, which stops the song without an
 // event, before the posted deviceWentAway runs: the session may see the song gone first, and must take it as cut off.
-void AudioHost::deviceStopping() { session_.deviceStopping(); }
+// The device's callbacks have stopped (the manager holds its callback lock here), so the engine's MIDI is ended now: the
+// notes left sounding and the gear following start and stop can't wait for a device that may never come back.
+void AudioHost::deviceStopping() {
+    engine_.deviceStopped();
+    session_.deviceStopping();
+}
 
 void AudioHost::onMessageThread(std::function<void()> call) {
     std::weak_ptr<int> alive = alive_;

@@ -53,6 +53,11 @@ public:
     // is dropped, a start included, and what it carries goes through the garbage queue: the control thread sends again
     // what it still wants (the mix, the follow-on, the cue) once the device has started.
     void prepare(double sampleRate, int maxBlockFrames);
+    // Must only be called while process cannot run, as prepare: when the device stopped by itself (lost, or failed),
+    // before it starts again. The MIDI can't wait for that: a note-off goes out now for each note left sounding, and 0xFC
+    // to each device the song started, at the stream time the last block ended. The song itself stops at the next
+    // prepare, whose own note-offs and stops then find nothing left to send.
+    void deviceStopped();
     // Audio thread: clears out, then renders into the first min(numChannels, kMaxDeviceChannels) of it.
     void process(float* const* out, int numChannels, int frames) noexcept;
 

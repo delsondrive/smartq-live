@@ -64,7 +64,9 @@ public:
     // What audioDeviceAboutToStart does on its own thread, before the first callback: Engine::prepare, and the rate and
     // output latency (read from the device there, once) for the anchor, which is not valid until the first block.
     void deviceStarting(double sampleRate, int bufferSize, int outputLatencySamples = 0);
-    // What audioDeviceStopped (or audioDeviceError) does first, on the device's thread: tells the session the device stopped.
+    // What audioDeviceStopped (or audioDeviceError) does first, on the device's thread, when open or close didn't cause it:
+    // Engine::deviceStopped (the MIDI notes left sounding end, the gear that follows start and stop is stopped), then tells
+    // the session the device stopped.
     void deviceStopping();
     // What the device's callbacks lead to, on the message thread. Public for tests; they never say a device runs.
     void deviceLost();
