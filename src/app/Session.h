@@ -205,7 +205,8 @@ public:
 
     // The level check (LevelChecker): each setlist song's loudest moment per output, measured in the background. The
     // session asks it to look again 2 s after the last change to anything that affects levels (LevelChecker::noteChanges),
-    // and never waits for it.
+    // and never waits for it. In Show mode it measures only what the cache holds, and nothing while a song or the gap
+    // between two plays (tellLevelChecker).
     LevelChecker& levelChecker();           const LevelChecker& levelChecker() const;
 
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
@@ -298,6 +299,7 @@ private:
     ArrangementNow playingNow() const;                           // the playing song, for ShowArrangement
 
     void refresh();                                              // after anything changed: works everything out again
+    void tellLevelChecker();                                     // Show mode, and whether a show's song or gap runs (holdBack)
     bool ensureChoices();                                        // a rig and a setlist that exist; true when either changed
     void rememberChoices();                                      // writes them to Settings and saves it
     bool saveSettings();                                         // settings_.save(), noting a failure for saveState; true when saved

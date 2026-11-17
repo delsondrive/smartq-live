@@ -61,9 +61,9 @@ TEST_CASE("the setlist is measured in the background and re-measured when the mi
 TEST_CASE("the pre-show check and the mixer report the levels", "[levelcheck]") {
     DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
     auto item = [&] { return levelsItem(s); };
-    CHECK(item().title == "Levels");  CHECK(item().detail == juce::String::fromUTF8("Checking\xe2\x80\xa6 0 of 3 songs"));  CHECK(item().level == app::CheckItem::Level::Ok);
+    CHECK(item().title == "Levels");  CHECK(item().detail == juce::String::fromUTF8("Checking\xe2\x80\xa6 0 of 3 songs"));  CHECK(item().level == app::CheckItem::Level::Warning);   // not yet known isn't OK
     s.levelChecker().checkSetlist();  REQUIRE(s.levelChecker().waitUntilIdle(30000));
-    CHECK(item().detail == "no output clips in any of the 3 songs");
+    CHECK(item().detail == "no output clips in any of the 3 songs");  CHECK(item().level == app::CheckItem::Level::Ok);
     auto state = makeMixerState(s, song, {});
     REQUIRE(state.outputLines.size() == 1);
     CHECK(state.outputLines[0].name == juce::String::fromUTF8("Headphones \xc2\xb7 1/2"));
@@ -103,6 +103,23 @@ TEST_CASE("the pre-show check and the mixer report the levels", "[levelcheck]") 
     CHECK(s.levelChecker().state(second) == LevelChecker::State::Unknown);
     s.levelChecker().checkSetlist();  REQUIRE(s.levelChecker().waitUntilIdle(30000));
     CHECK(s.levelChecker().state(second) == LevelChecker::State::Done);
+}
+
+TEST_CASE("a song measured only part way doesn't count as checked, and is said", "[levelcheck]") {
+    DemoSession d; auto& s = *d.session; auto& checker = s.levelChecker();
+    REQUIRE(checker.waitUntilIdle(30000));
+    const auto first = d.setlist().entries[0].songId;
+    checker.afterMeasuring = [first](model::SongLevels& levels) {   // as if it stopped short of the song's end
+        if (levels.songId == first) levels.complete = false;
+    };
+    s.commands().run("band.setLevel", params({{"which", "click"}, {"db", -1}}));
+    measureAll(s);
+    CHECK(checker.measured() == 2);
+    CHECK(checker.total() == 2);
+    CHECK(checker.checkedPartly() == 1);
+    const auto item = levelsItem(s);
+    CHECK(item.level == CheckItem::Level::Ok);
+    CHECK(item.detail == juce::String::fromUTF8("no output clips in any of the 2 songs \xc2\xb7 1 song couldn't be checked to the end"));
 }
 
 TEST_CASE("the cache taking or dropping a song doesn't make it out of date", "[levelcheck]") {
@@ -287,6 +304,103 @@ TEST_CASE("held back, no song is begun; let go, they are", "[levelcheck]") {
     s.levelChecker().holdBack(false);
     REQUIRE(s.levelChecker().waitUntilIdle(30000));
     CHECK(s.levelChecker().state(song) == LevelChecker::State::Done);
+}
+
+TEST_CASE("held back, the song being measured stops at once and goes back on the queue", "[levelcheck]") {
+    DemoSession d; auto& s = *d.session; auto& checker = s.levelChecker();
+    REQUIRE(checker.waitUntilIdle(30000));
+    auto& rig = *s.model().rig(s.rigId());
+    for (int attempt = 0; attempt < 10 && checker.measurementsHeldBack() == 0; ++attempt) {
+        s.commands().run("output.set", params({{"rigId", rig.id}, {"outputId", rig.outputs[0].id}, {"trimDb", -1 - attempt}}));
+        checker.checkSetlist();
+        const auto until = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+        while (!checker.measuringNow() && juce::Time::getMillisecondCounterHiRes() < until) juce::Thread::yield();
+        checker.holdBack(true);
+        const auto stopped = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+        while (checker.measuringNow() && juce::Time::getMillisecondCounterHiRes() < stopped) juce::Thread::yield();
+        CHECK_FALSE(checker.measuringNow());                        // what was being measured stopped part way
+        const int made = checker.measurementsMade();
+        CHECK_FALSE(checker.waitUntilIdle(300));                    // and nothing is begun while held back
+        CHECK(checker.measurementsMade() == made);
+        checker.holdBack(false);
+        REQUIRE(checker.waitUntilIdle(30000));
+    }
+    CHECK(checker.measurementsHeldBack() > 0);
+    CHECK(checker.measurementsCancelled() == 0);                    // not dropped: put back on the queue
+    CHECK(checker.measured() == 3);                                 // and measured once let go
+}
+
+TEST_CASE("in Show mode nothing is measured while a song plays or a gap between songs runs", "[levelcheck]") {
+    DemoSession d; auto& s = *d.session; auto& checker = s.levelChecker();
+    REQUIRE(checker.waitUntilIdle(30000));
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    s.commands().run("setlist.setTransition",
+                     params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"kind", "gap"}, {"seconds", 8.0}}));
+    s.advanceWithoutDevice(0);
+    CHECK_FALSE(checker.heldBack());                                // Edit mode: never held back
+    s.enterShow();
+    s.advanceWithoutDevice(0);
+    CHECK_FALSE(checker.heldBack());                                // a show with nothing playing: free time
+    s.perform(Action::Start);
+    s.advanceWithoutDevice(480);
+    CHECK(checker.heldBack());
+    const int made = checker.measurementsMade();
+    checker.checkSetlist();
+    CHECK_FALSE(checker.waitUntilIdle(300));
+    CHECK_FALSE(checker.measuringNow());
+    CHECK(checker.measurementsMade() == made);
+    for (int i = 0; i < 600 && !s.now().inGap; ++i) s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().inGap);
+    CHECK(checker.heldBack());                                      // the gap between songs counts as playing
+    s.perform(Action::Stop);
+    s.advanceWithoutDevice(4800);
+    REQUIRE_FALSE(s.now().playing);
+    CHECK_FALSE(checker.heldBack());
+    CHECK(checker.waitUntilIdle(30000));
+}
+
+TEST_CASE("in Show mode only the cache's audio is measured: a song it doesn't hold isn't read, and isn't checked yet",
+          "[levelcheck]") {
+    DemoSession d(false, 1); auto& s = *d.session; auto& checker = s.levelChecker();   // the cache keeps two songs only
+    s.enterShow();
+    d.settle();
+    REQUIRE(checker.waitUntilIdle(30000));
+    const auto first = d.setlist().entries[0].songId, outside = d.setlist().entries[2].songId;
+    REQUIRE(s.cache().loaded(first) != nullptr);
+    REQUIRE(s.cache().loaded(outside) == nullptr);
+    const int read = checker.partFilesRead();
+    const auto& doc = *s.model().song(first);
+    s.setLevel({LevelTarget::Kind::Part, first, doc.parts[0].id, {}, {}}, 2.0f, "g");   // tonight: every song out of date
+    checker.checkSetlist();
+    REQUIRE(checker.waitUntilIdle(30000));
+    CHECK(checker.partFilesRead() == read);                         // no part file opened in a show
+    CHECK(checker.state(first) == LevelChecker::State::Done);
+    CHECK(checker.state(outside) == LevelChecker::State::Unknown);  // not checked yet
+    CHECK(checker.measured() == 2);
+    CHECK(checker.total() == 3);
+    // Back in Edit mode it is read from its files.
+    REQUIRE(s.leaveShow());
+    measureAll(s);
+    CHECK(checker.state(outside) == LevelChecker::State::Done);
+    CHECK(checker.partFilesRead() > read);
+}
+
+TEST_CASE("a band restored straight into Show measures what the cache holds and never looks at the disk", "[levelcheck]") {
+    DemoSession d;
+    const auto root = d.session->folder().root();
+    d.session->enterShow();
+    d.session.reset();                                              // as if the app had closed mid-show
+    d.session = std::make_unique<app::Session>(*d.settings, root);  d.session->setDevice(48000.0, 2);  d.settle();
+    auto& s = *d.session; auto& checker = s.levelChecker();
+    REQUIRE(s.mode() == Mode::Show);
+    measureAll(s);
+    CHECK(checker.filesLookedAt() == 0);
+    CHECK(checker.partFilesRead() == 0);
+    CHECK(checker.measured() == 3);                                 // what plays: the cache's audio, no stamps needed
+    REQUIRE(s.leaveShow());                                         // the stamps are taken now, and the songs measured again
+    CHECK(checker.filesLookedAt() > 0);
+    measureAll(s);
+    CHECK(checker.measured() == 3);
 }
 
 TEST_CASE("a newer list stops the song being measured when it no longer wants it as it was", "[levelcheck]") {

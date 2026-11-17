@@ -467,6 +467,7 @@ void Session::advanceWithoutDevice(int frames) {
         if (handleEngineEvents()) refresh();
     }
     refreshTransport(true);
+    tellLevelChecker();
     pollFolder();
     changed();
 }
@@ -539,7 +540,7 @@ juce::Result Session::resolveConflict(const model::ConflictCopy& conflict, bool 
 
 void Session::timerCallback() {
     cue_sent_this_tick_ = false;
-    level_checker_->holdBack(mode_ == Mode::Show && playing_.active());   // a show's song plays: no measuring meanwhile
+    tellLevelChecker();
     if (handleEngineEvents()) refresh();
     else refreshTransport();                                     // retries a cue the engine's full queue refused, or one held back
     jassert(knowsWhatPlays(last_status_));                       // whatever the engine plays, every stop gesture can stop
@@ -566,9 +567,18 @@ void Session::refresh() {
     refreshPlayingLevels();
     refreshTransport();
     rememberShow();
+    tellLevelChecker();
     if (level_checker_ != nullptr) level_checker_->noteChanges();   // measured again 2 s after the last change, if any
     noteSaveState();
     changed();
+}
+
+void Session::tellLevelChecker() {
+    if (level_checker_ == nullptr) return;
+    level_checker_->showRuns(mode_ == Mode::Show);
+    // The gap between two songs counts too: the next song is about to start, and the cache may be readying it.
+    const bool showPlays = playing_.active() || (engine_.status().inGap && !interrupted_ && deviceMayPlay());
+    level_checker_->holdBack(mode_ == Mode::Show && showPlays);
 }
 
 bool Session::ensureChoices() {

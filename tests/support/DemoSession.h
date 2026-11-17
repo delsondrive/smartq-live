@@ -24,11 +24,12 @@ struct DemoSession {
 
     // full: the demo band with its MIDI and its sections too (model::addDemoMidi, model::addDemoSections), as the app and
     // the screenshots make it.
-    explicit DemoSession(bool full = false) {
+    // cacheBudgetBytes: the song cache's (SongCache); 1 keeps only the two songs it always keeps.
+    explicit DemoSession(bool full = false, std::int64_t cacheBudgetBytes = app::SongCache::defaultBudgetBytes()) {
         const auto root = dir.dir().getChildFile("Demo band");
         model::createDemoBand(root);
         settings = std::make_unique<app::Settings>(dir.dir().getChildFile("settings.json"));
-        session = std::make_unique<app::Session>(*settings, root);
+        session = std::make_unique<app::Session>(*settings, root, cacheBudgetBytes);
         session->setDevice(48000.0, 2);
         if (full) {
             REQUIRE(model::addDemoMidi(session->commands()).wasOk());

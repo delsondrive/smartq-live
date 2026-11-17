@@ -20,7 +20,8 @@ constexpr int kHeldBackPollMs = 200;
 }  // namespace
 
 LevelChecker::LevelChecker(Session& session) : juce::Thread("Smart Q Live level check"), session_(session) {
-    if (session_.mode() != Mode::Show) lookAtFiles(wanted());     // the band as it opens; a show goes on without looking
+    show_ = session_.mode() == Mode::Show;
+    if (!show_) lookAtFiles(wanted());                             // the band as it opens; a show goes on without looking
     startThread(juce::Thread::Priority::low);
 }
 
@@ -185,15 +186,18 @@ void LevelChecker::checkSetlist() {
     if (session_.mode() != Mode::Show) lookAtFiles(all);         // a show goes on with the stamps it has
     const auto band = session_.bandAsHeard();
     const auto rig = session_.rigAsHeard();
+    const bool show = session_.mode() == Mode::Show;
     std::deque<Job> jobs;
     bool keepCurrent = false;
     for (const auto& w : all) {
         if (const auto state = stateOf(w); state == State::Done || state == State::CantMeasure) continue;
+        if (show && !cacheHolds(w.songId)) continue;               // a show reads no part file: not checked yet
         Job job;
         job.print = fingerprintOf(w);
         {
             const juce::ScopedLock sl(lock_);
             if (current_ && *current_ == job.print) {           // already being measured as it is now: it carries on
+                if (cancel_) requeue_ = true;                      // stopped by an older list or a hold: back on the queue
                 keepCurrent = true;
                 continue;
             }
@@ -211,7 +215,10 @@ void LevelChecker::checkSetlist() {
     {
         const juce::ScopedLock sl(lock_);
         queue_ = std::move(jobs);
-        if (current_ && !keepCurrent) cancel_ = true;              // no longer wanted as it is: the newer list replaces it
+        if (current_ && !keepCurrent) {                            // no longer wanted as it is: the newer list replaces it
+            cancel_ = true;
+            requeue_ = false;
+        }
     }
     notify();
     triggerAsyncUpdate();
@@ -225,14 +232,15 @@ void LevelChecker::lookAtPartFiles() {
 
 void LevelChecker::noteChanges() {
     const auto all = wanted();                                     // never the disk: the stamps as last looked at
-    std::vector<std::pair<Fingerprint, bool>> now;
+    std::vector<Seen> now;
     for (const auto& w : all) {
         Clips clips;
         {
             const juce::ScopedLock sl(lock_);
             if (const auto found = results_.find({w.songId, w.arrangementId}); found != results_.end()) clips = found->second.clips;
         }
-        now.emplace_back(fingerprintOf(w), clipsStillSame(clips));
+        // In a show, the cache taking a song not yet checked lets it be measured.
+        now.push_back({fingerprintOf(w), clipsStillSame(clips), session_.mode() != Mode::Show || cacheHolds(w.songId)});
     }
     if (now == seen_) return;
     seen_ = std::move(now);
@@ -245,8 +253,32 @@ void LevelChecker::alsoMeasure(const juce::String& songId) {
     noteChanges();
 }
 
+void LevelChecker::stopForNow() {
+    const juce::ScopedLock sl(lock_);
+    if (!current_) return;
+    cancel_ = true;
+    requeue_ = true;
+}
+
 void LevelChecker::holdBack(bool held) {
-    if (held_back_.exchange(held) && !held) notify();
+    const bool was = held_back_.exchange(held);
+    if (held && !was) stopForNow();                                // the song being measured goes back on the queue
+    if (was && !held) notify();
+}
+
+void LevelChecker::showRuns(bool show) {
+    if (show && !show_.exchange(show)) stopForNow();               // it may be reading its files: not in a show
+    show_ = show;
+}
+
+bool LevelChecker::cacheHolds(const juce::String& songId) const {
+    const auto cached = session_.cache().loaded(songId);
+    return cached != nullptr && cached->sampleRate == session_.sampleRate();
+}
+
+int LevelChecker::measurementsHeldBack() const {
+    const juce::ScopedLock sl(lock_);
+    return held_;
 }
 
 void LevelChecker::timerCallback() { checkSetlist(); }
@@ -298,21 +330,29 @@ bool LevelChecker::inCloud(const juce::String& songId) const {
 
 std::optional<model::SongLevels> LevelChecker::levels(const juce::String& songId) const { return songLevels(wanted(), songId); }
 
-int LevelChecker::countSongs(const std::function<bool(State, bool inCloud)>& counts) const {
+int LevelChecker::countSongs(const std::function<bool(State, bool inCloud, bool partly)>& counts) const {
     const auto all = wanted();
     int n = 0;
     for (const auto& songId : countedSongs(all)) {
         bool cloud = false;
         const auto state = songState(all, songId, &cloud);
-        if (counts(state, cloud)) ++n;
+        bool partly = false;                                       // measured, but stopped short of its end
+        if (state == State::Done)
+            if (const auto levels = songLevels(all, songId)) partly = !levels->complete;
+        if (counts(state, cloud, partly)) ++n;
     }
     return n;
 }
 
-int LevelChecker::measured() const { return countSongs([](State s, bool) { return s == State::Done; }); }
-int LevelChecker::total() const { return countSongs([](State s, bool) { return s != State::CantMeasure; }); }
-int LevelChecker::cantMeasure() const { return countSongs([](State s, bool) { return s == State::CantMeasure; }); }
-int LevelChecker::stillInCloud() const { return countSongs([](State s, bool cloud) { return s == State::CantMeasure && cloud; }); }
+int LevelChecker::measured() const { return countSongs([](State s, bool, bool partly) { return s == State::Done && !partly; }); }
+int LevelChecker::total() const {
+    return countSongs([](State s, bool, bool partly) { return s != State::CantMeasure && !partly; });
+}
+int LevelChecker::cantMeasure() const { return countSongs([](State s, bool, bool) { return s == State::CantMeasure; }); }
+int LevelChecker::stillInCloud() const {
+    return countSongs([](State s, bool cloud, bool) { return s == State::CantMeasure && cloud; });
+}
+int LevelChecker::checkedPartly() const { return countSongs([](State s, bool, bool partly) { return s == State::Done && partly; }); }
 
 std::vector<juce::String> LevelChecker::clipSentences() const {
     std::vector<juce::String> sentences;
@@ -379,9 +419,13 @@ void LevelChecker::run() {
             if (result) {
                 results_[{job->print.songId, job->print.arrangementId}] = std::move(*result);
                 ++made_;
-            } else if (!threadShouldExit()) {
+            } else if (!threadShouldExit() && requeue_) {          // held back, or a show began: measured later, from the start
+                queue_.push_front(std::move(*job));
+                ++held_;
+            } else if (!threadShouldExit() && cancel_) {           // a newer list no longer wants it as it was
                 ++cancelled_;
-            }
+            }                                                      // else passed over in a show: the cache let go of it
+            requeue_ = false;
         }
         job.reset();                                               // lets go of what it held
         triggerAsyncUpdate();
@@ -405,11 +449,14 @@ std::optional<LevelChecker::Result> LevelChecker::measure(const Job& job) {
     std::map<juce::String, std::shared_ptr<const engine::PartAudio>> audio;
     if (const auto cached = job.cached.lock(); cached != nullptr && cached->sampleRate == rate) {
         audio = cached->audio;                                     // the parts alone, for this song only
+    } else if (show_) {
+        return std::nullopt;                                       // a show reads no part file: not checked yet
     } else {
         for (const auto& part : job.doc.parts) {
             const auto file = job.files.find(part.id);
             if (file == job.files.end() || !file->second.existsAsFile()) continue;
             if (!model::isOnThisComputer(file->second)) return cantMeasure(true);   // gone to the cloud since
+            ++files_read_;
             auto loaded = model::loadPartAudio(file->second, rate, keepGoing);
             if (!keepGoing(0.0)) return std::nullopt;
             if (loaded != nullptr) audio[part.id] = std::move(loaded);
@@ -425,8 +472,9 @@ std::optional<LevelChecker::Result> LevelChecker::measure(const Job& job) {
         model::buildPreparedSong(job.doc, job.band, job.rig, audio, rate, options));
     audio.clear();
     result.levels = model::measureSong(std::move(song), job.band, job.rig, rate, keepGoing);
+    if (afterMeasuring) afterMeasuring(result.levels);
     if (!result.levels.complete && !keepGoing(1.0)) return std::nullopt;   // cancelled: a newer list, or closing
-    result.state = State::Done;
+    result.state = State::Done;                                    // not complete: kept, but counted as not checked
     return result;
 }
 

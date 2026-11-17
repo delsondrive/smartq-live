@@ -47,16 +47,17 @@ void addRouting(std::vector<CheckItem>& items, const Session& session, const Che
 
 // The level check (LevelChecker): a warning naming the first output that would clip, once any does; else how far it has
 // got, or that nothing clips. Songs whose audio can't be read, or is still in the cloud, are left out of the count, and
-// said. Nothing for a setlist with no songs.
+// said, as are songs measured only part way (not checked). Nothing for a setlist with no songs.
 void addLevels(std::vector<CheckItem>& items, const Session& session) {
     const auto& checker = session.levelChecker();
-    const int total = checker.total(), measured = checker.measured(), cant = checker.cantMeasure();
-    if (total == 0 && cant == 0) return;
+    const int total = checker.total(), measured = checker.measured(), cant = checker.cantMeasure(), partly = checker.checkedPartly();
+    if (total == 0 && cant == 0 && partly == 0) return;
     // "1 song couldn't be checked: no audio", "2 songs couldn't be checked: still in the cloud", or both.
     const int inCloud = checker.stillInCloud(), noAudio = cant - inCloud;
     juce::StringArray unchecked;
     if (noAudio > 0) unchecked.add(plural(noAudio, "song", "songs") + " couldn't be checked: no audio");
     if (inCloud > 0) unchecked.add(plural(inCloud, "song", "songs") + " couldn't be checked: still in the cloud");
+    if (partly > 0) unchecked.add(plural(partly, "song", "songs") + " couldn't be checked to the end");
     const auto withUnchecked = [&](const juce::String& detail) {
         auto parts = unchecked;
         if (detail.isNotEmpty()) parts.insert(0, detail);
@@ -74,7 +75,8 @@ void addLevels(std::vector<CheckItem>& items, const Session& session) {
     if (measured < total) detail = juce::String::fromUTF8("Checking\xe2\x80\xa6 ") + juce::String(measured) + " of " + plural(total, "song", "songs");
     else if (total == 1) detail = "no output clips in the one song";
     else if (total > 1) detail = "no output clips in any of the " + plural(total, "song", "songs");
-    items.push_back(item(Level::Ok, "levels", "Levels", withUnchecked(detail)));
+    // Not yet known isn't OK: a warning until every song is checked (it never stops a show).
+    items.push_back(item(measured < total ? Level::Warning : Level::Ok, "levels", "Levels", withUnchecked(detail)));
 }
 
 // Each device bound to a port here that isn't found; a warning when no device has a port here; else one line saying they

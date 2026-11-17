@@ -45,10 +45,17 @@ class Session;
 // read, as reading it would start a download: it is CantMeasure, still in the cloud. So is one none of whose parts' audio
 // can be read. Either is left out of total().
 //
+// In Show mode (showRuns) the audio is the cache's only: no part file is read, so the show keeps the disk and the memory
+// budget to itself. A song the cache doesn't hold at the rate isn't queued, and one the cache let go of before its turn
+// is passed over: it stays Unknown ("not checked yet") until the cache takes it (noteChanges sees that) or Edit mode. What
+// is measured is then what plays, so a show needs no file stamps, and a band restored straight into Show has none until
+// it leaves Show (the first look then puts every song out of date, to be measured from its files).
+//
 // Nothing is measured until asked: checkSetlist measures at once; noteChanges, which the session calls after every change
 // (and lookAtPartFiles after its look at the files), asks for it 2 s after the last change that alters a fingerprint. A
 // newer list replaces what is waiting, and stops the song being measured unless the new list still wants it as it is.
-// While holdBack is on (a show's song playing) no new song is begun.
+// While holdBack is on (a show's song playing, or the gap between two) no song is begun, and the one being measured stops
+// at once and goes back on the queue. Entering Show stops it too (it may be reading its files).
 class LevelChecker : private juce::Thread, private juce::AsyncUpdater, private juce::Timer {
 public:
     enum class State { Unknown, Measuring, Done, CantMeasure };    // CantMeasure: its audio can't be read, or is in the cloud
@@ -65,15 +72,18 @@ public:
     void lookAtPartFiles();
     // The song open in the mixer: measured too when it isn't in the setlist, never counted. "" forgets it.
     void alsoMeasure(const juce::String& songId);
-    void holdBack(bool);                                           // true: no new song is begun until it is false again
+    void holdBack(bool);                                           // true: the song being measured stops and goes back on the
+                                                                   // queue, and none is begun until it is false again
+    void showRuns(bool);                                           // Show mode: only the cache's audio is measured (above)
 
     State state(const juce::String& songId) const;
     bool inCloud(const juce::String& songId) const;                // CantMeasure because a part file is still in the cloud
     std::optional<model::SongLevels> levels(const juce::String& songId) const;   // only when Done
-    int measured() const;                                          // the setlist's songs (each once) that are Done
-    int total() const;                                             // the setlist's songs (each once), less those CantMeasure
+    int measured() const;                                          // the setlist's songs (each once) Done, to their end
+    int total() const;                                             // the setlist's songs (each once), less CantMeasure and partly
     int cantMeasure() const;                                       // the setlist's songs that are CantMeasure
     int stillInCloud() const;                                      // of those, the ones with a part file still in the cloud
+    int checkedPartly() const;                                     // the setlist's songs measured only part way: not checked
     // model::describeClip for every output that clips, song by song in setlist order, each song's in the rig's order; the
     // same sentence once.
     std::vector<juce::String> clipSentences() const;
@@ -83,7 +93,12 @@ public:
     bool waitUntilIdle(int timeoutMs);                             // for tests: nothing waits or is measured; delivers onChanged
     int measurementsMade() const;                                  // for tests: results the thread has published
     int measurementsCancelled() const;                             // for tests: songs stopped part way by a newer list
+    int measurementsHeldBack() const;                              // for tests: songs stopped part way and requeued
+    int partFilesRead() const { return files_read_.load(); }      // for tests: part files opened to be measured
+    bool heldBack() const { return held_back_.load(); }            // for tests
     bool measuringNow() const;                                     // for tests: the thread is on a song
+    // For tests: called on the thread with each song's levels as measured, before they are kept. Set while it is idle.
+    std::function<void(model::SongLevels&)> afterMeasuring;
     int filesLookedAt() const { return looks_; }                  // for tests: how many times the part files were looked at
 
 private:
@@ -130,26 +145,36 @@ private:
     Fingerprint fingerprintOf(const Wanted&) const;
     bool clipsStillSame(const Clips&) const;
     State stateOf(const Wanted&) const;
+    bool cacheHolds(const juce::String& songId) const;            // the cache holds the song's audio at the session's rate
+    void stopForNow();                                             // the song being measured stops and goes back on the queue
     // The song's state over its arrangements (those wanted, else its sections in order), and whether one is in the cloud.
     State songState(const std::vector<Wanted>&, const juce::String& songId, bool* inCloud = nullptr) const;
     std::optional<model::SongLevels> songLevels(const std::vector<Wanted>&, const juce::String& songId) const;
     std::vector<juce::String> countedSongs(const std::vector<Wanted>&) const;   // the setlist's songs, each once, in order
-    int countSongs(const std::function<bool(State, bool inCloud)>& counts) const;   // the setlist's songs, each once
+    // The setlist's songs, each once; partly: Done, but measured only part way.
+    int countSongs(const std::function<bool(State, bool inCloud, bool partly)>& counts) const;
     std::optional<Result> measure(const Job&);                     // thread; nullopt when cancelled
 
     Session& session_;
     juce::String also_;                                            // alsoMeasure's
     std::map<juce::String, std::vector<FileStamp>> stamps_;        // by song id: its part files as last looked at
-    std::vector<std::pair<Fingerprint, bool>> seen_;               // noteChanges: the fingerprints last seen, and clips still same
+    struct Seen {                                                  // noteChanges: what it saw of each wanted song
+        Fingerprint print;
+        bool clipsSame = true, measurable = true;                  // measurable: Edit mode, or the cache holds it (Show)
+        bool operator==(const Seen&) const = default;
+    };
+    std::vector<Seen> seen_;
 
     mutable juce::CriticalSection lock_;
     std::deque<Job> queue_;
     std::optional<Fingerprint> current_;                           // the song being measured
     bool busy_ = false;
     std::map<Key, Result> results_;
-    int made_ = 0, cancelled_ = 0;
+    int made_ = 0, cancelled_ = 0, held_ = 0;
+    bool requeue_ = false;                                         // the song being measured goes back on the queue when stopped
     int looks_ = 0;                                                // filesLookedAt(); message thread
-    std::atomic<bool> cancel_{false}, held_back_{false};
+    std::atomic<bool> cancel_{false}, held_back_{false}, show_{false};
+    std::atomic<int> files_read_{0};
     juce::WaitableEvent idle_changed_;
 };
 
