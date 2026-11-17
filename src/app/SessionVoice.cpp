@@ -85,9 +85,21 @@ void Session::finishVoice(const std::shared_ptr<VoiceJob>& job, juce::Result res
     if (job->thread.joinable()) job->thread.join();              // this was the last thing it posted: it has ended, or is ending
     auto onDone = std::move(job->onDone);
     voice_job_ = nullptr;
-    for (const auto& path : job->paths) cues_.forget(path);      // read again when next asked for: the songs say the new ones
-    refresh();
+    if (mode_ == Mode::Show) {
+        // Stopped by the show: forgetting a clip now would build tonight's songs again, without it, mid-show. They are
+        // forgotten, and the songs built again, once the show ends.
+        for (const auto& path : job->paths) voice_clips_after_show_.addIfNotAlreadyThere(path);
+        changed();
+    } else {
+        for (const auto& path : job->paths) cues_.forget(path);  // read again when next asked for: the songs say the new ones
+        refresh();
+    }
     if (onDone) onDone(result);
+}
+
+void Session::forgetVoiceClipsAfterShow() {
+    for (const auto& path : voice_clips_after_show_) cues_.forget(path);
+    voice_clips_after_show_.clear();
 }
 
 void Session::stopVoice(bool closing) {

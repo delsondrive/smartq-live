@@ -324,6 +324,7 @@ private:
     // The voice being made (SessionVoice.cpp): its thread, what it may write, and its callbacks.
     struct VoiceJob;
     void finishVoice(const std::shared_ptr<VoiceJob>&, juce::Result);   // message thread, once the thread has finished
+    void forgetVoiceClipsAfterShow();                            // leaveShow: what a voice stopped by the show may have made
     void stopVoice(bool closing);                                // stops it and joins its thread; closing: onDone is dropped
     juce::String importAudio(const juce::File&, const juce::String& folderName);
 
@@ -402,6 +403,7 @@ private:
     MidiEcho midi_echo_;
     VoiceMaker::Runner voice_runner_;                            // setVoiceRunner's; empty = the system's speech
     std::shared_ptr<VoiceJob> voice_job_;                        // the voice being made; nullptr when none is
+    juce::StringArray voice_clips_after_show_;                   // clips a voice stopped by the show may have made: forgotten after it
 
     // Last: their loader threads stop first, and their onChanged reach into the members above.
     CueLibrary cues_{folder_, sample_rate_};

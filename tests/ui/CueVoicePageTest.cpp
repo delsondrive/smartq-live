@@ -59,11 +59,16 @@ app::VoiceMaker::Runner countingRunner(std::shared_ptr<std::atomic<int>> ran, in
     };
 }
 
-// Says the first two clips at once, then hangs on the third until it is stopped, as a voice that takes its time would.
+// Says the first two clips at once, then hangs on the third until it is stopped, as a voice that takes its time would. A
+// stop that never comes ends the hang after 10 s, so a session that no longer stops it fails the test's timing checks
+// rather than hanging it.
 app::VoiceMaker::Runner hangingRunner(std::shared_ptr<std::atomic<int>> ran) {
     return [ran](const app::VoiceCommand& c) {
-        if (++*ran >= 3)
-            while (c.stop == nullptr || !c.stop->load()) juce::Thread::sleep(1);   // a deadline-free hang: only a stop ends it
+        if (++*ran >= 3) {
+            const auto deadline = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+            while ((c.stop == nullptr || !c.stop->load()) && juce::Time::getMillisecondCounterHiRes() < deadline)
+                juce::Thread::sleep(1);
+        }
         return c.wavFile.replaceWithText("not really a wav");
     };
 }
@@ -237,6 +242,24 @@ TEST_CASE("entering Show mode stops the voice being made", "[cuevoice]") {
     CHECK(result->getErrorMessage() == "Show mode never changes the band folder. Make the voice after the show.");
     CHECK(ran->load() == 3);                                      // nothing more was said
     CHECK(builtInFiles(s.folder().root()) == atShow);             // and nothing landed once the show began
+}
+
+TEST_CASE("a voice stopped by the show builds no song again until the show ends", "[cuevoice]") {
+    DemoSession d; auto& s = *d.session;
+    const auto songId = d.setlist().entries[0].songId;
+    REQUIRE(s.commands().run("section.add", params({{"songId", songId}, {"name", "Chorus"}, {"startBar", 5}})).ok);
+    d.settle();                                                   // the song is built, and has asked for its Chorus cue
+    auto ran = std::make_shared<std::atomic<int>>(0);
+    s.setVoiceRunner(hangingRunner(ran));
+    REQUIRE(s.makeVoice(false, {}, {}).wasOk());
+    waitFor([&] { return ran->load() >= 3; });
+    s.enterShow();                                                // stops it; what it made arrives after the show began
+    const auto atShow = s.preparedBuilds();
+    waitUntilMade(s);
+    pumpFor(100);
+    CHECK(s.preparedBuilds() == atShow);                          // nothing is built again during the show
+    REQUIRE(s.leaveShow());
+    CHECK(s.preparedBuilds() > atShow);                           // the clips it may have made are read once the show ends
 }
 
 TEST_CASE("closing the band while the voice is being made stops it safely", "[cuevoice]") {

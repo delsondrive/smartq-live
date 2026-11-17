@@ -390,6 +390,7 @@ bool Session::leaveShow() {
     writeShowMemory();                                           // no longer in the show; tonight's changes wait for the answer
     if (std::exchange(snapshot_owed_, false)) snapshotOnOpening();   // the band opened straight into this show
     pollFolder();                                                // what changed on other computers during the show
+    forgetVoiceClipsAfterShow();                                 // and what a voice stopped by the show had made
     refresh();
     return true;
 }
