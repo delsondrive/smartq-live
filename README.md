@@ -38,10 +38,12 @@ In Show mode:
 - Hold **→** (1 s), or tap a pedal learned for **Go to the next song now** twice, to go to the next song now.
 - **Tab** switches between the main view and the stage view.
 
-The phone remote (Setup, **Remote**) turns the same controls into buttons on a phone: join it with the QR code and the PIN, then let it in from the laptop in Edit mode, as **View only** or **Full control**. Stop on the phone needs a hold, as on the keyboard.
+## Phone remote
+
+On Setup's **Remote** page, switch **Phone remote** on and scan the QR code with a phone on the same Wi-Fi (no internet is needed), then type the PIN. The phone waits until you let it in from the laptop in Edit mode, as **View only** or **Full control**. A full-control phone can choose the next song, start, choose a section, loop it and stop; Stop needs a hold of a second, as on the keyboard.
+
+The things to try by hand with your real interface are listed in `docs/acceptance.md`.
 
 ## What comes next
 
 The pad player, timecode output and a backup laptop are designed but not built, and each will be confirmed with you first.
-
-The things to try by hand with your real interface are listed in `docs/acceptance.md`.

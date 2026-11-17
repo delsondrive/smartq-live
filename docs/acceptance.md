@@ -338,7 +338,8 @@ Set a latching footswitch to momentary on the footswitch itself before you learn
 
 ## 26. Levels before the show
 
-- [ ] **Levels before the show:** in the Mixer, raise a few parts until an output clips. Its panel turns red, says "clips" and names the bar and by how many dB. Open the pre-show check (click **SHOW**): its Levels line warns and says how many outputs would clip. Lower the parts and the warning goes by itself, without pressing anything.
+- [ ] **Levels before the show:** in the Mixer, raise a few parts until an output clips. Its panel turns red, says "clips" and a line such as "Bar 7: 6.6 dB over. Turn a part down." Open the pre-show check (click **SHOW**): its Levels line warns "1 output would clip" (or how many). Lower the parts and the warning goes by itself, without pressing anything.
+- [ ] **(by ear)** Levels, heard: play the bar the warning names, from that song, with the output that clips in your ears (low volume first), and hear it distort or crackle. Lower the named part by the dB the panel says and play the same bar again: it is clean, and the panel no longer says "clips".
 
 ## 27. Snapshot changes
 
@@ -346,22 +347,23 @@ Set a latching footswitch to momentary on the footswitch itself before you learn
 
 ## 28. Phone remote, getting in
 
-- [ ] **Turn it on:** on Setup's **Remote** page, switch **Phone remote** on. A QR code, an address and a four-digit PIN appear. Windows may ask whether to allow Smart Q Live on the network the first time: allow it on private networks. The top bar shows "Remote 0".
-- [ ] **Scan and join (a real phone):** scan the code with a phone on the same Wi-Fi, or type the address. Type a wrong PIN: the phone says so. Type the right PIN: the phone says it is waiting, and the laptop lists it as "waiting".
-- [ ] **Let it in:** let the phone in as **View only**: it shows the show but has no buttons that change anything. Change it to **Full control**: its buttons appear without reloading.
+- [ ] **Turn it on:** on Setup's **Remote** page, switch **Phone remote** on. A QR code, an address and a four-digit PIN appear. Windows may ask whether to allow Smart Q Live on the network the first time: allow it on private networks. The top bar shows a "Remote 0" pill (the number is how many phones are connected). If the remote could not start (for instance, every port is taken), the top bar says "Remote off" instead and Setup's Remote page says why.
+- [ ] **Scan and join (a real phone):** scan the code with a phone on the same Wi-Fi, or type the address. Type a wrong PIN: the phone says "That PIN isn't right." Type the right PIN: the phone says "Waiting to be let in" and the laptop lists it as "waiting"; the top bar's Remote pill turns to a warning. Do this on both an iPhone (Safari) and an Android phone (Chrome).
+- [ ] **Let it in:** let the phone in as **View only**: it shows the show and says "This phone can watch but not change anything." Change it to **Full control**: its buttons appear without reloading.
 - [ ] **More phones:** join a second phone. **Refuse** one, **Forget** another, and join again with the PIN. Try **New PIN**: phones already let in carry on.
-- [ ] **Edit mode only:** in Show mode, a new phone still joins and waits, but the laptop says it can be let in when the show is over.
+- [ ] **Edit mode only:** in Show mode, a new phone still joins and waits, but the Remote page says "New phones can be let in when the show is over." and does not let it in until you are back in Edit mode.
 
 ## 29. Phone remote, in a show
 
-- [ ] **Following:** on a view-only phone, play a song: the phone shows the song, the section playing and the bar, and keeps up.
-- [ ] **Controlling:** from a full-control phone choose the next song, start, choose a section, loop it, and hold the stop button to stop. A single tap on the stop button must do nothing. Check it on an iPhone (Safari) and an Android phone (Chrome): a long press must not select text or open a menu.
+- [ ] **Following:** on a view-only phone, play a song: the phone shows the song, the section playing and the bar, and keeps up. Do this on both an iPhone (Safari) and an Android phone (Chrome).
+- [ ] **Controlling:** from a full-control phone choose the next song, start, choose a section, loop it, and hold the middle button for a second to stop (the hint says "Hold ▶ for a second to stop"). A single tap on the stop button must do nothing. Check it on both an iPhone (Safari) and an Android phone (Chrome): a long press must not select text or open a menu.
 - [ ] **Real touch:** the buttons are big enough to hit on a dark stage with a thumb, and nothing moves under your finger.
 - [ ] **A new phone in a show:** try to join with a new phone during the show: it waits and cannot do anything until it is let in after the show.
 
 ## 30. Phone remote, things going wrong
 
 - [ ] **Wi-Fi off and on:** turn the phone's Wi-Fi off and on mid-song. The music does not change. The phone dims and says "Reconnecting…", then catches up on its own.
+- [ ] **Out of range and back:** walk out of Wi-Fi range mid-song and back. The phone shows "Reconnecting…", then the right bar and the right song, and the laptop never paused or changed anything.
 - [ ] **Lock and unlock:** lock the phone and unlock it: the page comes back with the right song, without joining again.
 - [ ] **Turning it off:** switch the remote off on the laptop while a phone is connected. The phone dims and says "Reconnecting…"; the music does not change. Turn it on again and the phone comes back.
 

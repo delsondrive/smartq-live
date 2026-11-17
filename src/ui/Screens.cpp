@@ -10,11 +10,11 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "app/AudioHost.h"
+#include "app/ControlInput.h"
 #include "app/LevelChecker.h"
+#include "app/MidiPorts.h"
 #include "app/RemoteAccess.h"
 #include "app/RemoteServer.h"
-#include "app/ControlInput.h"
-#include "app/MidiPorts.h"
 #include "app/Session.h"
 #include "app/Settings.h"
 #include "app/ShowController.h"
