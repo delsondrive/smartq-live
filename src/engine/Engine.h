@@ -86,6 +86,9 @@ public:
     // sent 0xFC, unless another song follows straight on (seamlessly, or after a gap of no length): the transport runs
     // on, and the clock with it. A gap sends no clock.
     bool popMidi(OutMidi&);
+    // Any thread: how many MIDI messages have been queued for popMidi since the engine was made (so a reader can tell when
+    // it has taken them all).
+    std::uint64_t queuedMidiCount() const noexcept;
     // Any thread: how many MIDI messages a full queue has dropped since the engine was made. For diagnostics only.
     std::uint64_t droppedMidiCount() const noexcept;
     // Control thread: sends one device (an engine device number of the song with this serial) the state it should be in

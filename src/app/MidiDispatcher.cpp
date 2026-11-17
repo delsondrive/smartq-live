@@ -38,12 +38,23 @@ void MidiDispatcher::run() {
         }
         dropped_.store(scheduler_.droppedCount(), std::memory_order_relaxed);
         sendDue(anchor);
+        done_.store(taken_ - static_cast<std::uint64_t>(scheduler_.size()), std::memory_order_release);
         waitForNext(anchor);
     }
 }
 
 void MidiDispatcher::takeFromEngine() noexcept {
-    for (engine::OutMidi m; engine_.popMidi(m);) scheduler_.add(m);
+    for (engine::OutMidi m; engine_.popMidi(m); ++taken_) scheduler_.add(m);
+}
+
+bool MidiDispatcher::waitUntilSent(std::uint64_t queued, int maxMs) {
+    const double until = juce::Time::getMillisecondCounterHiRes() + maxMs;
+    while (done_.load(std::memory_order_acquire) < queued) {
+        if (juce::Time::getMillisecondCounterHiRes() >= until) return false;
+        notify();                                     // takes the rest at once rather than after its wait
+        juce::Thread::sleep(1);
+    }
+    return true;
 }
 
 void MidiDispatcher::sendDue(const StreamAnchor& anchor) {

@@ -28,13 +28,13 @@ namespace sqlive::app {
 // after later cues, even when they were held while a device restarted. A device removed from the band while a song that
 // played names it keeps its port open, for that song only, until the song is let go of.
 //
-// Ports come and go. Whenever the system says its list of MIDI devices changed (juce::MidiDeviceListConnection), every
-// bound port is opened again, even when the list reads the same as before: a quick unplug and replug may leave the names
-// and identifiers as they were, behind a port that no longer works. As a fallback, every second the list of outputs is
-// looked at, and the ports are opened or closed to match when it changed (names, or the system's identifiers), or when a
-// port that is listed couldn't be opened last time (another program held it). A device whose port was not found, or was
-// opened again, is sent the state the playing song puts it in now (Engine::resendMidiState). A change to the band's
-// devices or to this computer's bindings does the same at once.
+// Ports come and go. Whenever the system says its list of MIDI devices changed (juce::MidiDeviceListConnection), and as a
+// fallback every second, the list of outputs is looked at: a bound port whose listing (name and the system's identifier)
+// changed or vanished is opened again or closed, and one that is listed but couldn't be opened last time (another program
+// held it) is tried again. A bound port whose listing reads the same is left alone, so an unrelated gadget plugged in
+// mid-song never hangs a note or reloads a patch. A device whose port was not found, or was opened again, is sent the state
+// the playing song puts it in now (Engine::resendMidiState). A change to the band's devices or to this computer's bindings
+// does the same at once.
 //
 // Everything but send runs on the message thread. send runs on the MIDI dispatcher's thread: it takes a lock the message
 // thread holds only briefly (sendNow, and swapping in what refresh and noteSong worked out), and never allocates.
@@ -59,9 +59,9 @@ public:
     Status status(const juce::String& deviceId) const;   // NoPort for a device with no port here, or no such device
     juce::StringArray availableOutputs() const;      // as of the last look (refresh, or the 1 s timer)
     void refresh();                                  // message thread: opens or closes ports to match the rig and what is plugged in
-    // Message thread: what the system's device-list notification does. refresh, with every bound port that is listed
-    // opened again (a quick replug may leave its name and identifier as they were), and each device that is connected
-    // then sent the state the playing song puts it in now. Public for tests.
+    // Message thread: what the system's device-list notification does: refresh. Only a bound port whose listing changed,
+    // vanished or couldn't be opened is touched, and only a device whose port was not found or was opened again is sent the
+    // state the playing song puts it in now. Public for tests.
     void devicesChanged();
     // Message thread: the session calls it for each song the engine takes, with that song's PreparedSong::midiDeviceIds.
     void noteSong(std::uint64_t serial, const std::vector<std::string>& deviceIds);
@@ -105,7 +105,7 @@ private:
     void timerCallback() override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
 
-    void refreshWith(const Listing&, bool reopenAll);
+    void refreshWith(const Listing&);
     std::vector<Device> bindings() const;            // the band's devices, with this computer's ports from the chosen rig
     bool bindingsChanged() const;
     Output* outputFor(const juce::String& deviceId) const;   // message thread: the open output a device goes to now

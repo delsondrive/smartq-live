@@ -248,7 +248,10 @@ juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String&
     auto from = it->second;
     if (! from.exists()) { trashed_.erase(it); return juce::Result::ok(); }
     auto to = place(key);
-    if (to.exists()) {   // something else took its place meanwhile
+    if (to == juce::File() && key.kind == DocKind::Song) {
+        // Its place was let go of since (another computer's song arrived there): under songs/ as for a new song.
+        to = freeSongFolder(songTitle.isNotEmpty() ? songTitle : from.getFileName());
+    } else if (to.exists()) {   // something else took its place meanwhile
         // A song's folder never lands on a name remembered for another song (whose folder is gone for now).
         auto parent = to.getParentDirectory();
         to = key.kind == DocKind::Song ? freeSongFolder(songTitle.isNotEmpty() ? songTitle : to.getFileName())

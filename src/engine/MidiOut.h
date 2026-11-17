@@ -62,6 +62,8 @@ public:
     bool pop(OutMidi&) noexcept;
     // Any thread: how many messages a full queue has dropped since this was made. For diagnostics only.
     std::uint64_t droppedCount() const noexcept { return dropped_.load(std::memory_order_relaxed); }
+    // Any thread: how many messages have been queued since this was made.
+    std::uint64_t queuedCount() const noexcept { return queue_.pushedCount(); }
 
 private:
     struct Note {

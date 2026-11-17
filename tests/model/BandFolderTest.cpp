@@ -74,6 +74,22 @@ TEST_CASE("a removed song goes to the trash and can come back", "[folder]") {
     REQUIRE(folder.save({DocKind::Song, s.id}, model).wasOk());
     CHECK(dir.getChildFile("audio/Keys.wav").existsAsFile());
 }
+TEST_CASE("a song removed here comes back and saves even when its place was let go of meanwhile", "[folder]") {
+    sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
+    BandFolder folder(root); BandModel model; folder.load(model);
+    SongDoc s; s.id = newId(); s.title = "Back";
+    folder.assignSongFolder(s.id, s.title);
+    model.putSong(s);  REQUIRE(folder.save({DocKind::Song, s.id}, model).wasOk());
+    model.removeSong(s.id);  REQUIRE(folder.save({DocKind::Song, s.id}, model).wasOk());   // to trash/
+    folder.forgetSongFolder(s.id);                                  // another computer's song arrived in its folder
+    model.putSong(s);
+    REQUIRE(folder.save({DocKind::Song, s.id}, model).wasOk());
+    const auto back = folder.songFolder(s.id);
+    REQUIRE(back != juce::File());
+    CHECK(back.getParentDirectory() == root.getChildFile("songs"));
+    CHECK(back.getChildFile("song.json").existsAsFile());
+    CHECK(folder.save({DocKind::Song, s.id}, model).wasOk());
+}
 TEST_CASE("a half-synced folder loads what it can and says what it couldn't", "[folder]") {
     sqlive::test::TempDir t; auto root = t.dir().getChildFile("Band"); BandFolder::create(root, "Band");
     root.getChildFile("songs/Cut off/song.json").create();  root.getChildFile("songs/Cut off/song.json").replaceWithText("{ \"title\": \"cut");

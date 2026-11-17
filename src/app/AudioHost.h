@@ -39,7 +39,8 @@ public:
                                                                   // when there is none. A bound device that can't be opened is
                                                                   // taken as lost and tried again every 2 s
     bool hasBindingForThisComputer() const;                       // the rig has a device named for settings().computerName()
-    void close();
+    void close();                                                 // and, a song playing, ends its MIDI (Engine::deviceStopped);
+                                                                  // so does the destructor
     bool isOpen() const;                                          // a device is open and running
     bool isLost() const;                                          // it was open and went away, or the rig's own couldn't be opened
     bool isRetrying() const;                                      // a lost device is being tried again every 2 s

@@ -129,18 +129,18 @@ bool MidiPorts::needsALook(const Listing& now) const {
     return false;
 }
 
-void MidiPorts::refresh() { refreshWith(look_(), false); }
+void MidiPorts::refresh() { refreshWith(look_()); }
 
-void MidiPorts::devicesChanged() { refreshWith(look_(), true); }
+void MidiPorts::devicesChanged() { refresh(); }
 
-void MidiPorts::refreshWith(const Listing& now, bool reopenAll) {
+void MidiPorts::refreshWith(const Listing& now) {
     const auto listedBefore = listed_;
     listed_ = now.names;
     listedIds_ = now.ids;
     auto next = bindings();
 
     // The ports wanted: bound to a device here, and in the list, with their identifiers now. One already open on the same
-    // identifier stays open, unless every one is to be opened again; one no longer wanted closes; one whose identifier
+    // identifier stays open, even when the system said its devices changed; one no longer wanted closes; one whose identifier
     // changed (unplugged and back between two looks) is opened again, and so is one that couldn't be opened last time.
     std::map<juce::String, juce::String> wanted;
     for (const auto& d : next)
@@ -156,7 +156,7 @@ void MidiPorts::refreshWith(const Listing& now, bool reopenAll) {
     const auto current = [&](const juce::String& port) {
         const auto open = open_.find(port);
         const auto want = wanted.find(port);
-        return !reopenAll && open != open_.end() && want != wanted.end() && open->second.id == want->second;
+        return open != open_.end() && want != wanted.end() && open->second.id == want->second;
     };
     std::set<juce::String> wasOpen;
     for (const auto& entry : open_) wasOpen.insert(entry.first);
@@ -260,7 +260,7 @@ juce::StringArray MidiPorts::removedPorts(const Table& table, const std::vector<
 }
 
 void MidiPorts::timerCallback() {
-    if (const auto now = look_(); needsALook(now)) refreshWith(now, false);   // one look, for the test and the refresh
+    if (const auto now = look_(); needsALook(now)) refreshWith(now);   // one look, for the test and the refresh
 }
 
 void MidiPorts::changeListenerCallback(juce::ChangeBroadcaster*) {

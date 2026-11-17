@@ -172,6 +172,21 @@ TEST_CASE("an interface lost mid-song stops the gear that follows start and stop
     host.deviceStarting(48000.0, 512);                            // the device coming back sends no second stop
     CHECK_FALSE(s.engine().popMidi(m));
 }
+TEST_CASE("closing the device on purpose mid-song stops the gear that follows start and stop at once", "[audiohost]") {
+    DemoSession d; app::AudioHost host(*d.session); auto& s = *d.session;
+    auto g1 = s.commands().run("device.add", params({{"name", "Drum machine"}})).value.toString();
+    s.commands().run("device.set", params({{"deviceId", g1}, {"startStop", true}}));
+    d.settle();  s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(48000);
+    REQUIRE(s.now().playing);
+    engine::OutMidi m; bool started = false;
+    while (s.engine().popMidi(m)) started = started || m.data[0] == 0xFA;
+    REQUIRE(started);
+    const auto queued = s.engine().queuedMidiCount();
+    host.close();
+    std::vector<engine::OutMidi> out; while (s.engine().popMidi(m)) out.push_back(m);
+    REQUIRE(out.size() == 1);  CHECK(out[0].data[0] == 0xFC);
+    CHECK(s.engine().queuedMidiCount() == queued + 1);
+}
 TEST_CASE("a rig that no longer names a device here stops the search for the old one", "[audiohost]") {
     DemoSession d; app::AudioHost host(*d.session);
     auto bind = [&](const char* type, const char* name) {

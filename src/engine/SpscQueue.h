@@ -46,6 +46,8 @@ public:
     }
 
     std::size_t capacity() const noexcept { return size_; }
+    // Any thread: how many items have been pushed since the queue was made.
+    std::size_t pushedCount() const noexcept { return write_.load(std::memory_order_acquire); }
 
 private:
     static std::size_t roundUp(std::size_t n) noexcept {

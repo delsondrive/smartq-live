@@ -32,6 +32,9 @@ public:
     // Any thread: how many messages it dropped (its scheduler full, or stale), alongside Engine::droppedMidiCount(). For
     // diagnostics only.
     std::uint64_t droppedCount() const noexcept { return dropped_.load(std::memory_order_relaxed); }
+    // Message thread, when closing: waits until it has sent (or dropped) the first `queued` messages the engine queued
+    // (Engine::queuedMidiCount), at most maxMs. False when time ran out first.
+    bool waitUntilSent(std::uint64_t queued, int maxMs);
 
 private:
     void run() override;
@@ -47,6 +50,8 @@ private:
     bool judged_ = false;                             // stale messages were dropped for the device that started last
     std::uint32_t judged_starts_ = 0;                 // that device's StreamAnchor::deviceStarts
     std::atomic<std::uint64_t> dropped_{0};           // the scheduler's droppedCount, as of its last change
+    std::uint64_t taken_ = 0;                         // its thread: how many it has taken from the engine
+    std::atomic<std::uint64_t> done_{0};              // of those, how many were sent or dropped, as of its last round
 };
 
 }  // namespace sqlive::app

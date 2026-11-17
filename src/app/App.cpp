@@ -14,6 +14,8 @@ namespace sqlive::app {
 
 namespace {
 
+constexpr int kLastMidiMs = 200;                                  // closing a band waits at most this for the last MIDI to go
+
 // The folder after an option such as --band, read from the working folder when it is relative; {} when there is none.
 juce::File folderAfter(const juce::StringArray& commandLine, const juce::String& option) {
     const int at = commandLine.indexOf(option);
@@ -105,10 +107,15 @@ void App::showMainWindow() {
 
 void App::closeBand() {
     window_.reset();                                              // its ShowController and pages hold the session
+    // The device first, which ends the playing song's MIDI (note-offs, 0xFC), and the dispatcher sends that before it and
+    // the ports go.
+    if (host_ != nullptr) host_->close();
+    if (dispatcher_ != nullptr && session_ != nullptr)
+        dispatcher_->waitUntilSent(session_->engine().queuedMidiCount(), kLastMidiMs);
     dispatcher_.reset();                                          // its thread sends through the ports by the host's clock
     if (session_ != nullptr) session_->attachMidi(nullptr);
     midi_.reset();                                                // closes the MIDI ports
-    host_.reset();                                                // closes the device
+    host_.reset();
     if (session_ != nullptr) session_->flushForClose();
     session_.reset();
 }

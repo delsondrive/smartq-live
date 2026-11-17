@@ -30,9 +30,11 @@ AudioHost::AudioHost(Session& session) : session_(session), engine_(session.engi
 
 AudioHost::~AudioHost() {
     stopTimer();
+    const bool playing = engine_.status().playingSerial != 0;
     changing_ = true;
     manager_.removeAudioCallback(this);
     manager_.closeAudioDevice();
+    if (playing) engine_.deviceStopped();                        // see close()
     alive_.reset();                                              // calls already posted do nothing now
     if (running_) session_.setDeviceRunning(false);
 }
@@ -127,10 +129,14 @@ bool AudioHost::hasBindingForThisComputer() const { return bindingForThisCompute
 void AudioHost::close() {
     stopTimer();
     const bool had = running_ || lost_;
+    const bool playing = engine_.status().playingSerial != 0;
     if (running_) session_.audioInterrupted();
     running_ = false;
     lost_ = false;
     closeDevice();
+    // Closed on purpose, it skipped deviceStopping (changing_ was set): the MIDI is ended here, once its callback no longer
+    // runs, as a lost device's is, so no note is left sounding and the gear following start and stop stops now.
+    if (playing) engine_.deviceStopped();
     session_.setDeviceRunning(false);
     if (had && onChanged) onChanged();
 }

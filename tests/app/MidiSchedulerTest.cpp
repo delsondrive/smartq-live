@@ -156,6 +156,26 @@ TEST_CASE("the dispatcher sends each message when its sample is heard, never ear
     CHECK(sent.at[2] >= t0 + 0.3 - 0.0006);  CHECK(sent.at[2] < t0 + 0.3 + 0.25);
 }
 
+TEST_CASE("closing waits for the dispatcher to send what the engine queued, but not for ever", "[midisched]") {
+    using namespace sqlive::test;
+    engine::Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    e.cue(share(midiSong({ev(100, 0, 0x90, 60, 100), ev(200, 0, 0xB0, 1, 1)})));  e.start();
+    engine::renderOffline(e, 2, 9000, 512, {{1000, [](engine::Engine& en) { en.stop(); }}});
+    const auto now = e.status().streamTime;
+    Sent sent; Anchor anchor;
+    const double t0 = nowSeconds();
+    anchor.set({true, now, t0, 48000.0, 0.0, 1});                   // all of it due by now
+    MidiDispatcher dispatcher(e, [&] { return anchor.get(); }, [&](const engine::OutMidi& m) { sent.add(m); });
+    CHECK(dispatcher.waitUntilSent(e.queuedMidiCount(), 2000));
+    CHECK(sent.count() == 3);                                       // the note-on, the controller and the note-off
+    e.cue(share(midiSong({ev(100, 0, 0xB0, 2, 2)})));  e.start();
+    engine::renderOffline(e, 2, 1024, 512);
+    anchor.set({true, e.status().streamTime, nowSeconds() + 60.0, 48000.0, 0.0, 1});   // a minute away
+    const double before = nowSeconds();
+    CHECK_FALSE(dispatcher.waitUntilSent(e.queuedMidiCount(), 200));
+    CHECK(nowSeconds() - before >= 0.19);  CHECK(nowSeconds() - before < 1.0);
+    CHECK(sent.count() == 3);
+}
 TEST_CASE("a dispatcher that starts late drops what was queued long ago, but still ends the notes and sets the devices", "[midisched]") {
     using namespace sqlive::test;
     engine::Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());

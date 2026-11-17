@@ -213,7 +213,7 @@ TEST_CASE("a port another program held is opened once it is free, and one unplug
     juce::MessageManager::getInstance()->runDispatchLoopUntil(1300);
     CHECK(fake.opens["Port A"] == 2);                               // nothing changed since: left open
 }
-TEST_CASE("a port unplugged and back so quickly that the list reads the same is opened again and sent its patch", "[ports]") {
+TEST_CASE("a port unplugged and back so quickly that the list reads the same keeps its handle and is sent nothing", "[ports]") {
     for (bool singleClient : {false, true}) {
         INFO(singleClient);
         DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};  fake.ids["Port A"] = "usb-1";
@@ -228,16 +228,34 @@ TEST_CASE("a port unplugged and back so quickly that the list reads the same is 
         engine::OutMidi m; while (s.engine().popMidi(m)) {}
         REQUIRE(fake.opens["Port A"] == 1);
         ports.devicesChanged();                                     // the system says its devices changed; the list reads as before
-        CHECK(fake.opens["Port A"] == 2);  CHECK(fake.closes["Port A"] == 1);
+        CHECK(fake.opens["Port A"] == 1);  CHECK(fake.closes["Port A"] == 0);   // its listing is the same: left alone
         CHECK(ports.status(g1) == MidiPorts::Status::Connected);
         s.advanceWithoutDevice(512);
-        REQUIRE(s.engine().popMidi(m));                             // its current patch, said again
-        CHECK(m.data[0] == 0xC0);  CHECK(m.data[1] == 7);
-        CHECK(m.serial == s.engine().status().playingSerial);
-        fake.sent.clear();  ports.send(m);                         // through the port opened again
-        REQUIRE(fake.sent["Port A"].size() == 1);  CHECK(fake.sent["Port A"][0] == std::vector<std::uint8_t>{0xC0, 7});
+        CHECK_FALSE(s.engine().popMidi(m));                         // nothing said again
         s.attachMidi(nullptr);
     }
+}
+TEST_CASE("an unrelated port appearing mid-song leaves the bound port alone and sends it nothing", "[ports]") {
+    DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};  fake.ids["Port A"] = "usb-1";
+    auto g1 = s.commands().run("device.add", params({{"name", "Guitar 1"}})).value.toString();
+    s.commands().run("rig.setMidi", params({{"rigId", s.rigId()}, {"deviceId", g1}, {"computerId", s.settings().computerName()}, {"port", "Port A"}}));
+    auto song = d.setlist().entries[0].songId;
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", g1}, {"bar", 1}, {"beat", 1}, {"messages", messages({pc(7)})}}));
+    d.settle();
+    app::MidiPorts ports(s, fake.lister(), fake.opener(), fake.identifiers());  s.attachMidi(&ports);  ports.refresh();
+    s.perform(Action::Start);  s.advanceWithoutDevice(48000 * 4);
+    engine::OutMidi m; while (s.engine().popMidi(m)) ports.send(m);
+    REQUIRE(fake.opens["Port A"] == 1);
+    fake.sent.clear();
+    fake.present = {"Port A", "USB gadget"};  fake.ids["USB gadget"] = "usb-9";   // something else plugged in
+    ports.devicesChanged();
+    CHECK(fake.opens["Port A"] == 1);  CHECK(fake.closes["Port A"] == 0);
+    CHECK(fake.opens["USB gadget"] == 0);
+    CHECK(ports.status(g1) == MidiPorts::Status::Connected);
+    s.advanceWithoutDevice(512);
+    while (s.engine().popMidi(m)) ports.send(m);
+    CHECK(fake.sent["Port A"].empty());
+    s.attachMidi(nullptr);
 }
 TEST_CASE("a device removed while its song plays still gets that song's note-offs, then its port closes", "[ports]") {
     DemoSession d; auto& s = *d.session; FakePorts fake; fake.present = {"Port A"};
