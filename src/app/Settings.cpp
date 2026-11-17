@@ -104,6 +104,65 @@ void Settings::setShowMemory(const juce::File& bandRoot, const ShowMemory& memor
     bandObject(bandRoot).setProperty("show", juce::var(show));
 }
 
+namespace {
+juce::String accessName(PhoneAccess access) {
+    switch (access) {
+        case PhoneAccess::Waiting: return "waiting";
+        case PhoneAccess::ViewOnly: return "view";
+        case PhoneAccess::FullControl: return "full";
+        case PhoneAccess::Refused: break;
+    }
+    return "refused";
+}
+
+PhoneAccess accessNamed(const juce::String& name) {
+    if (name == "waiting") return PhoneAccess::Waiting;
+    if (name == "view") return PhoneAccess::ViewOnly;
+    if (name == "full") return PhoneAccess::FullControl;
+    return PhoneAccess::Refused;
+}
+}  // namespace
+
+RemoteMemory Settings::remoteMemory(const juce::File& bandRoot) const {
+    RemoteMemory memory;
+    const auto remote = bandSettings(bandRoot).getProperty("remote", {});
+    if (!remote.isObject()) return memory;
+    memory.enabled = static_cast<bool>(remote.getProperty("enabled", false));
+    memory.pin = remote.getProperty("pin", {}).toString();
+    memory.port = static_cast<int>(remote.getProperty("port", 8080));
+    if (auto* phones = remote.getProperty("phones", {}).getArray()) {
+        for (const auto& item : *phones) {
+            Phone phone;
+            phone.id = item.getProperty("id", {}).toString();
+            phone.name = item.getProperty("name", {}).toString();
+            phone.access = accessNamed(item.getProperty("access", {}).toString());
+            const auto hash = item.getProperty("tokenHash", {}).toString();
+            if (phone.id.isEmpty() || hash.isEmpty()) continue;
+            memory.phones.push_back(phone);
+            memory.tokenHashes.add(hash);
+        }
+    }
+    return memory;
+}
+
+void Settings::setRemoteMemory(const juce::File& bandRoot, const RemoteMemory& memory) {
+    juce::Array<juce::var> phones;
+    for (size_t i = 0; i < memory.phones.size() && static_cast<int>(i) < memory.tokenHashes.size(); ++i) {
+        auto* phone = new juce::DynamicObject();
+        phone->setProperty("id", memory.phones[i].id);
+        phone->setProperty("name", memory.phones[i].name);
+        phone->setProperty("access", accessName(memory.phones[i].access));
+        phone->setProperty("tokenHash", memory.tokenHashes[static_cast<int>(i)]);
+        phones.add(juce::var(phone));
+    }
+    auto* remote = new juce::DynamicObject();
+    remote->setProperty("enabled", memory.enabled);
+    remote->setProperty("pin", memory.pin);
+    remote->setProperty("port", memory.port);
+    remote->setProperty("phones", phones);
+    bandObject(bandRoot).setProperty("remote", juce::var(remote));
+}
+
 juce::Result Settings::save() {
     juce::Array<juce::var> recent;
     for (const auto& path : recent_) recent.add(path);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <juce_core/juce_core.h>
 
 namespace sqlive::app {
@@ -12,7 +14,26 @@ struct ShowMemory {
     juce::String tonightJson;
 };
 
-// This computer's own settings: the band folders it opened lately, the rig and setlist chosen for each, and the show memory.
+// How far a phone on the remote is let in. Refused is never kept: it is what an unknown or forgotten phone gets.
+enum class PhoneAccess { Waiting, ViewOnly, FullControl, Refused };
+
+struct Phone {
+    juce::String id, name;
+    PhoneAccess access = PhoneAccess::Waiting;
+    bool connected = false;                                             // not kept: every phone is unconnected after a restart
+};
+
+// The phone remote as a band folder left it on this computer. RemoteAccess is its only writer.
+struct RemoteMemory {
+    bool enabled = false;
+    juce::String pin;
+    int port = 8080;
+    std::vector<Phone> phones;
+    juce::StringArray tokenHashes;                                      // tokenHashes[i] belongs to phones[i]: SHA-256, hex
+};
+
+// This computer's own settings: the band folders it opened lately, the rig and setlist chosen for each, the show memory and the phone
+// remote's memory.
 // It lives outside the band folders, because it differs from one computer to the next.
 class Settings {
 public:
@@ -35,6 +56,10 @@ public:
 
     ShowMemory showMemory(const juce::File& bandRoot) const;
     void setShowMemory(const juce::File& bandRoot, const ShowMemory& memory);
+
+    // Phones without an id or a token hash are left out on reading, so the two lists always line up.
+    RemoteMemory remoteMemory(const juce::File& bandRoot) const;
+    void setRemoteMemory(const juce::File& bandRoot, const RemoteMemory& memory);
 
     juce::Result save();                                                // writes the file atomically
 

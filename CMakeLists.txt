@@ -89,6 +89,7 @@ target_link_libraries(SmartQLive
         sqlive_engine
         juce::juce_audio_utils
         juce::juce_gui_extra
+        juce::juce_cryptography
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
@@ -118,6 +119,7 @@ target_link_libraries(sqlive_tests
         sqlive_engine
         juce::juce_audio_utils
         juce::juce_gui_extra
+        juce::juce_cryptography
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
         Catch2::Catch2WithMain)

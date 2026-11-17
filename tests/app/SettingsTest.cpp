@@ -43,3 +43,23 @@ TEST_CASE("settings keep what a later version wrote, so it isn't erased", "[sett
     Settings again(file);
     CHECK(again.rigFor(a) == "rig-1");  CHECK(again.recentBandFolders().size() == 1);
 }
+TEST_CASE("settings keep each band's phone remote, its phones and token hashes in step", "[settings]") {
+    sqlive::test::TempDir t; auto file = t.dir().getChildFile("settings.json");
+    auto a = t.dir().getChildFile("Band A"), b = t.dir().getChildFile("Band B");
+    {   Settings s(file);
+        CHECK_FALSE(s.remoteMemory(a).enabled);  CHECK(s.remoteMemory(a).port == 8080);  CHECK(s.remoteMemory(a).phones.empty());
+        sqlive::app::RemoteMemory memory;
+        memory.enabled = true;  memory.pin = "4719";  memory.port = 8090;
+        memory.phones = {{"p1", "Sam", sqlive::app::PhoneAccess::FullControl, true}, {"p2", "Jo", sqlive::app::PhoneAccess::Waiting, false}};
+        memory.tokenHashes = {"hash-1", "hash-2"};
+        s.setRemoteMemory(a, memory);
+        REQUIRE(s.save().wasOk()); }
+    Settings again(file);
+    const auto memory = again.remoteMemory(a);
+    CHECK(memory.enabled);  CHECK(memory.pin == "4719");  CHECK(memory.port == 8090);
+    REQUIRE(memory.phones.size() == 2);  REQUIRE(memory.tokenHashes.size() == 2);
+    CHECK(memory.phones[0].name == "Sam");  CHECK(memory.phones[0].access == sqlive::app::PhoneAccess::FullControl);
+    CHECK_FALSE(memory.phones[0].connected);                     // being connected isn't kept
+    CHECK(memory.phones[1].access == sqlive::app::PhoneAccess::Waiting);  CHECK(memory.tokenHashes[1] == "hash-2");
+    CHECK(again.remoteMemory(b).phones.empty());                 // per band
+}
