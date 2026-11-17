@@ -84,3 +84,47 @@ TEST_CASE("changes that couldn't be saved yet are named before the show", "[pres
     CHECK(item->detail == s.saveError());
     CHECK(mayEnterShow(items));
 }
+
+// ---- The cue and click sounds the setlist needs (the final review, I6) ----
+
+TEST_CASE("the cue and click sounds the setlist needs are checked: missing ones named, ones in the cloud blocking", "[preshow]") {
+    DemoSession d; auto& s = *d.session;
+    const auto first = d.setlist().entries[0].songId, second = d.setlist().entries[1].songId;
+    REQUIRE(s.commands().run("cue.add", params({{"songId", first}, {"bar", 3}, {"beat", 1.0}, {"clip", "cues/solo-now.wav"}})).ok);
+    REQUIRE(s.commands().run("song.setClick", params({{"songId", second}, {"sound", "clicks/Shaker.wav"}})).ok);
+    CHECK(clipsNeeded(*s.model().song(first), s.model().band(), {}) == juce::StringArray{"cues/solo-now.wav"});
+    auto items = runPreShowCheck(s, good());
+    REQUIRE(find(items, "cues") != nullptr);
+    CHECK(find(items, "cues")->level == CheckItem::Level::Warning);
+    CHECK(find(items, "cues")->title == "2 cue or click sounds are missing");
+    CHECK(find(items, "cues")->detail == "solo-now.wav, Shaker.wav. They won't be heard on stage.");
+    CHECK(mayEnterShow(items));
+
+    const auto root = s.folder().root();
+    root.getChildFile("cues").createDirectory();  root.getChildFile("clicks").createDirectory();
+    root.getChildFile("cues/solo-now.wav").replaceWithText("a take");   // the guitarist's recording has synced
+    root.getChildFile("clicks/Shaker.wav").replaceWithText("a click");
+    items = runPreShowCheck(s, good());
+    CHECK(find(items, "cues") == nullptr);
+    CHECK(find(items, "files")->level == CheckItem::Level::Ok);
+
+    // On this laptop it is still only in the cloud: the existing "still in the cloud" blocker, with Download now.
+    if (!sqlive::test::markAsInTheCloud(root.getChildFile("cues/solo-now.wav"))) SKIP("no cloud placeholders here");
+    items = runPreShowCheck(s, good());
+    CHECK_FALSE(mayEnterShow(items));
+    const auto* files = find(items, "files");
+    REQUIRE(files != nullptr);
+    CHECK(files->level == CheckItem::Level::Blocker);
+    CHECK(files->title == "1 audio file is still in the cloud");
+    CHECK(files->detail == "OneDrive hasn't downloaded it to this laptop (cue and click sounds: solo-now.wav).");
+    CHECK(files->fixLabel == "Download now");
+    const auto problems = clipFileProblems(s, first, {});
+    REQUIRE(problems.size() == 1);  CHECK(problems[0].inCloud);  CHECK(problems[0].path == "cues/solo-now.wav");
+}
+TEST_CASE("the section cues an entry's arrangement announces are checked; a missing voice says so", "[preshow]") {
+    DemoSession d(true); auto& s = *d.session;                     // sections typed Intro, Verse, Chorus …: the built-in voice
+    auto items = runPreShowCheck(s, good());
+    REQUIRE(find(items, "cues") != nullptr);
+    CHECK(find(items, "cues")->title == "The cue voice hasn't been made");
+    CHECK(find(items, "cues")->detail.startsWith("Sections won't be announced (Intro.wav, Verse.wav, Chorus.wav"));
+}

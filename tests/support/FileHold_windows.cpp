@@ -12,4 +12,11 @@ ExclusiveFileHold::~ExclusiveFileHold() {
     if (handle_ != nullptr) CloseHandle(static_cast<HANDLE>(handle_));
 }
 
+bool markAsInTheCloud(const juce::File& file) {
+    const auto name = file.getFullPathName();
+    const auto path = name.toWideCharPointer();
+    const DWORD attributes = GetFileAttributesW(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && SetFileAttributesW(path, attributes | FILE_ATTRIBUTE_OFFLINE) != 0;
+}
+
 }  // namespace sqlive::test

@@ -378,6 +378,7 @@ void Session::enterShow() {
     if (playing_.active() && playing_.single) perform(Action::Stop);
     stopVoice(false);                                            // and waited for: Show mode never writes the band folder
     mode_ = Mode::Show;
+    cues_.setShowRunning(true);                                  // nor looks at the cue clips again: the show keeps its own
     writeShowMemory();
     flushNow();                                                  // what is waiting is written now, not left for the show
     refresh();
@@ -387,6 +388,7 @@ bool Session::leaveShow() {
     if (mode_ == Mode::Edit) return true;
     if (now().playing) return false;
     mode_ = Mode::Edit;
+    cues_.setShowRunning(false);
     writeShowMemory();                                           // no longer in the show; tonight's changes wait for the answer
     if (std::exchange(snapshot_owed_, false)) snapshotOnOpening();   // the band opened straight into this show
     pollFolder();                                                // what changed on other computers during the show
@@ -514,6 +516,7 @@ void Session::restoreShow() {
     tonight_ = Tonight::fromJson(memory.tonightJson);
     if (!memory.inShow) return;
     mode_ = Mode::Show;
+    cues_.setShowRunning(true);
     stage_view_ = memory.stageView;
     if (memory.setlistId != setlist_id_ && model_.setlist(memory.setlistId) != nullptr) {
         setlist_id_ = memory.setlistId;
@@ -781,6 +784,7 @@ Readiness Session::readinessOf(const juce::String& songId, const juce::String& a
 void Session::refresh() {
     if (ensureChoices()) rememberChoices();                      // the chosen one was removed: a fallback is remembered too
     resolveNext();
+    cues_.setComputerNames(computerNames());                     // so a conflict copy of a clip isn't offered as one
     refreshPrepared();
     refreshWanted();
     refreshMix(false);
@@ -839,19 +843,22 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
         return nullptr;
     }
     auto heard = tonight_.apply(*doc);
-    // The cue clips are built into it too: one that arrived since builds it again.
+    // The cue clips are built into it too: one of its own that arrived, changed or went since builds it again.
     if (const auto found = prepared_.find(key); found != prepared_.end() && found->second->loaded == loaded
-                                                && found->second->doc == heard && found->second->cueRevision == cues_.revision())
+                                                && found->second->doc == heard && sameClips(*found->second))
         return found->second;
 
     auto prepared = std::make_shared<Prepared>();
     prepared->doc = std::move(heard);
     prepared->arrangementId = arrangementId;
-    prepared->cueRevision = cues_.revision();                    // read before the clips are asked for
     prepared->clickDb = prepared_band_.clickDb + prepared->doc.click.offsetDb;
     prepared->cuesDb = prepared_band_.cuesDb;
     prepared->loaded = loaded;
-    const model::PrepareOptions options{arrangementId, [this](const juce::String& path) { return cues_.clip(path); }};
+    const model::PrepareOptions options{arrangementId, [this, &prepared](const juce::String& path) {
+        auto clip = cues_.clip(path);
+        prepared->clips[path] = clip;
+        return clip;
+    }};
     prepared->song = std::make_shared<const engine::PreparedSong>(
         model::buildPreparedSong(prepared->doc, prepared_band_, prepared_rig_, loaded->audio, sample_rate_, options));
     for (std::size_t i = 0; i < prepared->song->parts.size(); ++i)
@@ -860,6 +867,21 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
     prepared_[key] = prepared;
     ++prepared_builds_;
     return prepared;
+}
+
+juce::StringArray Session::computerNames() const {
+    juce::StringArray names{settings_.computerName()};
+    for (const auto& id : model_.rigIds())
+        if (const auto* rig = model_.rig(id))
+            for (const auto& [name, binding] : rig->computers) names.addIfNotAlreadyThere(name);
+    names.removeEmptyStrings();
+    return names;
+}
+
+bool Session::sameClips(const Prepared& prepared) const {
+    for (const auto& [path, clip] : prepared.clips)
+        if (const auto now = cues_.loaded(path); !now || *now != clip) return false;   // forgotten, arrived, changed or gone
+    return true;
 }
 
 void Session::refreshPrepared() {

@@ -226,3 +226,56 @@ TEST_CASE("a cue clip replaced on disk reaches the songs already prepared, in Ed
     s.advanceWithoutDevice(0);  d.settle();
     CHECK(s.preparedBuilds() == inShow);                            // a show goes on with what it started with
 }
+
+// ---- The final review's fixes (M5, M6) ----
+
+TEST_CASE("while a show runs a cue clip's file is never looked at again", "[cuelib]") {
+    DemoSession d; auto root = d.session->folder().root();
+    const auto file = root.getChildFile("cues/Watch me.wav");
+    writeSine(file, 48000.0, 1, 0.5, 440.0, 0.5f);
+    app::CueLibrary lib(d.session->folder(), 48000.0);
+    lib.setCheckIntervalMs(0.0);                                   // every call may look
+    lib.clip("cues/Watch me.wav");
+    REQUIRE(lib.waitUntilIdle(5000));
+    const auto first = lib.clip("cues/Watch me.wav");
+    REQUIRE(first != nullptr);
+    lib.setShowRunning(true);
+    writeSine(file, 48000.0, 1, 0.25, 440.0, 0.5f);                // a bandmate's new take, mid-show
+    CHECK(lib.clip("cues/Watch me.wav") == first);
+    lib.lookAgain();
+    REQUIRE(lib.waitUntilIdle(5000));
+    CHECK(lib.clip("cues/Watch me.wav") == first);                 // not read again during the show
+    CHECK(lib.loaded("cues/Watch me.wav") == std::optional(first));
+    lib.setShowRunning(false);                                     // the show is over: the change is seen
+    lib.clip("cues/Watch me.wav");
+    REQUIRE(lib.waitUntilIdle(5000));
+    REQUIRE(lib.clip("cues/Watch me.wav") != nullptr);
+    CHECK(lib.clip("cues/Watch me.wav")->left.size() == 12000);
+    CHECK_FALSE(lib.loaded("cues/never asked.wav").has_value());   // loaded() never asks for one
+    REQUIRE(lib.waitUntilIdle(5000));
+    CHECK_FALSE(lib.loaded("cues/never asked.wav").has_value());
+}
+TEST_CASE("a cue clip arriving builds again only the songs that say it", "[cuelib][session]") {
+    DemoSession d; auto& s = *d.session;
+    const auto second = d.setlist().entries[1].songId;             // kept prepared beside the first, the next one
+    REQUIRE(s.commands().run("cue.add", sqlive::test::params({{"songId", second}, {"bar", 3}, {"beat", 1.0},
+                                                               {"clip", "cues/Only here.wav"}})).ok);
+    s.cues().setCheckIntervalMs(0.0);
+    d.settle();  s.advanceWithoutDevice(0);  d.settle();          // asked for, and found missing
+    const auto builds = s.preparedBuilds();
+    writeSine(s.folder().root().getChildFile("cues/Only here.wav"), 48000.0, 1, 0.5, 440.0, 0.5f);   // it arrives
+    s.advanceWithoutDevice(0);  d.settle();                         // the look at the folder sees it; it is read
+    REQUIRE(s.cues().loaded("cues/Only here.wav").value_or(nullptr) != nullptr);
+    CHECK(s.preparedBuilds() == builds + 1);                        // the second song again, not the first
+}
+TEST_CASE("a sync tool's conflict copies in cues/ and clicks/ are not offered as clips", "[cuelib]") {
+    DemoSession d; auto root = d.session->folder().root();
+    for (const auto* name : {"cues/Chorus.wav", "cues/Chorus (Yan's conflicted copy 2026-11-15).wav", "cues/Chorus-DRUMMER-PC.wav",
+                             "cues/Lead-in.wav", "clicks/Shaker.wav", "clicks/Shaker.sync-conflict-20261115-120000-ABCDEFG.wav",
+                             "clicks/Shaker_conflict-20261115-120000.wav"})
+        writeSine(root.getChildFile(name), 48000.0, 1, 0.1, 440.0, 0.5f);
+    app::CueLibrary lib(d.session->folder(), 48000.0);
+    lib.setComputerNames({"DRUMMER-PC"});                          // OneDrive names its copy after the computer
+    CHECK(lib.clipsInFolder() == juce::StringArray{"cues/Chorus.wav", "cues/Lead-in.wav"});
+    CHECK(lib.clickSoundsInFolder() == juce::StringArray{"clicks/Shaker.wav"});
+}

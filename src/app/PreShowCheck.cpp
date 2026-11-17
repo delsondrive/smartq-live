@@ -1,8 +1,11 @@
 #include "app/PreShowCheck.h"
 
+#include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "app/MidiPorts.h"
+#include "app/PartFiles.h"
 #include "model/CloudFiles.h"
 #include "model/Routing.h"
 
@@ -58,31 +61,52 @@ void addMidi(std::vector<CheckItem>& items, const Session& session) {
                              "No pedalboard has a MIDI port on this laptop. Choose them in Setup, or go on without them."));
 }
 
-// A warning when a song in the setlist has more than one section and one of them is of a type whose cue clip isn't in the
-// band folder: its sections wouldn't be announced. Nothing when every cue the setlist needs is there.
-void addCues(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
-    if (setlist == nullptr) return;
-    const auto& model = session.model();
-    const auto& root = session.folder().root();
-    const auto clipMissing = [&](const juce::String& typeId) {
-        for (const auto& type : model.band().sectionTypes)
-            if (type.id == typeId)
-                return type.cueClip.isNotEmpty() && !root.getChildFile(type.cueClip).existsAsFile();
-        return false;
-    };
-    for (const auto& entry : setlist->entries) {
-        const auto* song = model.song(entry.songId);
-        if (song == nullptr || song->sections.size() < 2) continue;
-        for (const auto& section : song->sections)
-            if (section.typeId.isNotEmpty() && clipMissing(section.typeId)) {
-                items.push_back(item(Level::Warning, "cues", "The cue voice hasn't been made",
-                                     "Sections won't be announced. Make it in Setup, under Cue voice."));
-                return;
-            }
-    }
+// The cue and click sounds the setlist's entries need (clipFileProblems, as each entry's arrangement plays its song) that
+// can't be played: each file once, in setlist order.
+struct ClipProblems { std::vector<ClipFileProblem> missing, inCloud; };
+
+ClipProblems clipProblems(const Session& session, const model::SetlistDoc* setlist) {
+    ClipProblems out;
+    if (setlist == nullptr) return out;
+    juce::StringArray seen;
+    for (const auto& entry : setlist->entries)
+        for (auto& problem : clipFileProblems(session, entry.songId, entry.arrangementId)) {
+            if (seen.contains(problem.path)) continue;
+            seen.add(problem.path);
+            (problem.inCloud ? out.inCloud : out.missing).push_back(std::move(problem));
+        }
+    return out;
 }
 
-void addFiles(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
+juce::String fileNameOf(const ClipFileProblem& problem) { return problem.path.fromLastOccurrenceOf("/", false, false); }
+
+// "Chorus.wav, Verse.wav, solo-now.wav…": at most three file names.
+juce::String fileNames(const std::vector<ClipFileProblem>& problems) {
+    juce::StringArray names;
+    for (std::size_t i = 0; i < problems.size() && i < 3; ++i) names.add(fileNameOf(problems[i]));
+    return names.joinIntoString(", ") + (problems.size() > 3 ? juce::String(juce::CharPointer_UTF8("\xe2\x80\xa6")) : juce::String());
+}
+
+// A warning naming the cue and click sounds the setlist needs that aren't in the band folder: those cues wouldn't be said,
+// and a click of the band's own would be the wood block. When they are all the built-in voice's, the voice hasn't been
+// made. Nothing when every one is there.
+void addCues(std::vector<CheckItem>& items, const std::vector<ClipFileProblem>& missing) {
+    if (missing.empty()) return;
+    const bool voice = std::all_of(missing.begin(), missing.end(),
+                                   [](const ClipFileProblem& p) { return p.path.startsWith("cues/built-in/"); });
+    if (voice)
+        items.push_back(item(Level::Warning, "cues", "The cue voice hasn't been made",
+                             "Sections won't be announced (" + fileNames(missing) + "). Make it in Setup, under Cue voice."));
+    else
+        items.push_back(item(Level::Warning, "cues",
+                             plural((int) missing.size(), "cue or click sound is missing", "cue or click sounds are missing"),
+                             fileNames(missing) + ". They won't be heard on stage."));
+}
+
+// The audio files still in the cloud, the setlist's cue and click sounds among them, are one blocker with "Download now";
+// else the parts with no audio file are a warning; else every file is here.
+void addFiles(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist,
+              const std::vector<ClipFileProblem>& cloudClips) {
     std::vector<PartFileProblem> missing;
     juce::StringArray cloudSongs;                                // "<song>: <part names>" per song, at most three parts in all
     int cloudCount = 0, named = 0;
@@ -101,6 +125,13 @@ void addFiles(std::vector<CheckItem>& items, const Session& session, const model
             }
             if (names.size() > 0 && song != nullptr) cloudSongs.add(song->title + ": " + names.joinIntoString(", "));
         }
+    // The setlist's cue and click sounds in the cloud: named by file, after the songs' parts, within the same three.
+    juce::StringArray clipNames;
+    for (const auto& clip : cloudClips) {
+        ++cloudCount;
+        if (named < 3) { clipNames.add(fileNameOf(clip)); ++named; } else more = true;
+    }
+    if (clipNames.size() > 0) cloudSongs.add("cue and click sounds: " + clipNames.joinIntoString(", "));
     if (cloudCount > 0) {
         const auto list = cloudSongs.joinIntoString("; ") + (more ? juce::String(juce::CharPointer_UTF8("\xe2\x80\xa6")) : juce::String());
         items.push_back(item(Level::Blocker, "files", plural(cloudCount, "audio file is", "audio files are") + " still in the cloud",
@@ -124,8 +155,9 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
     addRouting(items, session, in);
     addMidi(items, session);
     const auto* setlist = session.model().setlist(session.setlistId());
-    addCues(items, session, setlist);
-    addFiles(items, session, setlist);
+    const auto clips = clipProblems(session, setlist);
+    addCues(items, clips.missing);
+    addFiles(items, session, setlist, clips.inCloud);
     if (setlist == nullptr || setlist->entries.empty())
         items.push_back(item(Level::Blocker, "setlist", "This setlist is empty", "Add songs to it first."));
     else

@@ -380,7 +380,7 @@ TEST_CASE("the pre-show check warns when sections would go unannounced", "[cuevo
     REQUIRE(cues != nullptr);
     CHECK(cues->level == app::CheckItem::Level::Warning);
     CHECK(cues->title == "The cue voice hasn't been made");
-    CHECK(cues->detail == "Sections won't be announced. Make it in Setup, under Cue voice.");
+    CHECK(cues->detail == "Sections won't be announced (Intro.wav, Chorus.wav). Make it in Setup, under Cue voice.");
     CHECK(app::mayEnterShow(items));
     // After midi and before files, as PreShowCheck.h lists them.
     const auto at = [&](const char* id) {

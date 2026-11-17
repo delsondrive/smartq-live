@@ -59,7 +59,7 @@ std::shared_ptr<const engine::PartAudio> CueLibrary::clip(const juce::String& pa
         if (const auto found = entries_.find(key); found != entries_.end()) {
             auto& entry = found->second;
             const bool settled = entry.state == State::Loaded || entry.state == State::Failed;
-            if (!settled || now - entry.checkedMs < checkEveryMs_) return entry.clip;
+            if (!settled || show_ || now - entry.checkedMs < checkEveryMs_) return entry.clip;   // a show looks at nothing again
             entry.checkedMs = now;
             seen = entry.stamp;
         } else {
@@ -103,7 +103,7 @@ void CueLibrary::lookAgain() {
     std::vector<std::pair<juce::String, Stamp>> settled;
     {
         const juce::ScopedLock sl(lock_);
-        if (now - lastLookMs_ < checkEveryMs_) return;
+        if (show_ || now - lastLookMs_ < checkEveryMs_) return;
         lastLookMs_ = now;
         for (auto& [key, entry] : entries_)
             if (entry.state == State::Loaded || entry.state == State::Failed) {
@@ -141,13 +141,37 @@ void CueLibrary::forget(const juce::String& pathInBandFolder) {
 juce::StringArray CueLibrary::audioFilesUnder(const juce::String& folderName) const {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    juce::StringArray paths;
+    juce::StringArray paths, computers;
+    {
+        const juce::ScopedLock sl(lock_);
+        computers = computers_;
+    }
     const auto folder = root_.getChildFile(folderName);
     for (const auto& file : folder.findChildFiles(juce::File::findFiles | juce::File::ignoreHiddenFiles, true,
                                                   formats.getWildcardForAllFormats()))
-        paths.add(file.getRelativePathFrom(root_).replaceCharacter('\\', '/'));
+        if (!model::looksLikeConflictCopy(file, computers))   // two computers made it: not a clip of its own
+            paths.add(file.getRelativePathFrom(root_).replaceCharacter('\\', '/'));
     paths.sort(true);
     return paths;
+}
+
+std::optional<std::shared_ptr<const engine::PartAudio>> CueLibrary::loaded(const juce::String& pathInBandFolder) const {
+    const auto file = fileFor(pathInBandFolder);
+    if (file == juce::File()) return std::shared_ptr<const engine::PartAudio>();   // never a clip: asking changes nothing
+    const juce::ScopedLock sl(lock_);
+    const auto found = entries_.find(file.getFullPathName());
+    if (found == entries_.end()) return std::nullopt;
+    return found->second.clip;
+}
+
+void CueLibrary::setShowRunning(bool running) {
+    const juce::ScopedLock sl(lock_);
+    show_ = running;
+}
+
+void CueLibrary::setComputerNames(juce::StringArray names) {
+    const juce::ScopedLock sl(lock_);
+    computers_ = std::move(names);
 }
 
 juce::StringArray CueLibrary::clipsInFolder() const { return audioFilesUnder("cues"); }

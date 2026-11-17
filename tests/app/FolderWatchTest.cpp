@@ -592,3 +592,31 @@ TEST_CASE("undoing the load of a song another computer trashed brings its folder
     CHECK(root.getChildFile("trash").getNumberOfChildFiles(juce::File::findDirectories) == 0);
     s.advanceWithoutDevice(0);  CHECK(s.outsideChanges().empty());
 }
+
+TEST_CASE("a setlist or rig a bandmate removed and made again under the same file name comes in, once its removal was taken", "[folderwatch]") {
+    for (const auto kind : {model::DocKind::Setlist, model::DocKind::Rig}) {
+        INFO((kind == model::DocKind::Setlist ? "setlist" : "rig"));
+        DemoSession d; auto& s = *d.session; auto root = s.folder().root();
+        const model::DocKey old{kind, kind == model::DocKind::Setlist ? s.setlistId() : s.rigId()};
+        const auto file = s.folder().fileFor(old);
+        REQUIRE(file.existsAsFile());
+        auto theirs = juce::JSON::parse(file.loadFileAsString());  // made again: the same, with a new id
+        const auto newId = model::newId();
+        theirs.getDynamicObject()->setProperty("id", newId);
+        REQUIRE(root.getChildFile("trash").createDirectory());
+        REQUIRE(file.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + file.getFileName())));   // their app trashed it
+        s.advanceWithoutDevice(0);
+        REQUIRE(s.outsideChanges().size() == 1);
+        REQUIRE(s.takeOutsideChanges().wasOk());                   // its removal is taken; its file still remembered
+        writeElsewhere(file, juce::JSON::toString(theirs));        // then made again under the same file name
+        s.advanceWithoutDevice(0);
+        REQUIRE(s.outsideChanges().size() == 1);
+        CHECK(s.outsideChanges()[0].kind == OutsideChange::Kind::Added);
+        CHECK(s.takeOutsideChanges().wasOk());
+        CHECK(s.outsideChanges().empty());
+        const model::DocKey made{kind, newId};
+        CHECK(documentLoaded(s.model(), made));
+        CHECK(s.folder().fileFor(made) == file);
+        CHECK_FALSE(s.loadReport().notes.joinIntoString("\n").contains("is the file of another"));
+    }
+}

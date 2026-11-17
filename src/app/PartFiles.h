@@ -17,4 +17,13 @@ struct PartFileProblem { juce::String partId, partName; juce::File file; bool in
 // So "in the cloud" never counts a missing file, though model::filesNotOnThisComputer does.
 std::vector<PartFileProblem> partFileProblems(const Session&, const juce::String& songId);
 
+// The cue and click sounds a song needs as an arrangement plays it ("" = in order), as paths inside the band folder, each
+// once: the clips that announce the sections it plays (model::announcements; none for a single step), its manual cues'
+// clips, and its click sound when that is one of the band's own (model::isClickClip).
+juce::StringArray clipsNeeded(const model::SongDoc&, const model::BandDoc&, const juce::String& arrangementId);
+
+// One of those that cannot be played yet, decided as partFileProblems decides it.
+struct ClipFileProblem { juce::String path; juce::File file; bool inCloud = false; };
+std::vector<ClipFileProblem> clipFileProblems(const Session&, const juce::String& songId, const juce::String& arrangementId);
+
 }  // namespace sqlive::app

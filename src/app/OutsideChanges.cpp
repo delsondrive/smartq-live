@@ -324,25 +324,27 @@ juce::Result OutsideChanges::take() {
     };
     std::vector<OutsideChange> loads;                            // what is loaded, as the undo record has it
     std::vector<std::pair<model::DocKey, juce::File>> replaced;  // documents another took the place of
-    std::vector<std::pair<juce::String, juce::File>> released;   // places of songs gone from here, let go for one that came in
-    // Songs that go, in this load or before it: a folder still remembered for one of them (kept so that it can't be given
-    // to another song while it might come back) is let go when a song comes in there, as a bandmate removed it and
-    // imported it again.
-    const auto gone = [&](const juce::String& songId) {
-        return model_.song(songId) == nullptr
+    std::vector<std::pair<model::DocKey, juce::File>> released;   // places of documents gone from here, let go for one that came in
+    // Documents that go, in this load or before it: a song's folder, or a setlist's or rig's file, still remembered for one
+    // of them (kept so that it can't be given to another while it might come back) is let go when a document of its kind
+    // comes in there, as a bandmate removed it and made it again under the same name.
+    const auto gone = [&](const model::DocKey& key) {
+        return !documentLoaded(model_, key)
                || std::any_of(outside_changes_.begin(), outside_changes_.end(), [&](const OutsideChange& c) {
-                      return c.kind == OutsideChange::Kind::Removed && c.key == model::DocKey{model::DocKind::Song, songId};
+                      return c.kind == OutsideChange::Kind::Removed && c.key == key;
                   });
     };
     const auto letGoOfGone = [&](const OutsideChange& change, const juce::File& file) {
-        if (change.key.kind != model::DocKind::Song) return;
-        const auto folder = file.getParentDirectory();
-        for (const auto& id : {change.key.id, folder_.songRememberedAt(folder)}) {
-            const auto place = folder_.songFolder(id);
-            if (id.isEmpty() || place == juce::File() || !gone(id)) continue;
-            if (id != change.key.id && place != folder) continue;
-            folder_.forgetSongFolder(id);
-            released.emplace_back(id, place);
+        const auto kind = change.key.kind;
+        if (kind == model::DocKind::Band) return;
+        const auto here = kind == model::DocKind::Song ? file.getParentDirectory() : file;
+        for (const auto& id : {change.key.id, folder_.rememberedAt(kind, here)}) {
+            const model::DocKey key{kind, id};
+            const auto place = folder_.rememberedPlace(key);
+            if (id.isEmpty() || place == juce::File() || !gone(key)) continue;
+            if (id != change.key.id && place != here) continue;
+            forgetPlace(key);
+            released.emplace_back(key, place);
         }
     };
     // Why a document that came in can't have its folder or file here, in plain words.
@@ -398,7 +400,10 @@ juce::Result OutsideChanges::take() {
         for (const auto& change : loads)
             if (change.kind == OutsideChange::Kind::Added) forgetPlace(change.key);
         for (const auto& [key, file] : replaced) adoptPlace(key, file);
-        for (const auto& [id, place] : released) folder_.adoptSongFolder(id, place);
+        for (const auto& [key, place] : released) {
+            if (key.kind == model::DocKind::Song) folder_.adoptSongFolder(key.id, place);
+            else folder_.adoptFile(key, place);
+        }
         outside_changes_ = before;
     }
     sweepUnreadableNotes();

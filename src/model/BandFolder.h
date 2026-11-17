@@ -32,6 +32,8 @@ public:
     // False for another kind, a file outside setlists/ or rigs/, a document that already has one, or a file another has.
     bool adoptFile(const DocKey&, const juce::File& file);
     void forgetFile(const DocKey&);                              // undoes adoptFile (setlists and rigs only)
+    juce::File rememberedPlace(const DocKey&) const;             // its folder (a song) or file (a setlist, a rig); {} if none
+    juce::String rememberedAt(DocKind, const juce::File& place) const;   // the document of that kind remembered there; ""
     juce::File audioFile(const SongDoc&, const PartDoc&) const;  // the song's folder + part.file; {} unless inside that folder
 
 private:

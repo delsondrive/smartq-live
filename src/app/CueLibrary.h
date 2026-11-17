@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 
 #include <juce_events/juce_events.h>
 
@@ -24,17 +25,28 @@ public:
     // The clip, mono at the library's rate, once loaded. nullptr until then (a path not asked for before is queued for the
     // loader), and when the file is missing, unreadable, outside the band folder, or not on this computer yet
     // (model::isOnThisComputer: it is asked for again later).
-    // A file a bandmate changed is read again: at most once a check interval (a second), this looks at the date and size of
+    // A file a bandmate changed is read again: at most once a check interval (a second), and never while a show runs
+    // (setShowRunning), this looks at the date and size of
     // the file a clip was read from (or found missing or unreadable), and one that changed is loaded again in the background.
     // Until it arrives the clip read before is still given; one that can no longer be read goes (both bump revision()).
     std::shared_ptr<const engine::PartAudio> clip(const juce::String& pathInBandFolder);
     void forget(const juce::String& pathInBandFolder);            // loaded again when next asked for
+    // The clip as clip() would give it now (nullptr when none), without asking for it or looking at its file: whether a
+    // song built with it is still up to date. Nothing (std::nullopt) when the library doesn't know the path at all (never
+    // asked for, or forgotten): asking for it would load it.
+    std::optional<std::shared_ptr<const engine::PartAudio>> loaded(const juce::String& pathInBandFolder) const;
+    // While a show runs nothing is looked at again: clip() gives what was read (a path never asked for is still loaded), and
+    // lookAgain does nothing. A show goes on with what it started with.
+    void setShowRunning(bool);
+    // The band's computers, by name: a file named "<name>-<computer>" is OneDrive's conflict copy (model::looksLikeConflictCopy).
+    void setComputerNames(juce::StringArray);
     // The same look at the files of every clip read (or found missing or unreadable), at most once a check interval: what
     // reaches a song already prepared, which asks for none of its clips again. Session::pollFolder calls it, in Edit mode.
     void lookAgain();
     void setCheckIntervalMs(double);                              // tests: how often a file is looked at again (1000 ms)
-    juce::StringArray clipsInFolder() const;                      // every audio file under cues/, as paths inside the band folder
-    juce::StringArray clickSoundsInFolder() const;                // every audio file under clicks/, as paths inside the band folder
+    // Every audio file under cues/ (clicks/), as paths inside the band folder, less a sync tool's conflict copies.
+    juce::StringArray clipsInFolder() const;
+    juce::StringArray clickSoundsInFolder() const;
     std::uint64_t revision() const;                               // goes up whenever a clip arrives, goes or is forgotten
     std::function<void()> onChanged;                              // message thread, once for the clips that arrived together
     bool waitUntilIdle(int timeoutMs);                            // tests: true once nothing is waiting to load; delivers arrivals
@@ -74,6 +86,8 @@ private:
     std::atomic<std::uint64_t> revision_{0};
     double checkEveryMs_ = 1000.0;
     double lastLookMs_ = 0.0;                                    // lookAgain's last look; the first comes an interval in
+    bool show_ = false;                                          // a show runs: nothing is looked at again
+    juce::StringArray computers_;                                // setComputerNames
     juce::WaitableEvent stateChanged_;
 };
 

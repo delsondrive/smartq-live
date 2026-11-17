@@ -37,4 +37,9 @@ void interruptFetch(std::thread&) noexcept;     // cuts short a fetch that threa
 struct ConflictCopy { juce::File original, copy; juce::String id; };
 std::vector<ConflictCopy> findConflictCopies(const juce::File& bandRoot);
 
+// Whether a file is a copy a sync tool made when two computers changed it, by its name: Dropbox's and Nextcloud's "(…
+// conflicted copy …)", ownCloud's "_conflict-", Syncthing's ".sync-conflict-", and OneDrive's "<name>-<computer>" for any of
+// these computer names. Ignores case.
+bool looksLikeConflictCopy(const juce::File&, const juce::StringArray& computerNames = {});
+
 }  // namespace sqlive::model

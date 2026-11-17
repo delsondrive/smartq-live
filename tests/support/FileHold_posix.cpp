@@ -6,4 +6,6 @@ namespace sqlive::test {
 ExclusiveFileHold::ExclusiveFileHold(const juce::File&) {}
 ExclusiveFileHold::~ExclusiveFileHold() = default;
 
+bool markAsInTheCloud(const juce::File&) { return false; }
+
 }  // namespace sqlive::test

@@ -227,6 +227,8 @@ void PreShowDialog::downloadNow() {
     if (setlist == nullptr) return;
     juce::StringArray seen;
     for (const auto& entry : setlist->entries) {
+        for (const auto& clip : app::clipFileProblems(session_, entry.songId, entry.arrangementId))   // its cue and click sounds
+            if (clip.inCloud) model::startDownload(clip.file);
         if (seen.contains(entry.songId)) continue;
         seen.add(entry.songId);
         for (const auto& problem : app::partFileProblems(session_, entry.songId))

@@ -19,4 +19,8 @@ private:
     void* handle_ = nullptr;
 };
 
+// Gives the file the "offline" attribute, as a cloud placeholder has; false where that can't be arranged (the platform
+// twin), and a test using it should then skip. The file stays readable: only model::isOnThisComputer looks at it.
+bool markAsInTheCloud(const juce::File& file);
+
 }  // namespace sqlive::test

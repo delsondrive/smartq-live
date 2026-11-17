@@ -167,4 +167,13 @@ std::vector<ConflictCopy> findConflictCopies(const juce::File& bandRoot) {
     return out;
 }
 
+bool looksLikeConflictCopy(const juce::File& file, const juce::StringArray& computerNames) {
+    const auto stem = file.getFileNameWithoutExtension();
+    for (const auto* mark : {"conflicted copy", "_conflict-", ".sync-conflict-"})
+        if (stem.containsIgnoreCase(mark)) return true;
+    for (const auto& computer : computerNames)
+        if (computer.isNotEmpty() && stem.length() > computer.length() + 1 && stem.endsWithIgnoreCase("-" + computer)) return true;
+    return false;
+}
+
 }  // namespace sqlive::model

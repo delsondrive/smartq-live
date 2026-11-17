@@ -244,7 +244,9 @@ private:
         std::map<juce::String, int> partIndex;                   // the engine's index of each part; a part left out has none
         model::SongDoc doc;                                      // as heard: tonight's changes applied
         juce::String arrangementId;                              // "" = the sections in order
-        std::uint64_t cueRevision = 0;                           // CueLibrary::revision() when built: its clips are in it
+        // Each cue clip it asked for, as CueLibrary gave it (nullptr: not loaded then): one that is otherwise now builds it
+        // again, and a clip only other songs use doesn't.
+        std::map<juce::String, std::shared_ptr<const engine::PartAudio>> clips;
         float clickDb = 0.0f;                                    // the band's click level plus the song's offset, as built
         float cuesDb = 0.0f;                                     // the band's cue level, as built
         std::shared_ptr<const LoadedSong> loaded;
@@ -293,6 +295,8 @@ private:
     bool saveSettings();                                         // settings_.save(), noting a failure for saveState; true when saved
     void resolveNext();                                          // a removed next entry: the one now in its place
     std::shared_ptr<const Prepared> preparedFor(const juce::String& songId, const juce::String& arrangementId);
+    bool sameClips(const Prepared&) const;                       // every clip it asked for is still what CueLibrary has
+    juce::StringArray computerNames() const;                     // this one and every rig's, by name
     void refreshPrepared();
     void refreshWanted();
     void refreshMix(bool force);
