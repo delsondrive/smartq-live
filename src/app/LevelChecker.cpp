@@ -255,7 +255,7 @@ void LevelChecker::alsoMeasure(const juce::String& songId) {
 
 void LevelChecker::stopForNow() {
     const juce::ScopedLock sl(lock_);
-    if (!current_) return;
+    if (!current_ || cancel_) return;                              // nothing, or stopped already (a newer list: not wanted)
     cancel_ = true;
     requeue_ = true;
 }
