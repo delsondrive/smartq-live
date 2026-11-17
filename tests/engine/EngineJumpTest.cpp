@@ -328,3 +328,46 @@ TEST_CASE("the count-off's click and clock are the same at any block size", "[ju
     const auto reference = run(512);
     for (int block : {1, 64, 4096}) CHECK(run(block) == reference);
 }
+
+// ---- Carried from stage 3: a late device at a jump's landing ----
+
+namespace {
+
+// A program or control change written at `written` that its device's offset sends `late` samples after it.
+MidiEvent lateChange(SamplePos written, SamplePos late, int device, std::uint8_t a, std::uint8_t b, std::uint8_t c = 0, int size = 3) {
+    auto e = ev(written + late, device, a, b, c, size);
+    e.early = static_cast<std::int32_t>(-late);
+    return e;
+}
+
+} // namespace
+
+TEST_CASE("a change a late device was written just before a jump's landing is sent with the chase, once, at any block size", "[jump]") {
+    for (int block : {64, 512, 4096}) {
+        CAPTURE(block);
+        Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+        auto song = rampSong("r", 3, {1, 1, 1}, {0, 2});             // step 0, then a jump to section 2 at 192000
+        song.midi = {lateChange(0, 2000, 0, 0xC0, 4, 0, 2),          // at 2000
+                     lateChange(191000, 2000, 0, 0xB0, 7, 99),       // written before the landing, placed after it: 193000
+                     lateChange(191500, 2000, 0, 0xC0, 5, 0, 2)};    // 193500
+        e.cue(share(song));  e.start();
+        renderOffline(e, 2, 2 * 96000, block);
+        auto midi = drainMidi(e);
+        REQUIRE(midi.size() == 3);                                   // and nothing of the bar before is sent again after the landing
+        CHECK(midi[0].data[0] == 0xC0);  CHECK(midi[0].data[1] == 4);   CHECK(midi[0].streamTime == 2000);
+        CHECK(midi[1].data[0] == 0xC0);  CHECK(midi[1].data[1] == 5);   CHECK(midi[1].streamTime == 96000);
+        CHECK(midi[2].data[0] == 0xB0);  CHECK(midi[2].data[1] == 7);   CHECK(midi[2].data[2] == 99);  CHECK(midi[2].streamTime == 96000);
+    }
+}
+TEST_CASE("a late device's resend after a jump includes what the chase covered at the landing", "[jump]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto song = rampSong("r", 3, {1, 1, 1}, {0, 2});
+    song.midi = {lateChange(191500, 2000, 0, 0xC0, 5, 0, 2)};        // placed at 193500, after the landing at 192000
+    e.cue(share(song));  e.start();
+    renderOffline(e, 2, 96000 + 500, 512);                           // landed: song time 192500, before its placed time
+    drainMidi(e);
+    e.resendMidiState(e.status().playingSerial, 0);
+    renderOffline(e, 2, 512, 512);
+    auto again = drainMidi(e);
+    REQUIRE(again.size() == 1);  CHECK(again[0].data[0] == 0xC0);  CHECK(again[0].data[1] == 5);
+}

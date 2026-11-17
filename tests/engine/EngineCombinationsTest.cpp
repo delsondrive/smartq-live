@@ -189,3 +189,34 @@ TEST_CASE("a crossfade asked for during a jump's crossfade is let go of when the
     CHECK(e.status().playingSerial == a);
     CHECK(e.status().step == 1);
 }
+
+// ---- Jump × a late MIDI device (stage 4, carried from stage 3) ----
+
+TEST_CASE("a chosen step, a loop and a choice back to the start on a late device each land on the landing's patch", "[combinations]") {
+    const auto late = [](SamplePos written, std::uint8_t program) {   // device 0 sends 2000 samples after the written place
+        auto e = ev(written + 2000, 0, 0xC0, program, 0, 2);
+        e.early = -2000;
+        return e;
+    };
+    auto run = [&](int block) {
+        Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+        auto song = rampSong("r", 3, {1, 1, 1});
+        song.midi = {late(0, 1), late(95000, 2), late(191000, 3)};   // each section's patch, the last two written just before a landing
+        auto s = e.cue(share(song));  e.start();
+        renderOffline(e, 2, 3 * 96000 + 5000, block, {
+            {1000, [&](Engine& en) { en.chooseNextStep(s, 2); }},     // at 96000: to section 2, landing 192000
+            {100000, [&](Engine& en) { en.setLoop(s, true); }},       // at 192000: section 2 again
+            {200000, [&](Engine& en) { en.chooseNextStep(s, 0); }}}); // at 288000: back to bar 1
+        std::vector<std::pair<int, std::int64_t>> programs;
+        for (const auto& m : drainMidi(e))
+            if ((m.data[0] & 0xF0) == 0xC0) programs.push_back({m.data[1], m.streamTime});
+        return programs;
+    };
+    // Section 2's patch at the jump (written before its landing, placed after it), nothing at the loop's repeat (the
+    // device has it), and bar 1's own at its late place after the choice back; nothing written before a landing again.
+    const std::vector<std::pair<int, std::int64_t>> expected{{1, 2000}, {3, 96000}, {1, 288000 + 2000}};
+    for (int block : {64, 512, 4096}) {
+        CAPTURE(block);
+        CHECK(run(block) == expected);
+    }
+}

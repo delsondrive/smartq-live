@@ -58,15 +58,16 @@ public:
     // chaseAt the clock ticks are countOffClock's, the song's own from there.
     // The landing (songTime, or chaseAt) goes by the written place (MidiEvent::written): an event written at or after it
     // that a device's early offset puts before songTime is sent at streamTime, after the chase; one written before it is
-    // never sent, even when a late offset puts it after.
+    // never sent, even when a late offset puts it after: the chase takes in every program and control change written
+    // before the landing, wherever its offset placed it.
     void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime, bool fromStart,
                std::optional<SamplePos> chaseAt = {}, std::span<const SamplePos> countOffClock = {}) noexcept;
     // Producer. The song plays [songFrom, songFrom + frames), its first sample at streamFrom: every event and clock tick in it
     // is queued, in time order (an event before a tick at the same time).
     void play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept;
     // Producer. A jump (a loop's repeat included): the song goes on from `landing` (song time) at streamTime. Every note
-    // still sounding is ended; then the state as of the landing (every program and control change at or before it) is
-    // worked out and only what differs from what the devices were last sent goes out (MidiChase::emitChanges), at
+    // still sounding is ended; then the state as of the landing (every program and control change at or before it, and
+    // every one written before it that a late offset placed after it) is worked out and only what differs from what the devices were last sent goes out (MidiChase::emitChanges), at
     // streamTime. The landing becomes the chase point, so a program or control change exactly there is sent by the chase
     // and not again; the place in the song's events and in its clock ticks moves to the first at or after the landing, so
     // a note there still sounds. As at begin, the landing goes by the written place: an event written at or after it
@@ -122,6 +123,7 @@ private:
     SamplePos chase_point_ = 0;          // program and control changes at or before it were covered by the chase
     SamplePos landing_ = 0;              // where the song began or last jumped to: nothing written before it is sent
     SamplePos most_early_ = 0;           // the most any of the song's events is early (MidiEvent::early), at least 0
+    SamplePos most_late_ = 0;            // the most any of the song's events is late (-MidiEvent::early), at least 0
     std::span<const SamplePos> count_off_clock_;   // startAtStep's count-off: its clock ticks, up to count_off_to_
     SamplePos count_off_to_ = 0;
     bool in_count_off_ = false;

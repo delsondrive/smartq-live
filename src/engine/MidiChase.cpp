@@ -1,5 +1,7 @@
 #include "engine/MidiChase.h"
 
+#include <algorithm>
+
 namespace sqlive::engine {
 
 namespace {
@@ -20,11 +22,13 @@ void MidiChase::clear() noexcept {
     }
 }
 
-void MidiChase::scan(std::span<const MidiEvent> midi, SamplePos upTo) noexcept {
+void MidiChase::scan(std::span<const MidiEvent> midi, SamplePos upTo, SamplePos writtenBefore, SamplePos mostLate) noexcept {
     clear();
+    // An event written before writtenBefore is placed before writtenBefore + mostLate.
+    const SamplePos lastPlaced = std::max(upTo, writtenBefore + std::max<SamplePos>(mostLate, 0) - 1);
     for (const MidiEvent& e : midi) {
-        if (e.at > upTo) break;
-        apply(e.device, e.data[0], e.data[1], e.data[2], e.size);
+        if (e.at > lastPlaced) break;
+        if (e.at <= upTo || e.written() < writtenBefore) apply(e.device, e.data[0], e.data[1], e.data[2], e.size);
     }
 }
 

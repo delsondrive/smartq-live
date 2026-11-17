@@ -192,3 +192,13 @@ TEST_CASE("a device with a pending bank that isn't the song's gets the song's pr
     same.emitChanges(sent, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
     CHECK(out.empty());
 }
+TEST_CASE("a landing's chase takes in what a late device wrote before it, and nothing written from it", "[chase]") {
+    auto late = [](SamplePos written, SamplePos by, int device, std::uint8_t a, std::uint8_t b, std::uint8_t c = 0, int size = 3) {
+        auto e = ev(written + by, device, a, b, c, size);  e.early = static_cast<std::int32_t>(-by);  return e; };
+    std::vector<MidiEvent> midi = {ev(50, 1, 0xC0, 1, 0, 2), late(90, 30, 0, 0xC0, 4, 0, 2), late(99, 30, 0, 0xB0, 7, 99),
+                                   late(100, 30, 0, 0xC0, 8, 0, 2), ev(110, 1, 0xC0, 2, 0, 2)};   // placed 50, 120, 129, 130, 110
+    MidiChase chase;  chase.scan(midi, 100, 100, 30);
+    std::vector<std::array<int, 4>> out;
+    chase.emit(-1, [&](int d, const std::uint8_t* b, int n) { out.push_back({d, b[0], b[1], n == 3 ? b[2] : -1}); });
+    CHECK(out == std::vector<std::array<int, 4>>{{0, 0xC0, 4, -1}, {0, 0xB0, 7, 99}, {1, 0xC0, 1, -1}});
+}

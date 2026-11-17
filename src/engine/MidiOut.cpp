@@ -46,16 +46,21 @@ void MidiOut::begin(const PreparedSong& song, std::uint64_t serial, SamplePos so
     serial_ = serial;
     sent_.clear();   // a song that follows on may number its devices otherwise: it sends its whole chase
     most_early_ = 0;   // once per song: a few thousand comparisons at most, and nothing allocated
-    for (const MidiEvent& e : song.midi) most_early_ = std::max<SamplePos>(most_early_, e.early);
+    most_late_ = 0;
+    for (const MidiEvent& e : song.midi) {
+        most_early_ = std::max<SamplePos>(most_early_, e.early);
+        most_late_ = std::max<SamplePos>(most_late_, -static_cast<SamplePos>(e.early));
+    }
     Arrangement steps;
     steps.reset(&song);
     const SamplePos firstStep = steps.sectionOf(0).start;
     chase_point_ = chaseAt ? *chaseAt : fromStart ? std::max(songTime, firstStep) : songTime;
+    landing_ = chaseAt ? *chaseAt : songTime;   // the chase takes in every change written before it, however late
     chase(-1, chase_point_, streamTime);
     // Events written before where it begins (or before chaseAt) are not sent: the chase has covered the changes among them.
     // Those written from there that an early offset put before songTime go now; the rest at their own times, from songTime
     // (in a count-off, those written at the step's start but placed early in the count-off's bar).
-    land(chaseAt ? *chaseAt : songTime, songTime, streamTime);
+    land(landing_, songTime, streamTime);
     seek(songTime, songTime);
     in_count_off_ = chaseAt.has_value();
     count_off_to_ = chaseAt ? *chaseAt : 0;
@@ -125,14 +130,17 @@ void MidiOut::land(SamplePos landing, SamplePos before, std::int64_t streamTime)
 
 void MidiOut::resend(int device, SamplePos songTime, std::int64_t streamTime) noexcept {
     if (song_ == nullptr || device < 0 || device >= kMaxMidiDevices) return;
-    // What has been sent so far: everything before songTime, and every change up to the chase point.
+    // What has been sent so far: everything before songTime, and every change up to the chase point or written before the
+    // landing.
     chase(device, std::max(chase_point_, songTime - 1), streamTime);
 }
 
 void MidiOut::jump(SamplePos landing, std::int64_t streamTime) noexcept {
     if (song_ == nullptr) return;
     endNotes(streamTime);
-    chase_.scan(song_->midi, landing);
+    // Every change written before the landing, a late device's placed after it included: those are never sent (due), so
+    // the chase is where they go.
+    chase_.scan(song_->midi, landing, landing, most_late_);
     chase_.emitChanges(sent_, [&](int device, const std::uint8_t* b, int size) { pushRecorded(device, b, size, streamTime); });
     chase_point_ = landing;
     in_count_off_ = false;
@@ -165,6 +173,7 @@ void MidiOut::end(std::int64_t streamTime, const PreparedSong* next) noexcept {
     chase_point_ = 0;
     landing_ = 0;
     most_early_ = 0;
+    most_late_ = 0;
     in_count_off_ = false;
     count_off_clock_ = {};
     count_off_to_ = 0;
@@ -233,9 +242,10 @@ void MidiOut::stopDevices(std::uint32_t devices, std::int64_t streamTime) noexce
     started_ &= ~devices;
 }
 
-// The state at upTo of one device (or every one, for -1), queued at streamTime for the playing song.
+// The state at upTo of one device (or every one, for -1), with every change written before the landing, queued at
+// streamTime for the playing song.
 void MidiOut::chase(int onlyDevice, SamplePos upTo, std::int64_t streamTime) noexcept {
-    chase_.scan(song_->midi, upTo);
+    chase_.scan(song_->midi, upTo, landing_, most_late_);
     chase_.emit(onlyDevice, [&](int device, const std::uint8_t* b, int size) { pushRecorded(device, b, size, streamTime); });
 }
 

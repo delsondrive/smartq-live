@@ -26,7 +26,12 @@ public:
 
     // The state after every event with at <= upTo (midi sorted by at). An event whose device is kMaxMidiDevices or more is
     // ignored.
-    void scan(std::span<const MidiEvent> midi, SamplePos upTo) noexcept;
+    void scan(std::span<const MidiEvent> midi, SamplePos upTo) noexcept { scan(midi, upTo, upTo + 1, 0); }
+    // As scan, also taking in every event written before writtenBefore (MidiEvent::written) that a late offset placed
+    // after upTo: a landing's state includes what was written before it. No event is placed more than mostLate after its
+    // written place. Events apply in time order: a device's offset is the same for all its events, so its own keep their
+    // written order.
+    void scan(std::span<const MidiEvent> midi, SamplePos upTo, SamplePos writtenBefore, SamplePos mostLate) noexcept;
 
     // Records a program or controller message as sent to this device (an engine device number); anything else, and a
     // device of kMaxMidiDevices or more, is ignored.
