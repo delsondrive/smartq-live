@@ -16,6 +16,7 @@
 #include "ui/SectionTiles.h"
 #include "ui/ShowState.h"
 #include "ui/StageView.h"
+#include "ui/TopBar.h"
 #include "ui/Widgets.h"
 
 using namespace sqlive;
@@ -77,6 +78,7 @@ TEST_CASE("holding the next-song key says what it will do", "[showsections]") {
     s.advanceWithoutDevice(1600);  d.settle();  snapshot(view, 1280, 698);
     CHECK(view.drawnHoldText() == "Keep holding to go to the next song");
     CHECK_FALSE(view.holdRingShown());                             // the ring is for a stop
+    CHECK(makeTopBarState(s, nullptr, &keys, Page::Setlists).holdProgress == 0.0);   // and so is the top bar's ▶ ring
     keys.keyUp(app::ShowKey::Right, 10.6);
     s.advanceWithoutDevice(1600);  d.settle();  snapshot(view, 1280, 698);
     CHECK(view.drawnHoldText().isEmpty());
@@ -92,7 +94,15 @@ TEST_CASE("the show views draw sections, and many of them still fit", "[showsect
     auto image = snapshot(stage, 1280, 698);
     CHECK(hasColour(image, juce::Colour(0xffffc163)));              // a Chorus tile
     CHECK(hasColour(image, juce::Colour(0xff6ea8ff)));              // a Verse tile
-    CHECK_NOTHROW(snapshot(stage, 1100, 618));                      // sixteen tiles wrap onto two rows
+    // Sixteen tiles wrap onto two rows, and the tiles and the next-song box end above the hints, at both sizes.
+    for (const auto& [w, h] : {std::pair{1280, 698}, std::pair{1100, 618}}) {
+        INFO(w << " x " << h);
+        snapshot(stage, w, h);
+        CHECK(stage.tilesShown() >= 15);
+        CHECK(stage.tilesArea().getBottom() <= stage.nextSongArea().getY());
+        CHECK(stage.nextSongArea().getBottom() <= stage.hintsArea().getY());
+        CHECK(stage.hintsArea().getBottom() <= h);
+    }
     CHECK(hasColour(snapshot(main, 1280, 698), juce::Colour(0xffffc163)));
     juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
@@ -254,4 +264,81 @@ TEST_CASE("the stage view shows the next song's sections between songs, and the 
     const auto st = makeShowState(s);
     CHECK(st.sectionName == "Intro");  CHECK(st.barsLeft == "3");
     CHECK(st.songProgress > 0.0);  CHECK(st.songProgress < 0.15);
+}
+
+// ---- Fix round 1 ---------------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The main view shown, its map's playhead and the block of the step playing, as the view last drew them.
+bool playheadInPlayingBlock(DemoSession& d, ui::MainView& view) {
+    d.settle();
+    const int current = d.session->arrangement().current;
+    const auto& blocks = view.map().blocks();
+    if (current < 0 || current >= static_cast<int>(blocks.size())) return false;
+    const auto block = blocks[static_cast<std::size_t>(current)];
+    const float x = view.map().playheadAt();
+    INFO("step " << current << ": playhead " << x << ", block " << block.getX() << " to " << block.getRight());
+    return x >= block.getX() - 1.0f && x <= block.getRight() + sectionTiles::blockGap + 1.0f;
+}
+
+}  // namespace
+
+TEST_CASE("the map's playhead stays in the playing step's block through a loop, a step back and a step chosen", "[showsections]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    fourSections(s, song);                                         // 100 BPM, four sections of four bars (9.6 s each)
+    d.settle();  s.enterShow();
+    s.perform(Action::ToggleView);
+    sqlive::test::ScopedLook look;
+    ui::MainView view(s);
+    snapshot(view, 1280, 698);
+    s.perform(Action::Start);  s.advanceWithoutDevice(int(48000 * 2.4) + 48000 * 13);   // Verse 1, bar 6
+    REQUIRE(s.arrangement().current == 1);
+    CHECK(playheadInPlayingBlock(d, view));
+    // Looped, twice round: the arrangement grows, the playhead stays in Verse 1's block.
+    s.perform(Action::LoopSection);  s.advanceWithoutDevice(48000 * 18);
+    REQUIRE(s.arrangement().current == 1);  REQUIRE(s.arrangement().looping);
+    CHECK(playheadInPlayingBlock(d, view));
+    // The loop off, then Next section: earlier, which plays Verse 1 once more.
+    s.perform(Action::LoopSection);  s.advanceWithoutDevice(480);
+    s.perform(Action::NextSectionEarlier);  s.advanceWithoutDevice(48000 * 9);
+    REQUIRE(s.arrangement().current == 1);
+    CHECK(playheadInPlayingBlock(d, view));
+    // The Outro chosen: it plays next, and the playhead goes to its block.
+    s.perform(Action::Section4);  s.advanceWithoutDevice(48000 * 9);
+    REQUIRE(s.arrangement().current == 3);
+    CHECK(playheadInPlayingBlock(d, view));
+    // The played part of the waveform ends at the playhead: mint before it, grey after.
+    const auto image = snapshot(view, 1280, 698);
+    const int x = view.map().getX() + juce::roundToInt(view.map().playheadAt());
+    const int y = view.map().getY() + SongMapView::sectionsTop + SongMapView::sectionsHeight + SongMapView::sectionsGap;
+    CHECK(hasColour(image.getClippedImage({x - 40, y, 30, SongMapView::waveHeight}), theme::mint, 30));
+    CHECK_FALSE(hasColour(image.getClippedImage({x + 12, y, 60, SongMapView::waveHeight}), theme::mint, 30));
+}
+
+TEST_CASE("in a count-in or a count-off the step it leads into is Next, and the hold hint waits for a step", "[showsections]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    fourSections(s, song);
+    d.settle();  s.enterShow();
+    const auto holdHint = juce::String::fromUTF8("hold \xe2\x86\x92 go to next song now");
+    s.perform(Action::Start);  s.advanceWithoutDevice(4800);       // in the count-in
+    REQUIRE(s.now().countIn);
+    auto st = makeShowState(s);
+    CHECK(st.tiles[0].kind == ShowState::Tile::Kind::Next);  CHECK(st.tiles[0].number == juce::String::fromUTF8("1 \xc2\xb7 NEXT"));
+    CHECK(st.alongSteps == 0.0);
+    CHECK_FALSE(textsOf(st.hints).contains(holdHint));             // no hold can act yet
+    s.advanceWithoutDevice(int(48000 * 2.4));
+    REQUIRE(s.now().inStep);
+    CHECK(textsOf(makeShowState(s).hints).contains(holdHint));
+    // Stopped, Section3 starts from the Chorus after a bar of count-off: the Chorus is Next, the playhead at its start.
+    s.perform(Action::Stop);  s.advanceWithoutDevice(48000);
+    REQUIRE_FALSE(s.now().playing);
+    s.perform(Action::Section3);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().countIn);
+    st = makeShowState(s);
+    CHECK(st.tiles[2].kind == ShowState::Tile::Kind::Next);
+    for (const std::size_t i : {0u, 1u, 3u}) CHECK(st.tiles[i].kind == ShowState::Tile::Kind::Later);
+    REQUIRE(st.spans.steps.size() == 4);
+    CHECK(st.alongSteps == st.spans.steps[2].at / st.spans.total);
+    CHECK_FALSE(textsOf(st.hints).contains(holdHint));
 }

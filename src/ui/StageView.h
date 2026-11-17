@@ -55,6 +55,10 @@ public:
     juce::Rectangle<int> repaintedArea() const { return repainted_; }
     void forgetRepaints() { repaints_asked_ = 0;  repainted_ = {}; }
     juce::Rectangle<int> progressRowArea() const { return areaOf(barRow_); }
+    // For tests: where the section tiles (their outlines included), the next-song box and the hints were laid out.
+    juce::Rectangle<int> tilesArea() const { return tiles_.isEmpty() ? juce::Rectangle<int>() : areaOf(tiles_.expanded(6.0f)); }
+    juce::Rectangle<int> nextSongArea() const { return areaOf(next_); }
+    juce::Rectangle<int> hintsArea() const { return areaOf(hintsBox_); }
     // For tests: the call to action's words as last drawn between songs: the action, its detail and the pill.
     juce::StringArray drawnCallToAction() const { return drawnCallToAction_; }
     juce::String drawnStartKey() const { return drawnStartKey_; }  // for tests: the big key's word as last drawn ("Space")

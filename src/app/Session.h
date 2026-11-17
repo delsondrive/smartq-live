@@ -73,6 +73,7 @@ struct StepView {
 struct ArrangementView {                    // the song that is playing, or the next one when nothing plays
     std::vector<StepView> steps;
     int current = -1, pending = -1;         // steps; pending is what will play next when it isn't simply current + 1
+    int lead = -1;                          // in a lead-in, count-in or count-off: the step it leads into; else -1
     bool looping = false;
     int barsLeft = 0;                       // in the playing section, counting the bar that is playing
     juce::String then;                      // "then → Verse 2", "then → Chorus again", "then → the end", "" when nothing plays

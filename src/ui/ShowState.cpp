@@ -187,21 +187,21 @@ const ShowKeys& keptKeys(const model::BandModel& model) {
     return k.keys;
 }
 
-// The steps aren't known for a moment while a song is prepared again: the lanes worked out for the same documents stay.
-const std::vector<ShowState::Lane>& keptLanes(const app::Session& session, const juce::String& songId,
-                                              const std::vector<app::StepView>& steps) {
+// `spans` are the steps' (empty for a single step); `known` is false while there are none. The steps aren't known for a
+// moment while a song is prepared again: the lanes worked out for the same documents stay.
+const std::vector<ShowState::Lane>& keptLanes(const app::Session& session, const juce::String& songId, const StepSpans& spans,
+                                              bool known) {
     auto& k = kept();
     const auto& model = session.model();
     const auto song = model.revision({model::DocKind::Song, songId});
     const auto band = model.revision({model::DocKind::Band, {}});
     const bool sameDocuments = k.haveLanes && k.laneSong == songId && k.laneSongRevision == song && k.laneBandRevision == band;
-    auto spans = steps.size() > 1 ? stepSpansOf(steps) : StepSpans{};
-    if (sameDocuments && (steps.empty() || spans == k.laneSpans)) return k.lanes;
+    if (sameDocuments && (!known || spans == k.laneSpans)) return k.lanes;
     k.lanes = lanesOf(session, songId, spans);
     k.laneSong = songId;
     k.laneSongRevision = song;
     k.laneBandRevision = band;
-    k.laneSpans = std::move(spans);
+    k.laneSpans = spans;
     k.haveLanes = true;
     ++k.work.lanes;
     return k.lanes;
@@ -415,8 +415,9 @@ ShowState makeShowState(const app::Session& session) {
         using TileKind = ShowState::Tile::Kind;
         st.tiles = keptTiles(model, steps);
         const int stepCount = static_cast<int>(st.tiles.size()), current = arrangement.current;
-        // What plays after the step playing: the one chosen, else the one after it; nothing while it loops.
-        int upcoming = arrangement.pending;
+        // What plays after the step playing: the one chosen, else the one after it; nothing while it loops. In a lead-in,
+        // count-in or count-off, the step it leads into.
+        int upcoming = current >= 0 ? arrangement.pending : arrangement.lead;
         if (current >= 0 && upcoming < 0 && !arrangement.looping) upcoming = current + 1;
         if (arrangement.looping || upcoming >= stepCount) upcoming = -1;
         for (int i = 0; i < stepCount; ++i) {
@@ -434,6 +435,20 @@ ShowState makeShowState(const app::Session& session) {
         }
         st.then = arrangement.then;
         st.looping = arrangement.looping;
+
+        // The map's playhead: in the step playing, at its song time, so it stays in that step's block whatever was chosen
+        // or looped; at the start of the step a lead-in leads into; at the end after the last step.
+        st.spans = stepSpansOf(steps);
+        if (now.playing && st.spans.total > 0.0) {
+            const int step = current >= 0 ? current : arrangement.lead;
+            if (step >= 0 && step < static_cast<int>(st.spans.steps.size())) {
+                const auto& span = st.spans.steps[static_cast<std::size_t>(step)];
+                const double into = current >= 0 ? std::clamp(now.seconds - span.songStart, 0.0, span.songEnd - span.songStart) : 0.0;
+                st.alongSteps = std::clamp((span.at + into) / st.spans.total, 0.0, 1.0);
+            } else if (!now.countIn) {
+                st.alongSteps = 1.0;
+            }
+        }
     }
 
     // The hints, with the band's keys: an action with no key has no hint, and with no key to hold, Esc twice stops. The
@@ -457,7 +472,9 @@ ShowState makeShowState(const app::Session& session) {
             addHint(st.hints, juce::StringArray(keys.cancelKey), "cancel");
         }
         addHint(st.hints, keys.songKeys, "next song");
-        if (sectionKeys && keys.nextSongNowKey.isNotEmpty()) st.hints.push_back({"hold", {keys.nextSongNowKey}, "go to next song now"});
+        // Only while a hold can act: a step plays (not a count-in, a lead-in or a gap) and nothing is stopping.
+        if (sectionKeys && now.inStep && keys.nextSongNowKey.isNotEmpty())
+            st.hints.push_back({"hold", {keys.nextSongNowKey}, "go to next song now"});
         st.hints.push_back(stop);
         addHint(st.hints, view, "main view");
     } else {
@@ -468,7 +485,7 @@ ShowState makeShowState(const app::Session& session) {
     }
 
     // The song the map shows: the one playing, else the next.
-    st.lanes = keptLanes(session, now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId, steps);
+    st.lanes = keptLanes(session, now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId, st.spans, !steps.empty());
     return st;
 }
 

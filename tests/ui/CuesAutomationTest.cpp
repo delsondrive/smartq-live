@@ -612,4 +612,25 @@ TEST_CASE("a double-click on empty space with the Automation tool adds one point
         overlay.mouseUp(eventOn(overlay, place, place, left, clicks));
     }
     CHECK(songOf(s, song).automation.count(part) == 0);
+    // Snapped to the bar, a click a beat and a half past bar 7 puts its point on bar 7, farther away than a press reaches:
+    // the second press of the double-click is still that point, so there is one point and one undo step.
+    d.settle();
+    page.timeline().setSnap(SnapTo::Bar);
+    const float beat = (scale.xAtBar(8) - scale.xAtBar(7)) / 4.0f;
+    const auto offGrid = juce::Point<float>(scale.xAtBar(7) + 1.5f * beat, AutomationOverlay::yForDb(-12.0f, 36.0f));
+    REQUIRE(offGrid.x - scale.xAtBar(7) > 6.0f);
+    const auto before = s.commands().undoName();
+    overlay.mouseDown(eventOn(overlay, offGrid));
+    overlay.mouseUp(eventOn(overlay, offGrid));
+    overlay.mouseDown(eventOn(overlay, offGrid, offGrid, left, 2));
+    overlay.mouseDoubleClick(eventOn(overlay, offGrid, offGrid, left, 2));
+    overlay.mouseUp(eventOn(overlay, offGrid, offGrid, left, 2));
+    REQUIRE(songOf(s, song).automation.count(part) == 1);
+    REQUIRE(songOf(s, song).automation.at(part).size() == 1);
+    CHECK(songOf(s, song).automation.at(part)[0].bar == 7);  CHECK(songOf(s, song).automation.at(part)[0].beat == 1.0);
+    CHECK(page.timeline().selection() == EditorSelection{EditorSelection::Kind::Automation, {}, part, 0});
+    d.settle();
+    REQUIRE(s.commands().undo().ok);
+    CHECK(songOf(s, song).automation.count(part) == 0);           // one undo step
+    CHECK(s.commands().undoName() == before);
 }

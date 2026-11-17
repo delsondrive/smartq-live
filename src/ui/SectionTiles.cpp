@@ -16,11 +16,11 @@ using Kind = ShowState::Tile::Kind;
 // The mockup's CSS. .secline: flex, baseline, gap 16, 30 px semibold; b 60 px light, line-height 1; .then at the right in
 // ember. .bigsec: a grid, gap 10; each 112 px high, 14 px corners, padding 12 14, 24 px bold in the near-black, its small
 // 14 px at 70%; .past at 35%; .cur a 4 px white outline 2 px out; .q a 3 px dashed ember one 2 px out; .quiet at 50%,
-// 72 px high, 17 px, centred. Two rows (more than 8) are smaller: 80 px (52 quiet), 20 px words (15 quiet), 13 px numbers,
-// padding 8 12, 12 px corners.
+// 72 px high, 17 px, centred. Two rows (more than 8) are lower: 80 px (60 quiet), the same words where a name fits (else
+// 20 px, 15 quiet), padding 8 12, 12 px corners.
 constexpr std::size_t kPerRow = 8, kMost = 16;
 constexpr float kLineGap = 16.0f, kLineWords = 30.0f;
-constexpr float kGap = 10.0f, kTall = 112.0f, kQuietTall = 72.0f, kSmallTall = 80.0f, kSmallQuietTall = 52.0f;
+constexpr float kGap = 10.0f, kTall = 112.0f, kQuietTall = 72.0f, kSmallTall = 80.0f, kSmallQuietTall = 60.0f;
 constexpr float kRadius = 14.0f, kSmallRadius = 12.0f, kPadX = 14.0f, kPadY = 12.0f, kSmallPadX = 12.0f, kSmallPadY = 8.0f;
 constexpr float kNowLine = 4.0f, kNextLine = 3.0f, kOutlineOffset = 2.0f, kPastAlpha = 0.35f, kQuietAlpha = 0.5f;
 constexpr float kNumberAlpha = 0.7f, kLineSpacing = 1.35f;
@@ -119,17 +119,20 @@ Layout layoutTiles(const std::vector<ShowState::Tile>& tiles, float width, bool 
 
 void paintTiles(juce::Graphics& g, const Layout& layout, juce::Point<float> origin, const std::vector<ShowState::Tile>& tiles,
                 bool quiet, bool looping) {
-    const auto name = theme::font(layout.small ? (quiet ? 15.0f : 20.0f) : (quiet ? 17.0f : 24.0f), true);
-    const auto number = theme::font(layout.small ? 13.0f : 14.0f, true);
+    // The mockup's words (24 px, 17 quiet) wherever a name fits; on two rows, a name that doesn't is a size smaller first.
+    const auto full = theme::font(quiet ? 17.0f : 24.0f, true), smaller = theme::font(quiet ? 15.0f : 20.0f, true);
+    const auto number = theme::font(14.0f, true);
     const float radius = layout.small ? kSmallRadius : kRadius;
     const float padX = layout.small ? kSmallPadX : kPadX, padY = layout.small ? kSmallPadY : kPadY;
-    const float numberLine = std::ceil(number.getHeight() * kLineSpacing), nameLine = std::ceil(name.getHeight() * kLineSpacing);
+    const float numberLine = std::ceil(number.getHeight() * kLineSpacing);
     const auto clip = g.getClipBounds().toFloat();
     for (const auto& box : layout.boxes) {
         if (box.tile >= tiles.size()) continue;
         const auto& tile = tiles[box.tile];
         const auto area = box.area + origin;
         if (!clip.intersects(area.expanded(kOutlineOffset + kNowLine))) continue;
+        const auto name = !layout.small || widthOf(full, tile.name) <= area.getWidth() - 2.0f * padX ? full : smaller;
+        const float nameLine = std::ceil(name.getHeight() * kLineSpacing);
         const float alpha = quiet ? kQuietAlpha : tile.kind == Kind::Past ? kPastAlpha : 1.0f;
         if (alpha < 1.0f) g.beginTransparencyLayer(alpha);
         g.setColour(tile.colour);

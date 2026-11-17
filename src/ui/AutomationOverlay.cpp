@@ -260,6 +260,17 @@ void AutomationOverlay::mouseDown(const juce::MouseEvent& e) {
     dragTo_.reset();
     if (e.getNumberOfClicks() <= 1) added_ = -1;                  // a click's first press: nothing it added yet
     if (e.mods.isPopupMenu() || !editing() || scale_ == nullptr) return;
+    // A double-click's second press on empty space: the point its first press added, wherever the snap put it.
+    if (e.getNumberOfClicks() >= 2 && added_ >= 0) {
+        const auto shown = std::find_if(state_.points.begin(), state_.points.end(), [this](const auto& p) { return p.index == added_; });
+        if (shown != state_.points.end()) {
+            const auto p = *shown;                                // copied first: selecting rebuilds state_
+            pressedAt_ = where(p.bar, p.beat, p.db);
+            if (onSelect) onSelect({EditorSelection::Kind::Automation, {}, target_, p.index});
+            pressed_ = p.index;
+            return;
+        }
+    }
     if (const auto hit = pointAt(e.position)) {
         // Copied first: selecting rebuilds state_ (the timeline gives every lane its context again).
         const auto p = state_.points[static_cast<std::size_t>(*hit)];

@@ -98,7 +98,7 @@ void MainView::refresh() {
     // follows them.
     const auto playingWords = state.sectionName.isEmpty() ? juce::String()
                                                           : state.sectionName + kDot + state.barsLeft + " " + state.barsLeftLabel;
-    const bool sectionsReshaped = map_.setSections(state.tiles, playingWords);
+    const bool sectionsReshaped = map_.setSections(state.tiles, playingWords, state.spans, state.alongSteps);
     if (map_.setLanes(state.lanes) || sectionsReshaped) resized();
     map_.refresh();
     if (map_.songId() != mixer_.songId()) mixer_.show(map_.songId(), outputId_);   // the mixer follows the song by itself

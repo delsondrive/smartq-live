@@ -32,6 +32,19 @@ struct ShowKeys {
 };
 ShowKeys showKeysOf(const model::BandDoc&);
 
+// A song's steps laid end to end, as the main view's map lays out its section blocks, its waveform and its chips: each
+// step's section in song time, and where the step starts along them, in seconds.
+struct StepSpans {
+    struct Span {
+        double songStart = 0.0, songEnd = 0.0, at = 0.0;
+        bool operator==(const Span&) const = default;
+    };
+    std::vector<Span> steps;
+    double total = 0.0;                                            // the steps' lengths added up
+    bool operator==(const StepSpans&) const = default;
+};
+StepSpans stepSpansOf(const std::vector<app::StepView>&);
+
 // Everything both Show views draw (the mockup's screens 1 to 3), in their words.
 struct ShowState {
     // A setlist card. Done: before the one playing (or, between songs, before the next); Playing: the one playing; Next:
@@ -91,6 +104,11 @@ struct ShowState {
     // ("then → Verse 2", "then → Chorus again"; also in a lead-in, with no name and no bars).
     juce::String sectionName, barsLeft, barsLeftLabel, then;
     bool looping = false;
+    // The main view's map: the steps laid end to end (empty for a single step), and where its playhead is along them,
+    // 0..1: in the step playing, at its song time; at the start of the step a lead-in, count-in or count-off leads into;
+    // at the end once the last step is over.
+    StepSpans spans;
+    double alongSteps = 0.0;
     // The song the main view's map shows (the one playing, else the next): a "Cues" lane first when the song has cues (its
     // automatic and manual ones, as the Song editor's Cues lane has them, the automatic ones marked), then one lane per band
     // device that has a change in it, in the band's order, each change a chip with its model::markerLabel, in the lane's
@@ -123,8 +141,9 @@ struct ShowState {
 // there is none, and nextInfo has its first line only. The sentences and hints name the band's own keys (app::ControlMap):
 // "Press Q to start", "hold S stop"; a hint whose action has no key is left out. The section hints show only for a song
 // with sections: the main view's "↑ ↓ next section", "L loop" and "Backspace cancel" while it plays; the stage view's
-// "↑ ↓ next section", "L loop this section", "Backspace cancel" and "hold → go to next song now" while it plays, and
-// "1–9 start from a section" between songs, while Section1 … Section10 have the keys 1 … 9 and 0.
+// "↑ ↓ next section", "L loop this section" and "Backspace cancel" while it plays, "hold → go to next song now" while a
+// hold can act (NowPlaying::inStep), and "1–9 start from a section" between songs, while Section1 … Section10 have the
+// keys 1 … 9 and 0.
 //
 // It runs 30 times a second. What it works out from documents alone is kept, message thread only: the keys, from the
 // band's controls, again only when the band's model::BandModel::revision changes; the lanes, when the song's or the
@@ -142,18 +161,5 @@ ShowStateWork showStateWork();
 // The span the main view's map draws for a song with a single step, in song time (seconds from bar 1):
 // model::songExtentSeconds of its model::tempoMapOf, from the count-in (or the audio before bar 1) to the end.
 std::pair<double, double> mapSpanSeconds(const model::SongDoc&);
-
-// A song's steps laid end to end, as the main view's map lays out its section blocks, its waveform and its chips: each
-// step's section in song time, and where the step starts along them, in seconds.
-struct StepSpans {
-    struct Span {
-        double songStart = 0.0, songEnd = 0.0, at = 0.0;
-        bool operator==(const Span&) const = default;
-    };
-    std::vector<Span> steps;
-    double total = 0.0;                                            // the steps' lengths added up
-    bool operator==(const StepSpans&) const = default;
-};
-StepSpans stepSpansOf(const std::vector<app::StepView>&);
 
 }  // namespace sqlive::ui

@@ -192,6 +192,7 @@ ArrangementView ShowArrangement::view(const ArrangementNow& p) const {
     if (current >= 0) next = view.looping ? current : pending >= 0 ? pending : current + 1;
     else if (!follows(p.serial) || entries_ == 0) next = playingStep(p);   // the lead-in: the step it leads into
     if (next >= count) next = -1;
+    if (current < 0) view.lead = next;
     view.then = kThen + (next < 0 ? juce::String("the end")
                                   : view.steps[static_cast<std::size_t>(next)].name + (next == current ? " again" : ""));
     return view;

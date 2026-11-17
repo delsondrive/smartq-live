@@ -53,15 +53,10 @@ void SongMapView::refresh() {
         audioStart = song->audioStartSeconds;
         audioLength = song->lengthSeconds;
     }
-    // Sections: the steps laid end to end, as the tiles and the chips are. While the steps aren't known for a moment (the
-    // song being prepared again) the ones the map has stay.
-    const auto steps = session_.arrangement().steps;
-    auto spans = steps.size() > 1 ? stepSpansOf(steps) : StepSpans{};
-    if (steps.empty() && id == songId_) spans = spans_;
-
+    // Sections: the playhead where ShowState puts it along the steps (setSections), in the playing step's block.
     double progress = 0.0;
-    if (playing && !spans.steps.empty())
-        progress = now.arrangedLengthSeconds > 0.0 ? std::clamp(now.arrangedSeconds / now.arrangedLengthSeconds, 0.0, 1.0) : 0.0;
+    if (playing && !spans_.steps.empty())
+        progress = along_;
     else if (playing && end > start)
         progress = std::clamp((now.seconds - start) / (end - start), 0.0, 1.0);
 
@@ -71,17 +66,15 @@ void SongMapView::refresh() {
         all = true;
     }
     playing_ = playing && now.playing;
-    if (start != start_ || end != end_ || from != audioFrom_ || to != audioTo_ || audioStart != audioStart_ || audioLength != audioLength_
-        || !(spans == spans_)) {
+    if (start != start_ || end != end_ || from != audioFrom_ || to != audioTo_ || audioStart != audioStart_
+        || audioLength != audioLength_) {
         start_ = start;
         end_ = end;
         audioFrom_ = from;
         audioTo_ = to;
         audioStart_ = audioStart;
         audioLength_ = audioLength;
-        spans_ = std::move(spans);
         makeBars();
-        layoutBlocks();
         all = true;
     }
     // The cache's word on the song: a lookup, no file is read. A new LoadedSong (the audio was loaded again) is drawn again.
@@ -107,10 +100,18 @@ void SongMapView::refresh() {
     }
 }
 
-bool SongMapView::setSections(std::vector<ShowState::Tile> tiles, const juce::String& playingWords) {
+bool SongMapView::setSections(const std::vector<ShowState::Tile>& tiles, const juce::String& playingWords, const StepSpans& spans,
+                              double alongSteps) {
+    along_ = alongSteps;                                          // refresh() places the playhead
+    if (!(spans == spans_)) {
+        spans_ = spans;
+        makeBars();
+        layoutBlocks();
+        repaint();
+    }
     if (tiles == tiles_ && playingWords == playingWords_) return false;
     const bool reshaped = tiles.empty() != tiles_.empty();
-    tiles_ = std::move(tiles);
+    tiles_ = tiles;
     playingWords_ = playingWords;
     if (reshaped) {
         resized();                                                // everything under the row moves

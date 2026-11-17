@@ -18,7 +18,7 @@ namespace sqlive::ui {
 // playing reads "<name> · <n> bars left", the one to play next has the "NEXT" tag. A click on one of the first ten, while
 // the song plays, chooses it to play next (Action::Section1 … Section10); nothing else here takes a click. The waveform
 // under them is drawn step by step in the same order (a section played twice shows its audio twice), and its playhead is
-// at NowPlaying::arrangedSeconds out of arrangedLengthSeconds, so it never jumps back at a repeat nor runs past the end.
+// in the playing step's block, at its song time (ShowState::alongSteps), whatever was chosen or looped.
 // A song with a single step has no row, and its waveform is placed where the audio is across the map's span
 // (mapSpanSeconds: the count-in, then the song), the playhead at its song time.
 //
@@ -34,7 +34,7 @@ namespace sqlive::ui {
 //
 // Its bounds reach `sideBleed` px beyond what it draws on either side, so the blocks' outlines aren't cut off.
 //
-// refresh() reads the session (now(), arrangement(), the song's document and the cache's loaded song; never a file) and
+// refresh() reads the session (now(), the song's document and the cache's loaded song; never a file) and
 // repaints only what moved: the strip of waveform the playhead crossed, or everything when the song, its span, its steps
 // or its audio changed. setSections and setLanes repaint their rows only when they changed. It never takes the keyboard.
 class SongMapView : public juce::Component {
@@ -45,9 +45,11 @@ public:
     explicit SongMapView(app::Session&);
 
     void refresh();
-    // The section blocks to draw, and the playing one's words ("Chorus · 6 bars left"; "" for its name alone). True when
-    // the row appeared or went, so the map's idealHeight() did.
-    bool setSections(std::vector<ShowState::Tile>, const juce::String& playingWords);
+
+    // The section blocks to draw, the playing one's words ("Chorus · 6 bars left"; "" for its name alone), the steps laid
+    // end to end and the playhead's place along them (ShowState::spans, alongSteps). Copied only when they changed. True
+    // when the row appeared or went, so the map's idealHeight() did. Call it before refresh().
+    bool setSections(const std::vector<ShowState::Tile>&, const juce::String& playingWords, const StepSpans&, double alongSteps);
     // The lanes to draw; true when their number changed, so the map's idealHeight() did.
     bool setLanes(std::vector<ShowState::Lane>);
     int idealHeight() const;                                      // the blocks, the waveform, and the lanes under it
@@ -60,6 +62,7 @@ public:
     // For tests: the blocks as laid out, in its own pixels, and the step whose block is at a point (-1 for none).
     const std::vector<juce::Rectangle<float>>& blocks() const { return blocks_; }
     int blockAt(juce::Point<float>) const;
+    float playheadAt() const { return playheadX(); }              // for tests: the playhead's x, in its own pixels
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -85,6 +88,7 @@ private:
     double audioFrom_ = 0.0, audioTo_ = 1.0;                      // a single step: where the audio lies across it, 0..1
     double audioStart_ = 0.0, audioLength_ = 0.0;                 // the audio in song time: from -audioStart_, that long
     StepSpans spans_;                                             // sections: the steps laid end to end; else empty
+    double along_ = 0.0;                                          // sections: the playhead's place along them, 0..1
     double progress_ = 0.0;                                       // the playhead's place across it, 0..1
     bool playing_ = false;                                        // a song plays: the blocks take a click
     struct Bar { float x, top, bottom; };

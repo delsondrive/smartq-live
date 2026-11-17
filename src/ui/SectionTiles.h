@@ -22,7 +22,7 @@ inline constexpr float lineHeight = 60.0f;
 void paintLine(juce::Graphics&, juce::Rectangle<float> area, const ShowState&);
 
 // Where the tiles go in an area that wide: up to 8 in a row, 112 px high (72 px when quiet, between songs); 9 to 16 on two
-// rows of smaller ones; of more than 16, the 16 around the step playing. 10 px apart.
+// rows of lower ones (80 px, 60 quiet); of more than 16, the 16 around the step playing. 10 px apart.
 struct Layout {
     struct Box {
         std::size_t tile = 0;                                        // an index into the tiles
