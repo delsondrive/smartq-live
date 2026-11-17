@@ -882,6 +882,9 @@ void Session::refreshTransport(bool force) {
     if (cue_sent_this_tick_ && !force) return;                   // the next tick sends the latest
     const auto serial = engine_.cue(wanted.prepared->song);
     if (serial == 0) return;                                     // not taken: the next tick tries again
+    // The ports learn the cue's devices just after the engine may take it. A message of it sent before that finds no table
+    // and is dropped; but that needs the playing song to end, the cue to follow on and its first message to come due,
+    // all in the few microseconds until the next line: effectively never.
     noteMidi(serial, wanted.prepared);
     cue_sent_this_tick_ = true;
     wanted.serial = serial;
