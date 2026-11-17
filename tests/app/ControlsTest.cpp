@@ -377,11 +377,23 @@ TEST_CASE("the MIDI echo allocates nothing once made", "[controls]") {
     bool echoed = false, elsewhere = true, late = true;
     {
         test::AllocGuard guard;
-        for (int i = 0; i < 200; ++i) echo.sent(port, bytes, 3, 1.0 + i * 0.001);   // round the ring several times
-        echoed = echo.isEcho(port, message, 1.205);
-        elsewhere = echo.isEcho(other, message, 1.205);
+        for (int i = 0; i < 2000; ++i) echo.sent(port, bytes, 3, 1.0 + i * 0.0001);   // round the ring several times
+        echoed = echo.isEcho(port, message, 1.2049);
+        elsewhere = echo.isEcho(other, message, 1.2049);
         late = echo.isEcho(port, message, 1.3);
     }
     CHECK(test::allocationCount() == 0);  CHECK(test::deallocationCount() == 0);
     CHECK(echoed);  CHECK_FALSE(elsewhere);  CHECK_FALSE(late);
+}
+TEST_CASE("a song start's whole chase to three pedalboards still knows its first message when the echo comes back", "[controls]") {
+    app::MidiEcho echo;
+    const juce::String boards[] = {"Board A", "Board B", "Board C"};
+    const std::uint8_t program[2] = {0xC0, 7};
+    echo.sent(boards[0], program, 2, 5.000);                       // the first of the chase: a program change
+    for (int controller = 0; controller < 120; ++controller)       // then every controller of each board, in the same instant
+        for (const auto& board : boards) {
+            const std::uint8_t cc[3] = {0xB0, static_cast<std::uint8_t>(controller), 64};
+            echo.sent(board, cc, 3, 5.001);
+        }
+    CHECK(echo.isEcho(boards[0], juce::MidiMessage::programChange(1, 7), 5.010));   // 360 later, still known as an echo
 }

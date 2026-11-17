@@ -6,6 +6,7 @@
 
 #include "app/Controls.h"
 #include "app/Session.h"
+#include "app/ShowController.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/Params.h"
 #include "tests/support/Signals.h"
@@ -235,4 +236,30 @@ TEST_CASE("a step the arrangement repeats is shown and timed on its second pass"
     CHECK(s.now().seconds == Catch::Approx(21.7).margin(0.05));                 // song time: bar 10, the Chorus again
     CHECK(s.now().arrangedSeconds == Catch::Approx(21.7).margin(0.05));         // the Intro, a whole Chorus, 2.5 s more
     CHECK(s.now().arrangedLengthSeconds == Catch::Approx(38.4).margin(0.05));
+}
+
+TEST_CASE("a stop silences a song still fading out after the song it crossfaded into has ended; double Esc works then", "[sessionsections]") {
+    DemoSession d(true); auto& s = *d.session;                     // every song with sections
+    const auto entries = d.setlist().entries;
+    // Low Tide's Intro alone (2.5 s): over long before First Light's 30 s crossfade into it is.
+    juce::Array<juce::var> steps;  steps.add(s.model().song(entries[1].songId)->sections[0].id);
+    const auto introOnly = s.commands().run("arrangement.add", params({{"songId", entries[1].songId}, {"name", "Intro only"},
+                                                                        {"steps", steps}})).value.toString();
+    REQUIRE(s.commands().run("setlist.setArrangement", params({{"setlistId", s.setlistId()}, {"entryId", entries[1].id},
+                                                               {"arrangementId", introOnly}})).ok);
+    REQUIRE(s.commands().run("setlist.setTransition", params({{"setlistId", s.setlistId()}, {"entryId", entries[0].id},
+                                                              {"kind", "crossfade"}, {"seconds", 30}})).ok);
+    s.commands().run("setlist.set", params({{"setlistId", s.setlistId()}, {"playMode", "continuous"}}));
+    d.settle();  s.enterShow();  s.perform(Action::Start);
+    // The crossfade can start only in First Light's last step, its Outro, from 28.8 s (31.2 s with its count-in), and lasts
+    // what is left of it: 9.6 s, to 40.8 s. Low Tide's Intro ends 2.5 s after it starts and, with its transition a stop,
+    // nothing follows: First Light still fades out.
+    s.advanceWithoutDevice(48000 * 35);
+    REQUIRE_FALSE(s.now().playing);
+    REQUIRE(s.now().lastPlayedIndex == 1);
+    app::ShowController c(s);
+    c.keyDown(ShowKey::Escape, 1.0);  c.keyUp(ShowKey::Escape, 1.1);  c.keyDown(ShowKey::Escape, 1.5);   // double Esc
+    s.advanceWithoutDevice(48000 / 5);                             // the stop's 50 ms fade, not the 5.8 s left of First Light's
+    CHECK(s.now().lastPlayedIndex == 0);                           // Stopped for First Light: it fell silent
+    CHECK(s.engine().status().state == engine::PlayState::Stopped);
 }

@@ -299,3 +299,26 @@ TEST_CASE("a pill button's right-click opens its menu in place of a press", "[se
     button.mouseDown(eventOn(button, {10.0f, 10.0f}, right));
     CHECK(menus == 1);                                            // not while it is disabled
 }
+
+TEST_CASE("an undo by keyboard during an edge drag leaves the drag, and nothing is read past the blocks", "[sectionslane]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    for (auto [name, bar] : {std::pair{"Intro", 1}, {"Verse 1", 5}, {"Chorus", 9}})
+        s.commands().run("section.add", params({{"songId", song}, {"name", name}, {"startBar", bar}}));
+    sqlive::test::ScopedLook look;
+    ui::SongEditorPage page(s);  page.openSong(song);
+    snapshot(page, 1280, 698);
+    auto* lane = dynamic_cast<ui::SectionsLane*>(page.timeline().lanes()[1].get());
+    REQUIRE(lane != nullptr);
+    const auto tempo = model::tempoMapOf(songOf(s, song));
+    const auto [start, end] = model::songExtentSeconds(songOf(s, song), tempo);
+    const ui::BarScale scale(tempo, start, end, static_cast<float>(lane->getWidth()));
+    const auto at = [&scale](int bar) { return juce::Point<float>(std::round(scale.xAtBar(bar)), 14.0f); };
+    lane->mouseDown(eventOn(*lane, at(9)));                        // the Chorus's left edge: the last of three
+    REQUIRE(s.commands().undo().ok);                               // the Chorus goes, mid-drag
+    d.settle();
+    REQUIRE(songOf(s, song).sections.size() == 2);
+    lane->mouseDrag(eventOn(*lane, at(12), at(9)));
+    lane->mouseUp(eventOn(*lane, at(12), at(9)));
+    CHECK(songOf(s, song).sections.size() == 2);                   // no command came of it
+    CHECK(songOf(s, song).sections[1].startBar == 5);
+}

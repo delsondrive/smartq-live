@@ -30,11 +30,6 @@ constexpr int kButtonPadding = 12, kMinButtonPadding = 6, kMinButtonGap = 3;
 
 const juce::String kAnotherProgram = "Another program" + kEllipsis, kNoProgram = "No program change";
 
-// The badge colours: the mockup's CC is --s-chorus. A note and a program take colours of their own, a green and a violet
-// that are no section's (sections share the song timeline with the pedal changes), no device's in the Colour menu, and
-// never mint, ember, caution or danger.
-const juce::Colour kBadgeControl{0xffffc163}, kBadgeNote{0xff86e08e}, kBadgeProgram{0xffd68cff};
-
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
 juce::Font badgeFont() { return theme::font(theme::sizeCaption, true); }
@@ -329,7 +324,7 @@ void MarkerInspector::paint(juce::Graphics& g) {
         const auto kind = state_.alsoSendKinds[index];
         const float badgeWidth = widthOf(badgeFont(), kind) + 10.0f;
         const auto badge = inside.removeFromLeft(badgeWidth).withSizeKeepingCentre(badgeWidth, 16.0f);
-        g.setColour(kind == "CC" ? kBadgeControl : kind == "Note" ? kBadgeNote : kBadgeProgram);
+        g.setColour(kind == "CC" ? theme::badgeControl : kind == "Note" ? theme::badgeNote : theme::badgeProgram);
         g.fillRoundedRectangle(badge, 4.0f);
         g.setColour(theme::onAccent);
         g.setFont(badgeFont());

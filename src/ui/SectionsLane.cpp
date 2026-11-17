@@ -116,7 +116,7 @@ void SectionsLane::rename(const juce::String& sectionId, const juce::String& nam
 }
 
 bool SectionsLane::removeSelected() {
-    const auto& picked = selection();
+    const auto picked = selection();                              // a copy: remove() runs a command, and the selection may change
     if (picked.kind != EditorSelection::Kind::Section || picked.id.isEmpty()) return false;
     const bool here = std::any_of(state_.blocks.begin(), state_.blocks.end(), [&](const auto& b) { return b.id == picked.id; });
     if (!here || !editable()) return false;
@@ -216,7 +216,11 @@ void SectionsLane::mouseDown(const juce::MouseEvent& e) {
 
 void SectionsLane::mouseDrag(const juce::MouseEvent& e) {
     if (e.mods.isPopupMenu()) return;
-    if (edge_ >= 0) {
+    if (edge_ >= 0 && (edge_ < 1 || edge_ >= static_cast<int>(state_.blocks.size()))) {
+        edge_ = -1;                                               // the blocks changed under the drag (an undo by keyboard)
+        edgeTo_.reset();
+        repaint();
+    } else if (edge_ >= 0) {
         if (!edgeTo_ && e.getDistanceFromDragStart() < 3) return;
         // Between the starts of the sections either side, as section.set keeps it.
         const int lowest = state_.blocks[static_cast<std::size_t>(edge_) - 1].startBar + 1;

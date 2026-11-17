@@ -18,6 +18,11 @@ inline const juce::Colour &ember = model::meaning::ember, &mint = model::meaning
                           &caution = model::meaning::caution;
 inline const juce::Colour onAccent{0xff0e0c11};                  // text on a mint or ember fill
 
+// The MIDI message badges in the marker card. A CC is the mockup's --s-chorus; a note and a program have colours of their
+// own, a blue and a violet: no section's, no device's in the Colour menu, and far in hue from mint, ember, caution and
+// danger, so a note never reads as "playing now".
+inline const juce::Colour badgeControl{0xffffc163}, badgeNote{0xff7f9dff}, badgeProgram{0xffd68cff};
+
 // A field under the mouse (Smart Q's), and the faint line between table rows (the mockup's td border).
 inline const juce::Colour fieldHover{0x20ffffff}, rowLine{0x0dffffff};
 

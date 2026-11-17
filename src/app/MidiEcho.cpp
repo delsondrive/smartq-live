@@ -32,6 +32,8 @@ bool sameName(const std::array<char, N>& stored, const juce::String& name) noexc
 
 }  // namespace
 
+MidiEcho::MidiEcho() : ring_(static_cast<std::size_t>(capacity)) {}
+
 void MidiEcho::sent(const juce::String& portName, const std::uint8_t* bytes, int size, double nowSeconds) noexcept {
     if (!couldBeAControl(bytes, size) || portName.isEmpty()) return;
     const juce::SpinLock::ScopedLockType turn(lock_);

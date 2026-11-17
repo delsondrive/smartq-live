@@ -1,6 +1,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -84,4 +86,16 @@ TEST_CASE("a choice's item can have a dot before its words, as the mockup's .dd 
     CHECK(hasColour(snapshot(choice, 200, 28).getClippedImage(dot), mint, 30));
     choice.setSelected(1);                                        // "Out" has none
     CHECK_FALSE(hasColour(snapshot(choice, 200, 28).getClippedImage(dot), mint, 30));
+}
+TEST_CASE("the MIDI badges' colours are far in hue from the four meaning colours", "[widgets]") {
+    const auto hueApart = [](juce::Colour a, juce::Colour b) {     // 0..0.5 of the colour wheel
+        const float d = std::abs(a.getHue() - b.getHue());
+        return std::min(d, 1.0f - d);
+    };
+    for (const auto badge : {sqlive::theme::badgeNote, sqlive::theme::badgeProgram}) {
+        CHECK(hueApart(badge, sqlive::theme::mint) > 0.15f);   // more than 54° from mint, which means "playing now"
+        CHECK(hueApart(badge, sqlive::theme::ember) > 0.15f);
+        CHECK(hueApart(badge, sqlive::theme::caution) > 0.15f);
+        CHECK(hueApart(badge, sqlive::theme::danger) > 0.15f);
+    }
 }

@@ -292,7 +292,8 @@ void Session::perform(Action action) {
         break;
     case Action::Stop: {
         const auto status = engine_.status();
-        if (!playing_.active() && status.state == engine::PlayState::Stopped) return;
+        // Nothing to stop, unless a song still fades out (a crossfade's, after the song it led into has ended): it falls silent.
+        if (!playing_.active() && status.state == engine::PlayState::Stopped && fading_serial_ == 0) return;
         engine_.stop();
         if (playing_.active()) stop_requested_ = true;
         changed();
