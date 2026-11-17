@@ -83,3 +83,13 @@ TEST_CASE("click and cues stay off every bus that shares a channel with the PA",
     CHECK(mix->at(2, 1) == 1.0f);                                // parts may still go there
     CHECK(mix->at(0, 2) == 1.0f);  CHECK(mix->at(1, 2) == 1.0f);   // Drummer shares nothing with the PA
 }
+TEST_CASE("an output's bus is found as the mix builds it", "[routing]") {
+    RigDoc rig; rig.outputs = {{"a", "A", 1, true, OutputLabel::Foh, 0.0f, {}}, {"tc", "TC", 3, false, OutputLabel::Timecode, 0.0f, {}},
+                               {"b", "B", 5, true, OutputLabel::Monitor, 0.0f, {}}, {"far", "Far", 9, false, OutputLabel::Monitor, 0.0f, {}}};
+    CHECK(busIndexOf(rig, "a", 0) == 0);
+    CHECK(busIndexOf(rig, "tc", 0) == -1);                          // timecode and unused outputs have no bus
+    CHECK(busIndexOf(rig, "b", 0) == 1);
+    CHECK(busIndexOf(rig, "far", 0) == 2);
+    CHECK(busIndexOf(rig, "far", 8) == -1);                         // beyond the device
+    CHECK(busIndexOf(rig, "nope", 0) == -1);
+}

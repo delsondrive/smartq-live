@@ -25,5 +25,8 @@ struct RoutingProblem {
 // deviceOutputChannels: 0 = not known.
 std::vector<RoutingProblem> checkRig(const BandDoc&, const RigDoc&, int deviceOutputChannels);
 std::shared_ptr<const engine::MixSetup> buildMixSetup(const BandDoc&, const RigDoc&, int deviceOutputChannels);
+// The bus of buildMixSetup's mix (same arguments) that carries this output, or -1: a timecode or unused output, one off the
+// device, one past the mix's kMaxBuses, or no such output. Its channels are the output's.
+int busIndexOf(const RigDoc&, const juce::String& outputId, int deviceOutputChannels) noexcept;
 
 }  // namespace sqlive::model

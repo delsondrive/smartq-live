@@ -17,6 +17,9 @@ bool onDevice(const OutputDoc& o, int deviceChannels) noexcept {
     return o.firstChannel >= 1 && (deviceChannels <= 0 || o.firstChannel <= deviceChannels);
 }
 
+// Whether buildMixSetup gives the output a bus (while there is room for one).
+bool hasBus(const OutputDoc& o, int deviceChannels) noexcept { return usesBus(o.label) && onDevice(o, deviceChannels); }
+
 juce::String channelsText(const OutputDoc& o) {
     return o.stereo ? juce::String(o.firstChannel) + "/" + juce::String(o.firstChannel + 1) : juce::String(o.firstChannel);
 }
@@ -122,7 +125,7 @@ std::shared_ptr<const engine::MixSetup> buildMixSetup(const BandDoc& band, const
     std::vector<const OutputDoc*> used;
     for (auto& o : rig.outputs) {
         if (used.size() >= static_cast<size_t>(engine::kMaxBuses)) break;
-        if (usesBus(o.label) && onDevice(o, deviceChannels)) used.push_back(&o);
+        if (hasBus(o, deviceChannels)) used.push_back(&o);
     }
     // Every device channel the PA is on. An in-ear output that shares one of them (only a hand-edited file can have
     // that) would carry the click into the PA, so the click and cues are kept off the whole of it.
@@ -151,6 +154,16 @@ std::shared_ptr<const engine::MixSetup> buildMixSetup(const BandDoc& band, const
         }
     }
     return mix;
+}
+
+int busIndexOf(const RigDoc& rig, const juce::String& outputId, int deviceChannels) noexcept {
+    int bus = 0;
+    for (auto& o : rig.outputs) {
+        const bool has = bus < engine::kMaxBuses && hasBus(o, deviceChannels);
+        if (o.id == outputId) return has ? bus : -1;
+        if (has) ++bus;
+    }
+    return -1;
 }
 
 }  // namespace sqlive::model
