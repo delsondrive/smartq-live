@@ -31,9 +31,14 @@ enum class PedalKind { Held, Tap };
 //    does a song started from anywhere else (the top bar's ▶, a seamless follow-on): both taps must be in one song.
 //  - Esc stops only when pressed twice within a second and at least 150 ms apart, always (the band can't give Esc away).
 //  - Going to the next song now ends a song, so it is guarded as Stop is: a single tap never does it. On a key, a hold of a
-//    second during a song: Next song: later's key (→) held, or a key of its own held (a shorter press of that does
-//    nothing). A tap of → is still Next song: later, sent when the key is let go; a hold that went to the next song sends
-//    nothing more. On a tapped pedal or pad, two taps during one song, as for Stop, kept apart from Stop's.
+//    second while a step of a song plays and nothing is stopping: Next song: later's key (→) held, or a key of its own held
+//    (a shorter press of that does nothing). A tap of → is still Next song: later, sent when the key is let go; a hold
+//    that went to the next song sends nothing more. In a count-in, lead-in or gap, or once a stop is asked for, no hold
+//    fills: → let go is a tap, and a key of its own does nothing. On a tapped pedal or pad, two taps during one song, as
+//    for Stop, kept apart from Stop's.
+//  - "One song" is the song the engine started, by its serial (NowPlaying::playingSerial), never by its time, which goes
+//    back at a loop or a jump. A song started anywhere else, even the same entry again, forgets a first tap; so does a
+//    Start, or a section key that starts a song.
 //  - The other actions act once per press; auto-repeat is ignored.
 // Keys are looked up in the band's ControlMap (the defaults: Space, the arrows and Tab), rebuilt when the band's controls
 // change. Pedals and pads (ControlInput) come in through buttonDown. What keys hold and what buttons hold are kept apart,
@@ -103,7 +108,7 @@ private:
     struct TappedIn {
         int index = -1;
         juce::String songId;
-        double seconds = 0.0;
+        std::uint64_t serial = 0;                  // NowPlaying::playingSerial
     } tapped_in_, tapped_next_in_;
     // A tap toward a double tap in one song: true on the second.
     bool doubleTap(DoublePress&, TappedIn&, double now);

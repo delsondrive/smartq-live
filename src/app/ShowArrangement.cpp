@@ -80,19 +80,19 @@ void ShowArrangement::started(std::uint64_t serial, int leadStep, engine::Sample
     serial_ = serial;
     lead_step_ = std::max(0, leadStep);
     from_ = from;
-    first_step_ = step_ = -1;
+    first_step_ = -1;
     entries_ = 0;
-    played_ = 0;
-    entered_at_ = 0;
+    first_entered_at_ = 0;
+    asked_ = {};
 }
 
 void ShowArrangement::stepEntered(std::uint64_t serial, int step, std::int64_t streamTime) {
     if (serial == 0 || serial < serial_ || step < 0) return;    // a song before the one followed: it no longer steps
     if (serial != serial_) started(serial, 0, 0);               // one that followed on, from its start
-    if (entries_ > 0) played_ += std::max<std::int64_t>(0, streamTime - entered_at_);
-    else first_step_ = step;
-    step_ = step;
-    entered_at_ = streamTime;
+    if (entries_ == 0) {
+        first_step_ = step;
+        first_entered_at_ = streamTime;
+    }
     ++entries_;
 }
 
@@ -108,34 +108,57 @@ double ShowArrangement::firstOffset(const engine::PreparedSong& song) const {
     return from_ > section.start && from_ < section.end ? static_cast<double>(from_ - section.start) : 0.0;
 }
 
-engine::SamplePos ShowArrangement::entryAt(const engine::PreparedSong& song) const {
-    const auto start = probeOf(song).sectionOf(step_).start;
-    return entries_ == 1 ? start + static_cast<engine::SamplePos>(firstOffset(song)) : start;
+ShowArrangement::Choice ShowArrangement::choiceOf(const ArrangementNow& p) const {
+    if (p.status.playingSerial != p.serial || p.song == nullptr) return {};
+    const Choice shown{p.status.pendingStep, p.status.looping};
+    // What was asked last, until the engine shows it. Once it does, or the playing step has handed over since (which uses
+    // a choice up), or a second has gone by, the engine's own word is taken again.
+    const bool stale = asked_.serial != p.serial || asked_.step != p.status.step || shown == asked_.choice
+                       || p.status.streamTime > asked_.streamTime + static_cast<std::int64_t>(p.song->sampleRate);
+    if (stale) {
+        asked_ = {};
+        return shown;
+    }
+    return asked_.choice;
 }
 
 // ---- The section actions -----------------------------------------------------------------------------------------------
 
-void ShowArrangement::perform(Action a, const ArrangementNow& p, engine::Engine& engine) const {
+void ShowArrangement::perform(Action a, const ArrangementNow& p, engine::Engine& engine) {
     if (p.song == nullptr || p.status.playingSerial != p.serial) return;
     const int count = probeOf(*p.song).stepCount();
     const int current = playingStep(p);
     if (current < 0 || count == 0) return;
+    const auto choice = choiceOf(p);
+    Choice asked = choice;
     switch (a) {
     case Action::NextSectionLater:
     case Action::NextSectionEarlier: {
         const bool later = a == Action::NextSectionLater;
-        const int from = p.status.pendingStep >= 0 ? p.status.pendingStep : current + 1;
-        if (later && from >= count - 1 && p.status.pendingStep < 0) return;   // nothing comes after the last step
+        const int from = choice.pending >= 0 ? choice.pending : current + 1;
+        if (later && from >= count - 1 && choice.pending < 0) return;   // nothing comes after the last step
         const int to = std::clamp(from + (later ? 1 : -1), 0, count - 1);
-        engine.chooseNextStep(p.serial, to == current + 1 ? -1 : to);   // the step after the playing one comes anyway
+        asked = {to == current + 1 ? -1 : to, false};           // the step after the playing one comes anyway
+        engine.chooseNextStep(p.serial, asked.pending);
         break;
     }
-    case Action::LoopSection: engine.setLoop(p.serial, !p.status.looping); break;
-    case Action::CancelSection: engine.chooseNextStep(p.serial, -1); break;
-    default:
-        if (const int step = startStep(a); step >= 0 && step < count) engine.chooseNextStep(p.serial, step);
+    case Action::LoopSection:
+        asked = {choice.looping ? choice.pending : -1, !choice.looping};   // turning it on cancels a choice
+        engine.setLoop(p.serial, asked.looping);
+        break;
+    case Action::CancelSection:
+        asked = {};
+        engine.chooseNextStep(p.serial, -1);
+        break;
+    default: {
+        const int step = startStep(a);
+        if (step < 0 || step >= count) return;
+        asked = {step, false};
+        engine.chooseNextStep(p.serial, step);
         break;
     }
+    }
+    asked_ = {p.serial, p.status.step, p.status.streamTime, asked};
 }
 
 // ---- What the views show -----------------------------------------------------------------------------------------------
@@ -150,10 +173,11 @@ ArrangementView ShowArrangement::view(const ArrangementNow& p) const {
     auto view = idle(p.steps != nullptr ? *p.steps : std::vector<StepView>());
     const bool live = p.status.playingSerial == p.serial;
     const int count = static_cast<int>(view.steps.size());
+    const auto choice = choiceOf(p);
     const int current = live && p.status.step < count ? p.status.step : -1;
-    const int pending = live && p.status.pendingStep < count ? p.status.pendingStep : -1;
+    const int pending = choice.pending < count ? choice.pending : -1;
     view.current = current;
-    view.looping = live && p.status.looping;
+    view.looping = choice.looping;
     view.pending = pending >= 0 && pending != current + 1 ? pending : -1;
     if (current >= 0 && p.song != nullptr) {
         const auto section = probeOf(*p.song).sectionOf(current);
@@ -172,9 +196,13 @@ ArrangementView ShowArrangement::view(const ArrangementNow& p) const {
 double ShowArrangement::arrangedSeconds(const ArrangementNow& p) const {
     if (p.song == nullptr || p.song->sampleRate <= 0.0) return 0.0;
     const auto& song = *p.song;
-    if (!follows(p.serial) || entries_ == 0)                    // the lead-in: before the step it leads into
-        return static_cast<double>(p.songTime - probeOf(song).sectionOf(playingStep(p)).start) / song.sampleRate;
-    return (firstOffset(song) + static_cast<double>(played_ + (p.songTime - entryAt(song)))) / song.sampleRate;
+    // Once a step has been entered: the samples played since the first one began, by the status's stream time. Nothing
+    // here depends on which step the events have told of so far, so a jump the events haven't reported yet (or one they
+    // reported before the status shows it) moves nothing.
+    if (follows(p.serial) && entries_ > 0 && p.status.playingSerial == p.serial)
+        return (firstOffset(song) + static_cast<double>(p.status.streamTime - first_entered_at_)) / song.sampleRate;
+    // The lead-in, or a status from before the first step's event: from the start of the step it leads into.
+    return static_cast<double>(p.songTime - probeOf(song).sectionOf(std::max(0, playingStep(p))).start) / song.sampleRate;
 }
 
 double ShowArrangement::arrangedLengthSeconds(const ArrangementNow& p) const {
@@ -182,20 +210,20 @@ double ShowArrangement::arrangedLengthSeconds(const ArrangementNow& p) const {
     const auto& song = *p.song;
     const auto probe = probeOf(song);
     const int count = probe.stepCount();
-    const bool live = p.status.playingSerial == p.serial;
-    const int pending = live ? p.status.pendingStep : -1;
+    const int pending = choiceOf(p).pending;
     const auto stepsFrom = [&](int first) {
         engine::SamplePos total = 0;
         for (int step = std::max(0, first); step < count; ++step) total += lengthOf(probe, step);
         return total;
     };
-    if (!follows(p.serial) || entries_ == 0) {                  // the lead-in: its step, then what follows it
-        const int lead = playingStep(p);
-        return static_cast<double>(lengthOf(probe, lead) + stepsFrom(pending >= 0 ? pending : lead + 1)) / song.sampleRate;
-    }
-    const double rest = static_cast<double>(std::max<engine::SamplePos>(0, probe.sectionOf(step_).end - p.songTime));
-    const int first = live && p.status.step >= 0 ? (pending >= 0 ? pending : step_ + 1) : count;   // after the last: none
-    return arrangedSeconds(p) + (rest + static_cast<double>(stepsFrom(first))) / song.sampleRate;
+    const int current = playingStep(p);
+    if (current < 0) return arrangedSeconds(p);                 // the last step is over: nothing more comes
+    const auto then = stepsFrom(pending >= 0 ? pending : current + 1);
+    if (p.status.playingSerial != p.serial || p.status.step < 0)   // the lead-in: its step, then what follows it
+        return static_cast<double>(lengthOf(probe, current) + then) / song.sampleRate;
+    // The step the status names, with the song time of the same status.
+    const auto rest = std::max<engine::SamplePos>(0, probe.sectionOf(current).end - p.songTime);
+    return arrangedSeconds(p) + static_cast<double>(rest + then) / song.sampleRate;
 }
 
 }  // namespace sqlive::app

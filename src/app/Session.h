@@ -46,6 +46,11 @@ struct NowPlaying {
     int lastPlayedIndex = -1;                                    // the setlist entry that last ended or was stopped; -1 = none, or
                                                                  // removed. A song played alone (playSong) doesn't count
     juce::String playingSongId, nextSongId;                      // playingSongId is also set for Edit-mode playback
+    std::uint64_t playingSerial = 0;                             // the engine's serial of the song playing: a new one for each
+                                                                 // song started, even the same entry again; 0 = none. It only
+                                                                 // goes up, whatever the song time does (loops, jumps)
+    bool inStep = false;                                         // a step of it plays: not its count-in, a count-off or lead-in,
+                                                                 // a gap, its stop fade, or what follows its last step
     Readiness nextReadiness = Readiness::None;  double nextProgress = 0.0;  juce::StringArray nextProblems;
     bool countIn = false;  int bar = 1;  double beat = 1.0;
     double seconds = 0.0, lengthSeconds = 0.0;                   // from bar 1; negative during the count-in
@@ -81,7 +86,7 @@ struct ArrangementView {                    // the song that is playing, or the 
 // In Show mode the band folder is never written: a level changed there is kept in Tonight, which lives in the settings'
 // show memory, and the engine plays the documents with it applied (songAsHeard, rigAsHeard). Leaving Show mode keeps
 // Tonight until the user keeps or drops it. Opening a band whose show memory says it was in a show goes back into it.
-class Session : private juce::Timer {
+class Session : private juce::Timer, private juce::AsyncUpdater {
 public:
     Session(Settings&, juce::File bandRoot, std::int64_t cacheBudgetBytes = SongCache::defaultBudgetBytes());
     ~Session() override;                                         // flushForClose, and saves the settings
@@ -140,11 +145,13 @@ public:
     MidiPorts* midi() const;                                     // nullptr when none is attached: tests, screenshots
     MidiEcho& midiEcho();                                        // what MidiPorts sent lately, for ControlInput (any thread)
 
-    // The cue clips, at the device's rate. A clip arriving builds the prepared songs that use it again.
+    // The cue clips, at the device's rate. Clips arriving build the prepared songs again, once for a burst of them (the
+    // refresh waits for the message loop, so the arrivals one look at the loader delivers are taken together).
     CueLibrary& cues();                     const CueLibrary& cues() const;
     // Stopped: says the clip through the cues' outputs at the band's cue level (Engine::previewCue). False while a song plays
     // (a gap included), and until the clip has loaded (asking for it starts the load, so pressing again works).
     bool hearCue(const juce::String& pathInBandFolder);
+    std::uint64_t preparedBuilds() const;                        // for tests: how many songs have been built for the engine
 
     Mode mode() const;
     void enterShow();                                            // views run the pre-show check first (Task 18). Stops a
@@ -239,6 +246,7 @@ private:
     };
 
     void timerCallback() override;
+    void handleAsyncUpdate() override;                           // cue clips arrived: one refresh for a burst of them
 
     bool deviceMayPlay() const;                                  // a device runs, or none was ever spoken of (tests)
 
@@ -333,6 +341,7 @@ private:
     model::BandDoc prepared_band_;                               // the band the prepared songs were built with
     model::RigDoc prepared_rig_;                                 // and the rig: only its MIDI channels are built into them
     std::vector<WantedSong> wanted_;                             // the last list handed to the cache
+    std::uint64_t prepared_builds_ = 0;                          // preparedBuilds()
 
     bool mix_built_ = false;
     model::BandDoc mix_band_;

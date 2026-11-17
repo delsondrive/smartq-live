@@ -413,3 +413,21 @@ TEST_CASE("the section row's keys and pedals read as the band has them, and its 
     s.commands().undo();                                           // one step brings all ten back
     for (int i = 0; i < 10; ++i) CHECK(s.model().band().controls.at("section" + juce::String(i + 1)).midiKind == model::MidiKind::Control);
 }
+
+TEST_CASE("the section row's Learn sets all ten or none", "[midisetup]") {
+    DemoSession d; auto& s = *d.session;
+    app::ShowController show(s);  show.onAction = [](Action) {};
+    app::ControlInput input(s, show, [] { return juce::StringArray(); }, {});
+    ScopedLook look;
+    ui::MidiSetupPage page(s, &input);  page.setVisible(true);  snapshot(page, 1044, 620);
+    const auto undoName = s.commands().undoName();
+    page.learn(6);
+    REQUIRE(input.learning() == Action::Section1);
+    input.handle(juce::MidiMessage::noteOn(10, 120, 1.0f), 1.0);   // 120 to 129: the last three can't be
+    for (int i = 0; i < 10; ++i) CHECK(s.model().band().controls.count("section" + juce::String(i + 1)) == 0);
+    CHECK(s.commands().undoName() == undoName);                   // nothing was run
+    CHECK(page.lastMessage() == "That is too high for ten in a row: choose one numbered 118 or lower.");
+    page.learn(6);
+    input.handle(juce::MidiMessage::noteOn(10, 118, 1.0f), 2.0);   // 118 to 127 fit
+    CHECK(s.model().band().controls.at("section10").midiNumber == 127);
+}

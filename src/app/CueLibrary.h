@@ -28,7 +28,7 @@ public:
     void forget(const juce::String& pathInBandFolder);            // loaded again when next asked for
     juce::StringArray clipsInFolder() const;                      // every audio file under cues/, as paths inside the band folder
     std::uint64_t revision() const;                               // goes up whenever a clip arrives or is forgotten
-    std::function<void()> onChanged;                              // message thread, after each arrival
+    std::function<void()> onChanged;                              // message thread, once for the clips that arrived together
     bool waitUntilIdle(int timeoutMs);                            // tests: true once nothing is waiting to load; delivers arrivals
 
 private:

@@ -72,7 +72,8 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
         outside_->noteMissingAudio(songId);
         refresh();
     };
-    cues_.onChanged = [this] { refresh(); };                     // a clip arrived: the songs that say it are built again
+    // Clips arrived: the songs that say them are built again, once for all that arrive before the message loop comes round.
+    cues_.onChanged = [this] { triggerAsyncUpdate(); };
 
     // Until a device is chosen the engine runs at a default rate, so advanceWithoutDevice can drive it. With a device,
     // AudioHost prepares it instead, from audioDeviceAboutToStart.
@@ -95,6 +96,7 @@ Session::~Session() {
     stopTimer();
     cache_.onChanged = nullptr;
     cues_.onChanged = nullptr;
+    cancelPendingUpdate();
     outside_->setClosing(true);
     autosaver_.flush();
     if (settings_pending_) settings_.save();
@@ -360,6 +362,10 @@ bool Session::hearCue(const juce::String& pathInBandFolder) {
     engine_.previewCue(clip, model::dbToGain(bandAsHeard().cuesDb));
     return true;
 }
+
+void Session::handleAsyncUpdate() { refresh(); }
+
+std::uint64_t Session::preparedBuilds() const { return prepared_builds_; }
 
 // ---- Show mode and levels ----------------------------------------------------------------------------------------------
 
@@ -666,6 +672,9 @@ NowPlaying Session::now() const {
     n.nextIndex = indexOf(next_entry_id_);
     n.lastPlayedIndex = indexOf(last_played_entry_id_);
     n.playingSongId = playing_.active() ? playing_.songId : juce::String();
+    n.playingSerial = playing_.serial;
+    n.inStep = playing_.active() && !n.stopping && !inGap && status.playingSerial == playing_.serial
+               && status.state == engine::PlayState::Playing && status.step >= 0;
     n.nextSongId = songIdOf(next_entry_id_);
     if (n.nextSongId.isNotEmpty()) {
         n.nextReadiness = readinessOf(n.nextSongId, arrangementIdOf(next_entry_id_));
@@ -844,6 +853,7 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
         prepared->partIndex[juce::String(prepared->song->parts[i].partId)] = (int) i;
     prepared->steps = ShowArrangement::stepsOf(prepared->doc, prepared_band_, *prepared->song);
     prepared_[key] = prepared;
+    ++prepared_builds_;
     return prepared;
 }
 

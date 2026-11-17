@@ -153,3 +153,86 @@ TEST_CASE("the section keys are the defaults", "[sessionsections]") {
     CHECK(map.actionForKey('L', 0) == Action::LoopSection);
     CHECK(map.actionForKey(juce::KeyPress::backspaceKey, 0) == Action::CancelSection);
 }
+TEST_CASE("two quick presses of the next-section key move twice", "[sessionsections]") {
+    DemoSession d; auto& s = *d.session; addSections(d, d.setlist().entries[0].songId);
+    s.enterShow();  s.perform(Action::Start);  s.advanceWithoutDevice(int(48000 * 2.4) + 48000);
+    s.perform(Action::NextSectionLater);  s.perform(Action::NextSectionLater);   // within one audio block
+    CHECK(s.arrangement().pending == 3);                           // what was asked shows at once
+    s.advanceWithoutDevice(480);
+    CHECK(s.arrangement().pending == 3);                           // and the engine took both
+    s.perform(Action::NextSectionEarlier);  s.perform(Action::NextSectionEarlier);  s.perform(Action::NextSectionEarlier);
+    s.advanceWithoutDevice(480);
+    CHECK(s.arrangement().pending == 0);                           // 3, 2, back to what follows anyway, then 0
+}
+TEST_CASE("the time along the arrangement never jumps when a step changes", "[sessionsections]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId; addSections(d, song);
+    juce::Array<juce::var> steps; for (int i : {0, 2, 2, 3}) steps.add(s.model().song(song)->sections[size_t(i)].id);
+    auto arr = s.commands().run("arrangement.add", params({{"songId", song}, {"name", "No verse"}, {"steps", steps}})).value.toString();
+    s.commands().run("setlist.setArrangement",
+                     params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"arrangementId", arr}}));
+    d.settle();  s.enterShow();  s.perform(Action::Start);
+    s.advanceWithoutDevice(int(48000 * 2.4) + int(48000 * 9.5));  // a tenth of a second before the jump to the Chorus
+    // The engine runs on with no event handled, as between two of the session's ticks: its status is ahead of the events.
+    std::vector<float> left(512), right(512);
+    float* channels[] = {left.data(), right.data()};
+    double last = s.now().arrangedSeconds;
+    for (int block = 0; block < 20; ++block) {
+        s.engine().process(channels, 2, 512);
+        const double now = s.now().arrangedSeconds;
+        CHECK(now - last == Catch::Approx(512.0 / 48000.0).margin(1.0e-6));
+        last = now;
+    }
+    REQUIRE(s.arrangement().current == 1);                         // past the jump
+    s.advanceWithoutDevice(512);                                   // the events are handled now
+    CHECK(s.now().arrangedSeconds - last == Catch::Approx(512.0 / 48000.0).margin(1.0e-6));
+    CHECK(s.now().seconds == Catch::Approx(19.2 + 21 * 512.0 / 48000.0 - 0.1).margin(0.01));   // in the Chorus, from bar 9
+}
+TEST_CASE("cue clips arriving together build the songs once", "[sessionsections]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    for (const auto* type : {"Intro", "Verse", "Chorus"})
+        writeSine(s.folder().root().getChildFile("cues/built-in/" + juce::String(type) + ".wav"), 48000.0, 1, 0.3, 440.0, 0.5f);
+    for (auto [name, bar] : {std::pair{"Intro", 1}, {"Verse 1", 5}, {"Chorus", 9}})   // each asks for its type's clip
+        s.commands().run("section.add", params({{"songId", song}, {"name", name}, {"startBar", bar}}));
+    const auto before = s.preparedBuilds();
+    REQUIRE(s.cues().waitUntilIdle(20000));                        // all three arrive
+    CHECK(s.preparedBuilds() == before);                           // the refresh waits for the message loop
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    const auto burst = s.preparedBuilds() - before;
+    // One refresh builds each song near the next entry again: as many as a single new clip would.
+    s.cues().forget("cues/built-in/Intro.wav");
+    const auto one = s.preparedBuilds();
+    s.chooseNext(0);
+    CHECK(burst >= 1);
+    CHECK(burst == s.preparedBuilds() - one);
+}
+TEST_CASE("a too-short last section is folded into the one before, and its step doesn't show", "[sessionsections]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
+    // 16 bars a hair quicker than 100 BPM: the audio (38.4 s) runs about 100 samples into a bar 17.
+    juce::Array<juce::var> tempo;
+    tempo.add(params({{"bar", 1}, {"beat", 1}, {"bpm", 100.0055}, {"numerator", 4}, {"denominator", 4}}));
+    REQUIRE(s.commands().run("song.setTempo", params({{"songId", song}, {"tempo", tempo}})).ok);
+    addSections(d, song);
+    REQUIRE(s.commands().run("section.add", params({{"songId", song}, {"name", "Tag"}, {"startBar", 17}})).ok);
+    d.settle();
+    const auto steps = s.arrangement().steps;
+    REQUIRE(steps.size() == 4);
+    CHECK(steps[3].name == "Outro");  CHECK(steps[3].bars == 5);  // bars 13 to 16, and the sliver of 17
+    for (const auto& step : steps) CHECK(step.name != "Tag");
+}
+TEST_CASE("a step the arrangement repeats is shown and timed on its second pass", "[sessionsections]") {
+    DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId; addSections(d, song);
+    juce::Array<juce::var> steps; for (int i : {0, 2, 2, 3}) steps.add(s.model().song(song)->sections[size_t(i)].id);
+    auto arr = s.commands().run("arrangement.add", params({{"songId", song}, {"name", "No verse"}, {"steps", steps}})).value.toString();
+    s.commands().run("setlist.setArrangement",
+                     params({{"setlistId", s.setlistId()}, {"entryId", d.setlist().entries[0].id}, {"arrangementId", arr}}));
+    d.settle();  s.enterShow();  s.perform(Action::Start);
+    s.advanceWithoutDevice(int(48000 * 2.4) + int(48000 * 12.6));   // the Intro, then 3 s of the first Chorus
+    CHECK(s.arrangement().current == 1);  CHECK(s.arrangement().then == juce::String::fromUTF8("then → Chorus"));
+    s.advanceWithoutDevice(48000 * 9 + 4800);                      // 2.5 s of the second pass, from bar 9 again
+    const auto second = s.arrangement();
+    CHECK(second.current == 2);  CHECK(second.steps[2].name == "Chorus");
+    CHECK(second.barsLeft == 3);  CHECK(second.then == juce::String::fromUTF8("then → Outro"));
+    CHECK(s.now().seconds == Catch::Approx(21.7).margin(0.05));                 // song time: bar 10, the Chorus again
+    CHECK(s.now().arrangedSeconds == Catch::Approx(21.7).margin(0.05));         // the Intro, a whole Chorus, 2.5 s more
+    CHECK(s.now().arrangedLengthSeconds == Catch::Approx(38.4).margin(0.05));
+}

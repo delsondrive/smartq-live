@@ -698,19 +698,33 @@ void MidiSetupPage::learned(app::Action action, model::ControlBinding binding) {
         return;
     }
     // The section row: that note or controller and the next nine, on its channel, each keeping its key; one undo step.
+    // All ten are worked out and checked first, and nothing is set unless every one can be.
+    if (!editable()) return;
     if (binding.midiNumber + kSections - 1 > 127) {
         say("That is too high for ten in a row: choose one numbered " + juce::String(128 - kSections) + " or lower.", true, true);
         refresh(true);
         return;
     }
-    const auto key = juce::Uuid().toString();                     // fresh, so the ten never merge into an earlier step
+    std::vector<model::ControlBinding> ten;
     for (int i = 0; i < kSections; ++i) {
         auto each = bindingOf(sectionAction(i));
         each.midiKind = binding.midiKind;
         each.midiChannel = binding.midiChannel;
         each.midiNumber = binding.midiNumber + i;
-        if (!run("controls.set", jsonObject({{"action", app::actionName(sectionAction(i))}, {"binding", model::toVar(each)}}), true, key))
-            break;
+        if (each.midiKind == model::MidiKind::None || each.keyCode == juce::KeyPress::escapeKey) {   // controls.set refuses these
+            say("Those pads can't be used for the sections.", true, true);
+            refresh(true);
+            return;
+        }
+        ten.push_back(each);
+    }
+    const auto key = juce::Uuid().toString();                     // fresh, so the ten never merge into an earlier step
+    for (int i = 0; i < kSections; ++i) {
+        if (run("controls.set", jsonObject({{"action", app::actionName(sectionAction(i))}, {"binding", model::toVar(ten[(size_t) i])}}),
+                true, key))
+            continue;
+        if (i > 0) session_.commands().undo();                    // refused part way: the ones set go back, as one step
+        break;
     }
     refresh(true);
 }
@@ -837,9 +851,10 @@ void MidiSetupPage::resized() {
     const int devicesFixed = kHeaderTop + kHeaderHeight + kHeadRow;
     const int rowsWanted = static_cast<int>(state_.devices.size()) * kDeviceRow;
     // The control rows at the mockup's height when they fit, closer together (down to 30) so three device rows show unscrolled.
-    const int spare = area.getHeight() - devicesFixed - std::min(rowsWanted, 3 * kDeviceRow) - 1 - kBoxGap - devicesFixed;
+    const int controlsFixed = kHeaderTop + kHeaderHeight + kHeadRow;   // the controls box's header and column titles
+    const int spare = area.getHeight() - devicesFixed - std::min(rowsWanted, 3 * kDeviceRow) - 1 - kBoxGap - controlsFixed;
     control_row_ = std::clamp(spare / std::max(1, controls), kControlRowMin, kControlRow);
-    const int controlsHeight = kHeaderTop + kHeaderHeight + kHeadRow + controls * control_row_;
+    const int controlsHeight = controlsFixed + controls * control_row_;
     // As many device rows as fit above the controls (at least two, when there are), the rest scrolled to.
     const int room = area.getHeight() - controlsHeight - kBoxGap - devicesFixed - 1;
     const int rowsHeight = std::min(rowsWanted, std::max(room, std::min(rowsWanted, 2 * kDeviceRow)));

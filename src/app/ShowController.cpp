@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <vector>
 
+#include "app/ShowArrangement.h"
 #include "app/WallClock.h"
 
 namespace sqlive::app {
@@ -37,7 +38,8 @@ ShowController::ShowController(Session& s) : session_(s) {
 ShowController::~ShowController() { stopTimer(); }
 
 void ShowController::act(Action a) {
-    if (a == Action::Start) {                      // a tap from before this song never counts toward ending it
+    // A song started here (Start, or a section key while stopped): a tap from before it never counts toward ending it.
+    if (a == Action::Start || (ShowArrangement::startStep(a) >= 0 && !session_.now().playing)) {
         tapped_stop_.reset();
         tapped_next_.reset();
     }
@@ -58,7 +60,7 @@ void ShowController::press(Source source, Action a, double now) {
             break;
         case Action::NextSongLater:                // sent on the release, unless held into the next song
         case Action::GoToNextSongNow:              // only ever held into it
-            if (playing) next_holds_[{source, a}] = now;
+            if (session_.now().inStep) next_holds_[{source, a}] = now;   // only while a step plays: never a count-in
             break;
         default: act(a); break;
     }
@@ -80,10 +82,11 @@ bool ShowController::doubleTap(DoublePress& presses, TappedIn& in, double now) {
         return false;
     }
     // Only taps in the same song: one started since the first tap, wherever from, forgets it.
-    const bool sameSong = song.playingIndex == in.index && song.playingSongId == in.songId && song.seconds >= in.seconds;
+    // Told by the song's serial, which only goes up: song time goes back at every loop, jump or repeated step.
+    const bool sameSong = song.playingSerial == in.serial && song.playingIndex == in.index && song.playingSongId == in.songId;
     if (presses.armed && !sameSong) presses.reset();
     if (presses.press(now)) return true;
-    if (presses.armed && presses.at == now) in = {song.playingIndex, song.playingSongId, song.seconds};
+    if (presses.armed && presses.at == now) in = {song.playingIndex, song.playingSongId, song.playingSerial};
     return false;
 }
 
@@ -148,11 +151,13 @@ void ShowController::tick(double now) {
             act(Action::Stop);
             return;
         }
+    // Only while a step plays and nothing is stopping: otherwise the hold is dropped, and letting go of → is a tap.
+    if (!next_holds_.empty() && !session_.now().inStep) next_holds_.clear();
     for (auto& [holder, since] : next_holds_)
         if (now - since >= holdSeconds) {
             for (auto& [used, at] : next_holds_) next_done_.insert(used);   // once only; their releases send nothing
             next_holds_.clear();
-            if (session_.now().playing) act(Action::GoToNextSongNow);
+            act(Action::GoToNextSongNow);
             return;
         }
 }

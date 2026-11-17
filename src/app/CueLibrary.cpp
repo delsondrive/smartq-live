@@ -166,10 +166,9 @@ void CueLibrary::deliverArrivals() {
                 ++arrivals;
             }
     }
-    for (int i = 0; i < arrivals; ++i) {
-        ++revision_;
-        if (onChanged) onChanged();
-    }
+    if (arrivals == 0) return;
+    revision_ += static_cast<std::uint64_t>(arrivals);
+    if (onChanged) onChanged();                                   // once for all that arrived together
 }
 
 bool CueLibrary::isIdle() const {
