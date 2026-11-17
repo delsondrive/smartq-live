@@ -36,7 +36,7 @@ struct ClickSetup {
 
 struct Section { SamplePos start = 0, end = 0; };                 // song time; end is one past the last sample
 
-// When a chosen jump happens (Task 4): at the end of the playing section, or at the next bar line.
+// When a chosen step (or a loop turned on) takes effect: at the end of the playing section, or at the next bar line.
 enum class JumpTiming : std::uint8_t { EndOfSection, NextBar };
 
 // Everything the audio thread needs to play one song, built on the control thread and never changed after.
@@ -51,7 +51,8 @@ struct PreparedSong {
     SamplePos end = 0;                 // song time one past the last sample
     std::vector<PreparedPart> parts;
     ClickSetup click;
-    std::vector<ClickTick> ticks;      // every tick in [start, end); those in [countInStart, 0) sound even with the click off
+    std::vector<ClickTick> ticks;      // every tick in [start, end), from the bar before bar 1 if that is earlier (for a
+                                       // count-off only); those in [countInStart, 0) sound even with the click off
     ClickSound clickSound;
     // MIDI. A device is named by its engine device number: its place in the band when the song was prepared.
     std::vector<MidiEvent> midi;       // sorted by `at`; events at the same time keep their order

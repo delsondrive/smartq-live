@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include "engine/Arrangement.h"
+
 namespace sqlive::engine {
 
 namespace {
@@ -39,13 +41,17 @@ int sameDevice(const PreparedSong& from, int d, const PreparedSong& to, std::uin
 MidiOut::MidiOut() : queue_(kQueueCapacity) {}
 
 void MidiOut::begin(const PreparedSong& song, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime,
-                    bool fromStart) noexcept {
+                    bool fromStart, std::optional<SamplePos> chaseAt) noexcept {
     song_ = &song;
     serial_ = serial;
-    chase_point_ = fromStart ? std::max<SamplePos>(songTime, 0) : songTime;
+    sent_.clear();   // a song that follows on may number its devices otherwise: it sends its whole chase
+    Arrangement steps;
+    steps.reset(&song);
+    const SamplePos firstStep = steps.sectionOf(0).start;
+    chase_point_ = chaseAt ? *chaseAt : fromStart ? std::max(songTime, firstStep) : songTime;
     chase(-1, chase_point_, streamTime);
-    // Events before where it begins are not sent: the chase has covered the changes among them.
-    seek(songTime);
+    // Events before where it begins (or before chaseAt) are not sent: the chase has covered the changes among them.
+    seek(chaseAt ? *chaseAt : songTime, songTime);
 
     // The transport, after the chase. Following straight on, the devices end() found carrying on are running already (by
     // this song's numbers); every other start-stop device of this song starts.
@@ -91,8 +97,13 @@ void MidiOut::resend(int device, SamplePos songTime, std::int64_t streamTime) no
 void MidiOut::jump(SamplePos landing, std::int64_t streamTime) noexcept {
     if (song_ == nullptr) return;
     endNotes(streamTime);
+    chase_.scan(song_->midi, landing);
+    chase_.emitChanges(sent_, [&](int device, const std::uint8_t* b, int size) {
+        if (push(serial_, static_cast<std::uint16_t>(device), static_cast<std::uint8_t>(size), b[0], b[1], b[2], streamTime))
+            sent_.note(b, size, device);
+    });
     chase_point_ = landing;
-    seek(landing);
+    seek(landing, landing);
 }
 
 void MidiOut::end(std::int64_t streamTime, const PreparedSong* next) noexcept {
@@ -133,18 +144,20 @@ void MidiOut::endNotes(std::int64_t streamTime) noexcept {
     note_count_ = kept;
 }
 
-// The place in the song's events and clock ticks: the first of each at or after songTime.
-void MidiOut::seek(SamplePos songTime) noexcept {
+// The place in the song's events: the first at or after `events`; and in its clock ticks: the first at or after `ticks`.
+void MidiOut::seek(SamplePos events, SamplePos ticks) noexcept {
     const auto& midi = song_->midi;
-    const auto first = std::lower_bound(midi.begin(), midi.end(), songTime,
+    const auto first = std::lower_bound(midi.begin(), midi.end(), events,
                                         [](const MidiEvent& e, SamplePos t) { return e.at < t; });
     next_ = static_cast<std::size_t>(first - midi.begin());
-    const auto& ticks = song_->clockTicks;
-    next_tick_ = static_cast<std::size_t>(std::lower_bound(ticks.begin(), ticks.end(), songTime) - ticks.begin());
+    const auto& clock = song_->clockTicks;
+    next_tick_ = static_cast<std::size_t>(std::lower_bound(clock.begin(), clock.end(), ticks) - clock.begin());
 }
 
 void MidiOut::send(const MidiEvent& e, std::int64_t streamTime) noexcept {
-    if (push(serial_, e.device, e.size, e.data[0], e.data[1], e.data[2], streamTime)) track(e);
+    if (!push(serial_, e.device, e.size, e.data[0], e.data[1], e.data[2], streamTime)) return;
+    track(e);
+    sent_.note(e.data, e.size, e.device);
 }
 
 // Keeps the notes left sounding, from what was queued: a note-on adds one (once), a note-off, or a note-on at velocity 0,
@@ -185,7 +198,8 @@ void MidiOut::stopDevices(std::uint32_t devices, std::int64_t streamTime) noexce
 void MidiOut::chase(int onlyDevice, SamplePos upTo, std::int64_t streamTime) noexcept {
     chase_.scan(song_->midi, upTo);
     chase_.emit(onlyDevice, [&](int device, const std::uint8_t* b, int size) {
-        push(serial_, static_cast<std::uint16_t>(device), static_cast<std::uint8_t>(size), b[0], b[1], b[2], streamTime);
+        if (push(serial_, static_cast<std::uint16_t>(device), static_cast<std::uint8_t>(size), b[0], b[1], b[2], streamTime))
+            sent_.note(b, size, device);
     });
 }
 

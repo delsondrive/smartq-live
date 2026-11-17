@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "engine/Midi.h"
 #include "engine/MidiChase.h"
@@ -23,6 +24,9 @@ namespace sqlive::engine {
 // chase point is then skipped, as the chase has covered it. Notes are never chased and never skipped: every note from the
 // first sample played onwards is sent at its own time. Channel-mode messages (CC 120 to 127) are not chased, and one at
 // or before the chase point is skipped too: a reset played after the chase would undo it.
+//
+// It keeps what each device was last sent (every program and controller message queued, by the playing song's device
+// numbers; begin() forgets it, so a song sends its whole chase when it begins). A jump sends only what differs from it.
 //
 // A chase is not bounded against the queue: in the worst case it is 32 devices × 16 channels × up to 123 messages, far
 // more than kQueueCapacity. Like any other message, what doesn't fit is dropped (the tail of the chase, then the song's
@@ -45,15 +49,22 @@ public:
 
     // Producer. The song begins playing from songTime, its first sample at streamTime; it must stay alive until end().
     // Clock devices tick from songTime; start-stop devices end() didn't carry on are sent 0xFA after the chase.
-    // fromStart: it begins at its start (or, following on seamlessly, at bar 1), so the chase point is bar 1 beat 1 (or
-    // songTime, if later); otherwise the chase point is songTime.
-    void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime, bool fromStart) noexcept;
+    // fromStart: it begins at its start (or, following on seamlessly, at bar 1), so the chase point is the start of its
+    // first step's section (or songTime, if later): a song whose arrangement begins elsewhere than bar 1 is on that step's
+    // patch before its count-in. Otherwise the chase point is songTime. chaseAt, when given, is the chase point and the
+    // first event sent instead (startAtStep: the step's start, so nothing from the count-off's bar is sent); the clock
+    // still ticks from songTime.
+    void begin(const PreparedSong&, std::uint64_t serial, SamplePos songTime, std::int64_t streamTime, bool fromStart,
+               std::optional<SamplePos> chaseAt = {}) noexcept;
     // Producer. The song plays [songFrom, songFrom + frames), its first sample at streamFrom: every event and clock tick in it
     // is queued, in time order (an event before a tick at the same time).
     void play(SamplePos songFrom, std::int64_t frames, std::int64_t streamFrom) noexcept;
-    // Producer. A jump: the song goes on from `landing` (song time) at streamTime. Every note still sounding is ended, the
-    // place in the song's events and in its clock ticks moves to the first at or after the landing, and the landing becomes
-    // the chase point (a program or control change there was covered). This sends no chase. Nothing without a song.
+    // Producer. A jump (a loop's repeat included): the song goes on from `landing` (song time) at streamTime. Every note
+    // still sounding is ended; then the state as of the landing (every program and control change at or before it) is
+    // worked out and only what differs from what the devices were last sent goes out (MidiChase::emitChanges), at
+    // streamTime. The landing becomes the chase point, so a program or control change exactly there is sent by the chase
+    // and not again; the place in the song's events and in its clock ticks moves to the first at or after the landing, so
+    // a note there still sounds. Nothing without a song.
     void jump(SamplePos landing, std::int64_t streamTime) noexcept;
     // Producer. Sends one device the state it should be in now, songTime being the next sample the song plays, at
     // streamTime. Nothing when no song is playing, or for a device number the engine can't have.
@@ -80,7 +91,7 @@ private:
     };
 
     void endNotes(std::int64_t streamTime) noexcept;
-    void seek(SamplePos songTime) noexcept;
+    void seek(SamplePos events, SamplePos ticks) noexcept;
     void send(const MidiEvent&, std::int64_t streamTime) noexcept;
     void track(const MidiEvent&) noexcept;
     void tick(std::int64_t streamTime) noexcept;
@@ -92,6 +103,7 @@ private:
     SpscQueue<OutMidi> queue_;
     std::atomic<std::uint64_t> dropped_{0};   // written by the producer only
     MidiChase chase_;
+    MidiChase sent_;                     // what each device was last sent, by the playing song's device numbers
     const PreparedSong* song_ = nullptr;
     std::uint64_t serial_ = 0;
     std::size_t next_ = 0;               // the first of the song's events not yet sent

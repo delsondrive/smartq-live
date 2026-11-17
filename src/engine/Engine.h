@@ -29,8 +29,9 @@ struct EngineStatus {
     SamplePos songTime = 0;            // the next sample the playing song will play; 0 when nothing plays
     std::int64_t streamTime = 0;       // samples processed since the engine was made; never goes backwards, even across prepare
     int step = -1;                     // the arrangement step playing; -1 when none (lead-in, after the last step, stopped)
-    int pendingStep = -1;              // the step chosen to come next; -1 = the one that follows (Task 4 sets it)
-    bool looping = false;              // (Task 4 sets it)
+    int pendingStep = -1;              // the step chosen to come next; -1 = the one that follows
+    bool looping = false;              // the playing step repeats at its end
+    bool countOff = false;             // startAtStep's bar of click is playing (step is -1 meanwhile)
 };
 
 struct EngineEvent {
@@ -51,11 +52,17 @@ inline constexpr int kMaxDeviceChannels = 256;
 //
 // A song plays as its arrangement: the playhead is a step and a song time. Playback starts in the lead-in (count-in or
 // pre-roll, song time below 0, no step) when the song has one, and at song time 0 enters step 0. Where a step's section
-// ends, the next step plays: straight on when its section starts there, otherwise as a jump, which lands on the section's
-// start with a crossfade of 240 samples (scaled by sampleRate / 48000) from the audio running on past the line (parts
-// only) to the incoming audio. The song ends when its last step does; when that is not where its audio ends, the audio
-// running on fades out over the same 240 samples before Ended. Each step entered is reported (StepChanged), the first
-// included, a song without sections too (its one step, 0, is the whole song).
+// ends, the next step plays (Arrangement::nextStep: the playing step again while looping, else the step chosen, else the
+// one after): straight on when its section starts there, otherwise as a jump, which lands on the section's start with a
+// crossfade of 240 samples (scaled by sampleRate / 48000) from the audio running on past the line (parts only) to the
+// incoming audio. With the song's jump timing NextBar, a step chosen or a loop turned on during a step takes effect at
+// the next bar start instead, if that comes first. A choice or a loop made in the lead-in applies after the first step.
+// A start with nothing yet heard enters its first step cleanly, without a crossfade: from song time 0 on, after a count-in
+// with no pre-roll audio, or after a count-off; only pre-roll audio that is playing crossfades into a first step that
+// isn't at bar 1. On every jump the MIDI is chased (MidiOut::jump). The song ends when its last step does; when that is
+// not where its audio ends, the audio running on fades out over the same 240 samples before Ended. Each step entered is
+// reported (StepChanged), the first included, a song without sections too (its one step, 0, is the whole song). stop and
+// a song's end clear the choice and the loop.
 class Engine {
 public:
     Engine();
@@ -83,10 +90,20 @@ public:
     bool clearCue();                      // false: the command queue was full and nothing was sent
     void start();                         // Stopped and something cued at the engine's rate: play it from its start
     // The same, from a position clamped to the song (at its start: as start()). Before 0: the lead-in from there, then
-    // step 0. Otherwise the first step whose section holds it, from there; else the first step whose section starts after
-    // it, from that start; else the song ends at once.
+    // step 0. At 0: step 0, from its section's start, count-in or not. Otherwise the first step whose section holds it,
+    // from there; else the first step whose section starts after it, from that start; else the song ends at once.
     void startAt(SamplePos songTime);
+    // Stopped and something cued at the engine's rate: one bar of click (a count-off at the tempo of the step's first bar,
+    // the parts silent, the click sounding even when the song's is off), then that step from its section's start. The MIDI
+    // chase for the step's start goes out at the very beginning, and no event before the step's start is sent. A step out
+    // of range: ignored.
+    void startAtStep(int step);
     void stop();
+    // For the playing song only (any other serial is ignored), while it plays (not in a gap, the stop fade or its tail).
+    // The step to play after the playing one: -1 cancels the choice and any loop; out of range: ignored. Turns looping off.
+    void chooseNextStep(std::uint64_t serial, int step);
+    // Repeat the playing step at each of its ends, or stop repeating it. Turning it on cancels a chosen step.
+    void setLoop(std::uint64_t serial, bool);
     bool setFollowOn(FollowOn);           // false: the command queue was full and nothing was sent
     void setMix(std::shared_ptr<const MixSetup>);
     void setPartGain(std::uint64_t serial, int part, float linear);
@@ -97,9 +114,11 @@ public:
     // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
     // it is due at. Notes still sounding when a song stops (at the end of its fade), ends, or prepare stops it are ended
     // then. When the queue is full, what doesn't fit is dropped. A song that starts first sends each device the state it
-    // should be in (program with its bank, controllers), as of bar 1 beat 1 when it starts from its start (start(), a
-    // startAt at or before the song's start) or follows on, as of startAt's position otherwise, at the stream time of its
-    // first sample; the changes that covered are not sent again. Then each of its start-stop devices is sent 0xFA, and
+    // should be in (program with its bank, controllers), as of its first step's start when it starts from its start
+    // (start(), a startAt at or before the song's start) or follows on, as of the step's start for startAtStep, as of
+    // where it lands for startAt otherwise, at the stream time of its first sample; the changes that covered are not sent
+    // again. A jump ends the notes sounding and sends only the state at the landing that differs from what each device
+    // was last sent, a change exactly on the landing included. Then each of its start-stop devices is sent 0xFA, and
     // each clock device 0xF8 at every one of its clockTicks it plays. When it stops or ends, its start-stop devices are
     // sent 0xFC, unless another song follows straight on (seamlessly, or after a gap of no length): the transport runs
     // on, and the clock with it. A gap sends no clock.
@@ -123,13 +142,13 @@ public:
 private:
     struct Command {
         enum class Type : std::uint8_t {
-            None, Cue, ClearCue, Start, StartAt, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute, SetClickGain, SetSolo,
-            ResendMidi
+            None, Cue, ClearCue, Start, StartAt, StartAtStep, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute,
+            SetClickGain, SetSolo, ResendMidi, ChooseStep, SetLoop
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
-        std::int64_t index = 0;               // a part, a song time, a follow-on kind or a MIDI device
-        double value = 0.0;                   // a gain, a mute (non-zero), or a gap in seconds
+        std::int64_t index = 0;               // a part, a song time, a step, a follow-on kind or a MIDI device
+        double value = 0.0;                   // a gain, a mute or a loop (non-zero: on), or a gap in seconds
         std::shared_ptr<const void> object;   // a song or a mix
     };
 
@@ -157,6 +176,9 @@ private:
     bool fitsRate(const PreparedSong&) const noexcept;
     bool cueFits() const noexcept;        // something is cued, made at the engine's rate; a cue that doesn't never plays
     void playCued(SamplePos songTime, std::int64_t streamTime, bool snapMix, bool fromStart) noexcept;
+    void playCountOff(int step) noexcept;
+    void takeCue() noexcept;
+    void beginPlaying(SamplePos songTime, std::int64_t streamTime, bool snapMix) noexcept;
     void renderChunk(float* const* out, int numChannels, int offset, int frames) noexcept;
     std::int64_t renderStraight(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept;
     std::int64_t renderCrossfade(int numChannels, std::int64_t frames, std::int64_t streamTime) noexcept;
@@ -193,6 +215,7 @@ private:
     std::atomic<int> status_step_{-1};
     std::atomic<int> status_pending_step_{-1};
     std::atomic<bool> status_looping_{false};
+    std::atomic<bool> status_count_off_{false};
 
     // Control thread only.
     std::uint64_t next_serial_ = 1;
@@ -214,7 +237,11 @@ private:
     std::int64_t stream_time_ = 0;
     std::int64_t fade_length_ = 0;
     std::int64_t fade_pos_ = 0;              // samples of the stop fade already played
-    Arrangement arrangement_;                // the playing song's steps, and which plays
+    Arrangement arrangement_;                // the playing song's steps, which plays, and what was chosen to come next
+    SamplePos boundary_ = 0;                 // arrangement_.boundary as worked out when the step (or the lead-in) began,
+                                             // or a choice or a loop arrived: where the playing step hands over
+    bool count_off_ = false;                 // startAtStep's bar of click, [count_off_from_, count_off_to_), is playing
+    SamplePos count_off_from_ = 0, count_off_to_ = 0;
     std::int64_t jump_fade_ = 0;             // 240 samples at 48 kHz: a jump's crossfade, and the tail after a last step
     std::int64_t xfade_left_ = 0;            // samples of a jump's crossfade still to come
     SamplePos tail_time_ = 0;                // during a crossfade: the song time of the audio running on past the line

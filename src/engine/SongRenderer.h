@@ -16,6 +16,8 @@ struct RenderParts {
     bool click = true;        // its click, as its ClickSetup says
     bool advance = true;      // false: every part gain, mix level and the click gain is read as it stands and not stepped. A
                               // jump renders its outgoing tail so, beside the incoming sample, so no glide runs twice as fast
+    SamplePos forcedClickFrom = 0, forcedClickTo = 0;   // the song's ticks in [from, to) sound even with its click off,
+                                                        // those before its start too (startAtStep's count-off)
 };
 
 // Mixes one song's parts and click into the output buses of a mix. Every gain, every mix level and the click gain glide
@@ -48,6 +50,7 @@ private:
     void step(Smoothed&) const noexcept;
     void updatePartTargets() noexcept;
     void renderPiece(SamplePos songTime, int frames, int offset, const float* envelope, RenderParts) noexcept;
+    std::size_t firstTickAt(SamplePos) const noexcept;   // the first of song_->ticks at or after it; song_ must be set
 
     double coefficient_ = 0.0;
     int max_block_ = 0;
@@ -64,6 +67,7 @@ private:
     int solo_ = -1;
     std::size_t count_in_first_ = 0;        // song->ticks[count_in_first_, count_in_end_) are the count-in's, which sound
     std::size_t count_in_end_ = 0;          // even with the click off
+    std::size_t playable_first_ = 0;        // the first of song->ticks at or after its start: those before are a count-off's
     bool parts_moving_ = false;
 
     bool has_mix_ = false;

@@ -29,8 +29,11 @@ PreparedSong prepareSong(std::string id, TempoMap tempo, int countInBars, Sample
 
     s.parts = std::move(parts);
     s.click = click;
-    // Always built: a song with its click off still clicks through its count-in.
-    s.ticks = buildClickTicks(s.tempo, sampleRate, s.start, s.end, click.subdivision);
+    // Always built: a song with its click off still clicks through its count-in. From the bar before bar 1 when that is
+    // earlier than the start, so a step at bar 1 still has a bar of ticks for startAtStep's count-off; ordinary playback
+    // never reaches them.
+    const SamplePos barBefore = s.tempo.sampleAt({0, 1.0}, sampleRate);
+    s.ticks = buildClickTicks(s.tempo, sampleRate, std::min(s.start, barBefore), s.end, click.subdivision);
     s.clickSound = makeClickSound(click.sound, sampleRate);
     finishSections(s);
     return s;

@@ -68,16 +68,18 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
 
     const float clickGain = song != nullptr ? song->click.gain : 1.0f;
     click_gain_ = {clickGain, clickGain};
-    count_in_first_ = count_in_end_ = 0;
+    count_in_first_ = count_in_end_ = playable_first_ = 0;
     if (song != nullptr) {
-        const auto firstAt = [&](SamplePos at) {
-            const auto it = std::lower_bound(song->ticks.begin(), song->ticks.end(), at,
-                                             [](const ClickTick& t, SamplePos v) { return t.at < v; });
-            return static_cast<std::size_t>(it - song->ticks.begin());
-        };
-        count_in_first_ = firstAt(std::min<SamplePos>(song->countInStart, 0));
-        count_in_end_ = firstAt(0);
+        count_in_first_ = firstTickAt(std::min<SamplePos>(song->countInStart, 0));
+        count_in_end_ = firstTickAt(0);
+        playable_first_ = firstTickAt(song->start);
     }
+}
+
+std::size_t SongRenderer::firstTickAt(SamplePos at) const noexcept {
+    const auto& ticks = song_->ticks;
+    const auto it = std::lower_bound(ticks.begin(), ticks.end(), at, [](const ClickTick& t, SamplePos v) { return t.at < v; });
+    return static_cast<std::size_t>(it - ticks.begin());
 }
 
 void SongRenderer::setMix(const MixSetup* mix) noexcept {
@@ -156,14 +158,32 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
                                RenderParts what) noexcept {
     const PreparedSong& song = *song_;
 
-    // The count-in always clicks; pre-roll before it and the body only when the song's click is on. Rendered at unity: the
-    // click gain glides below.
+    // The count-in always clicks; pre-roll before it and the body only when the song's click is on; and a forced range
+    // whatever the click. Rendered at unity: the click gain glides below.
     const bool clickRouted = what.click && click_role_ >= 0 && click_role_ < role_rows_;
     if (clickRouted) {
         std::fill_n(click_.data(), frames, 0.0f);
         const std::span<const ClickTick> all(song.ticks);
-        const auto ticks = song.click.enabled ? all : all.subspan(count_in_first_, count_in_end_ - count_in_first_);
-        renderClick(ticks, song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f, click_.data());
+        std::size_t first = song.click.enabled ? playable_first_ : count_in_first_;
+        std::size_t last = song.click.enabled ? all.size() : count_in_end_;
+        const auto render = [&](std::size_t from, std::size_t to) {
+            renderClick(all.subspan(from, to - from), song.clickSound, song.click.accentDownbeat, songTime, frames, 1.0f,
+                        click_.data());
+        };
+        if (what.forcedClickTo > what.forcedClickFrom) {
+            const std::size_t forcedFirst = firstTickAt(what.forcedClickFrom);
+            const std::size_t forcedLast = firstTickAt(what.forcedClickTo);
+            if (first >= last) {                                    // nothing else clicks
+                first = forcedFirst;
+                last = forcedLast;
+            } else if (forcedFirst <= last && first <= forcedLast) {   // overlapping or touching: one run, no tick twice
+                first = std::min(first, forcedFirst);
+                last = std::max(last, forcedLast);
+            } else if (forcedFirst < forcedLast) {
+                render(forcedFirst, forcedLast);
+            }
+        }
+        if (first < last) render(first, last);
     }
 
     const SamplePos audioOffset = song.audioStartOffset;

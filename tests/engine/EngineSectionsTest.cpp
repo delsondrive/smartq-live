@@ -133,27 +133,37 @@ TEST_CASE("a jump ends sounding notes and moves the MIDI and the clock to the la
         renderOffline(e, 2, 2 * 96000 + 1000, block);
         std::vector<OutMidi> notes, ticks;
         for (const auto& m : drainMidi(e)) (m.data[0] == 0xF8 ? ticks : notes).push_back(m);
-        REQUIRE(notes.size() == 3);
+        REQUIRE(notes.size() == 4);
         CHECK(notes[0].data[0] == 0x90);  CHECK(notes[0].streamTime == 1000);
         CHECK(notes[1].data[0] == 0x80);  CHECK(notes[1].data[1] == 60);  CHECK(notes[1].streamTime == 96000);   // ended at the jump
-        CHECK(notes[2].data[0] == 0xB0);  CHECK(notes[2].data[2] == 2);   CHECK(notes[2].streamTime == 96000 + 8000);   // section 2's
+        CHECK(notes[2].data[0] == 0xB0);  CHECK(notes[2].data[2] == 1);   CHECK(notes[2].streamTime == 96000);   // then the chase: CC 7 as of the landing
+        CHECK(notes[3].data[0] == 0xB0);  CHECK(notes[3].data[2] == 2);   CHECK(notes[3].streamTime == 96000 + 8000);   // section 2's
         REQUIRE(ticks.size() == 2 * 96);                                  // 24 to the quarter, one every 1000 samples, on through the jump
         for (std::size_t i = 0; i < ticks.size(); ++i) CHECK(ticks[i].streamTime == static_cast<std::int64_t>(i) * 1000);
     }
 }
-TEST_CASE("jumps and a song's tail allocate and free nothing on the audio thread", "[sections]") {
+TEST_CASE("jumps, chases, loops and a song's tail allocate and free nothing on the audio thread", "[sections]") {
     Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
     auto song = rampSong("r", 4, {1, 1, 1, 1}, {3, 0, 2, 2});
-    song.midi = {ev(1000, 0, 0x90, 60, 100), ev(300000, 0, 0x90, 62, 100)};
-    e.cue(share(song));  e.start();
+    song.midi = {ev(0, 0, 0xC0, 1, 0, 2), ev(1000, 0, 0x90, 60, 100), ev(2 * 96000, 0, 0xB0, 0, 3), ev(2 * 96000, 0, 0xC0, 2, 0, 2),
+                 ev(2 * 96000, 0, 0xB0, 7, 50), ev(3 * 96000, 0, 0xC0, 3, 0, 2), ev(300000, 0, 0x90, 62, 100)};
+    auto serial = e.cue(share(song));  e.start();
     std::vector<float> l(512), r(512); float* out[2] = {l.data(), r.data()};
     {
         AllocGuard guard;
-        for (int i = 0; i < (4 * 96000 + 2000) / 512; ++i) e.process(out, 2, 512);
+        for (int i = 0; i < (4 * 96000 + 2000) / 512; ++i) {
+            if (i == 10) e.chooseNextStep(serial, 2);   // after step 0 (section 3), section 2: a jump whose chase differs
+            if (i == 200) e.setLoop(serial, true);      // section 2 again, as a loop
+            if (i == 400) e.setLoop(serial, false);     // then step 3 (section 2) and the tail
+            e.process(out, 2, 512);
+        }
     }
     CHECK(allocationCount() == 0);
     CHECK(deallocationCount() == 0);
     CHECK(e.status().state == PlayState::Stopped);
+    std::size_t chased = 0;
+    for (const auto& m : drainMidi(e)) chased += m.data[0] == 0xB0 && m.data[1] == 7 ? 1u : 0u;
+    CHECK(chased == 1);                                 // sent at the first jump into section 2, never again
 }
 TEST_CASE("a stop during a crossfade fades both sides out, and a stop during a song's tail ends it", "[sections]") {
     for (int block : {1, 64, 512}) {
