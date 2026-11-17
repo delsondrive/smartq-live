@@ -1,6 +1,7 @@
 #include "model/BandModel.h"
 
 #include <algorithm>
+#include <atomic>
 
 #include "model/DocumentsJson.h"
 
@@ -60,7 +61,18 @@ juce::String BandModel::textOf(const DocKey& key) const {
 }
 
 void BandModel::touch(const DocKey& key) {
+    revisions_[key] = nextRevision();
     if (tracking_ && started_.find(key) == started_.end()) started_.emplace(key, textOf(key));
+}
+
+std::uint64_t BandModel::revision(const DocKey& key) const {
+    const auto found = revisions_.find(key);
+    return found != revisions_.end() ? found->second : first_revision_;
+}
+
+std::uint64_t BandModel::nextRevision() {
+    static std::atomic<std::uint64_t> next{1};   // shared by every model, so no two documents ever have the same stamp
+    return next.fetch_add(1, std::memory_order_relaxed);
 }
 
 void BandModel::beginChanges() {
@@ -82,7 +94,10 @@ void BandModel::applyText(const DocKey& key, const juce::String& json) {
     switch (key.kind) {
         case DocKind::Band: {
             BandDoc d;
-            if (json.isNotEmpty() && fromJson(json, d, notes)) band_doc_ = std::move(d);
+            if (json.isNotEmpty() && fromJson(json, d, notes)) {
+                revisions_[key] = nextRevision();
+                band_doc_ = std::move(d);
+            }
             break;
         }
         case DocKind::Song: {

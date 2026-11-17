@@ -1,6 +1,7 @@
 #pragma once
 
 #include <compare>
+#include <cstdint>
 #include <map>
 #include <vector>
 
@@ -46,10 +47,18 @@ public:
     std::vector<Change> endChanges();        // every document that is different now, in key order
     void applyText(const DocKey&, const juce::String& json);     // sets the document from JSON, or removes it when json is empty
 
-private:
-    void touch(const DocKey&);                                  // tracking: keeps the document's text, the first time only
-    juce::String textOf(const DocKey&) const;                   // the document as JSON; empty when there is none
+    // A stamp that changes whenever the document is reached through an edit, put, removed or set from text, and that no
+    // other document of this or any other model ever has: what a view works out from a document stays good while its
+    // stamp is the same, so a view that redraws 30 times a second needn't work it out again.
+    std::uint64_t revision(const DocKey&) const;
 
+private:
+    void touch(const DocKey&);                                  // a new revision; tracking: keeps its text the first time
+    juce::String textOf(const DocKey&) const;                   // the document as JSON; empty when there is none
+    static std::uint64_t nextRevision();
+
+    std::uint64_t first_revision_ = nextRevision();             // every document's until it is first touched
+    std::map<DocKey, std::uint64_t> revisions_;
     BandDoc band_doc_;
     std::map<juce::String, SongDoc> songs_;
     std::map<juce::String, SetlistDoc> setlists_;

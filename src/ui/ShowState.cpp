@@ -128,6 +128,51 @@ bool hasPatchChanges(const model::BandDoc& band, const model::SongDoc* song) {
     return false;
 }
 
+// What makeShowState keeps between its calls, 30 a second, on the message thread: what it works out from documents alone,
+// with the revisions of the documents it was worked out from.
+struct Kept {
+    bool haveKeys = false;
+    std::uint64_t keysFor = 0;                                    // the band's revision
+    ShowKeys keys;
+    bool haveLanes = false;
+    juce::String laneSong;
+    std::uint64_t laneSongRevision = 0, laneBandRevision = 0;
+    std::vector<ShowState::Lane> lanes;
+    ShowStateWork work;
+};
+
+Kept& kept() {
+    static Kept k;
+    return k;
+}
+
+const ShowKeys& keptKeys(const model::BandModel& model) {
+    auto& k = kept();
+    const auto band = model.revision({model::DocKind::Band, {}});
+    if (!k.haveKeys || k.keysFor != band) {
+        k.keys = showKeysOf(model.band());
+        k.keysFor = band;
+        k.haveKeys = true;
+        ++k.work.keys;
+    }
+    return k.keys;
+}
+
+const std::vector<ShowState::Lane>& keptLanes(const model::BandModel& model, const juce::String& songId) {
+    auto& k = kept();
+    const auto song = model.revision({model::DocKind::Song, songId});
+    const auto band = model.revision({model::DocKind::Band, {}});
+    if (!k.haveLanes || k.laneSong != songId || k.laneSongRevision != song || k.laneBandRevision != band) {
+        k.lanes = lanesOf(model.band(), model.song(songId));
+        k.laneSong = songId;
+        k.laneSongRevision = song;
+        k.laneBandRevision = band;
+        k.haveLanes = true;
+        ++k.work.lanes;
+    }
+    return k.lanes;
+}
+
 // "<keys> <what they do>"; nothing when the action has no key.
 void addHint(std::vector<KeyHint>& hints, juce::StringArray keys, const juce::String& what) {
     keys.removeEmptyStrings();
@@ -173,7 +218,7 @@ ShowState makeShowState(const app::Session& session) {
     const auto* list = model.setlist(session.setlistId());
     const int count = list != nullptr ? static_cast<int>(list->entries.size()) : 0;
     if (list != nullptr) st.setlistName = list->name;
-    const auto keys = showKeysOf(model.band());
+    const auto& keys = keptKeys(model);
     st.startKey = keys.startCap();
     const auto songAt = [&](int index) -> const model::SongDoc* {
         if (list == nullptr || index < 0 || index >= count) return nullptr;
@@ -307,8 +352,10 @@ ShowState makeShowState(const app::Session& session) {
     }
 
     // The song the map shows: the one playing, else the next.
-    st.lanes = lanesOf(model.band(), model.song(now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId));
+    st.lanes = keptLanes(model, now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId);
     return st;
 }
+
+ShowStateWork showStateWork() { return kept().work; }
 
 }  // namespace sqlive::ui

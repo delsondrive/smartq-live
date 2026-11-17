@@ -248,3 +248,30 @@ TEST_CASE("a tick with nothing changed doesn't work the box's words out again", 
     ticks();
     CHECK(shell.comesBackBox().wordsBuilt() == made + 1);
 }
+
+// ---- Stage 2 final fixes -----------------------------------------------------------------------------------------------
+
+TEST_CASE("a tick with nothing changed works out neither the keys nor the lanes again", "[showmidi]") {
+    DemoSession d(true); auto& s = *d.session;
+    const auto first = makeShowState(s);
+    REQUIRE_FALSE(first.lanes.empty());
+    const auto before = showStateWork();
+    for (int i = 0; i < 30; ++i) {                                // a second of ticks, a song playing
+        if (i == 1) s.perform(Action::Start);
+        s.advanceWithoutDevice(1600);
+        CHECK(makeShowState(s).lanes == first.lanes);
+    }
+    CHECK(showStateWork().keys == before.keys);  CHECK(showStateWork().lanes == before.lanes);
+    s.perform(Action::Stop);  s.advanceWithoutDevice(9600);  makeShowState(s);
+    const auto mid = showStateWork();
+    s.commands().run("controls.set", params({{"action", "start"}, {"binding", binding('Q')}}));
+    CHECK(makeShowState(s).startKey == "Q");                      // the band changed: both once
+    CHECK(showStateWork().keys == mid.keys + 1);  CHECK(showStateWork().lanes == mid.lanes + 1);
+    const auto song = s.now().nextSongId;
+    const auto device = s.model().band().midiDevices[0].id;
+    s.commands().run("marker.add", params({{"songId", song}, {"deviceId", device}, {"bar", 7}, {"beat", 1}}));
+    CHECK(makeShowState(s).lanes != first.lanes);                 // the song changed: its lanes only
+    CHECK(showStateWork().keys == mid.keys + 1);  CHECK(showStateWork().lanes == mid.lanes + 2);
+    makeShowState(s);
+    CHECK(showStateWork().lanes == mid.lanes + 2);
+}

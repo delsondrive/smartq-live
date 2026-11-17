@@ -96,7 +96,16 @@ struct ShowState {
 // is true. The second line of nextInfo says what happens between the song playing and the next one; between songs
 // there is none, and nextInfo has its first line only. The sentences and hints name the band's own keys (app::ControlMap):
 // "Press Q to start", "hold S stop".
+//
+// It runs 30 times a second. What it works out from documents alone (the keys, from the band's controls; the lanes and
+// whether the song changes a patch, from the song and the band's devices) is kept, message thread only, and worked out
+// again only when the document's model::BandModel::revision changes.
 ShowState makeShowState(const app::Session&);
+// For tests: how many times makeShowState has worked out the keys, and the lanes, since the program started.
+struct ShowStateWork {
+    int keys = 0, lanes = 0;
+};
+ShowStateWork showStateWork();
 
 // The span the main view's map draws for a song, in song time (seconds from bar 1): model::songExtentSeconds of its
 // model::tempoMapOf, from the count-in (or the audio before bar 1) to the end.
