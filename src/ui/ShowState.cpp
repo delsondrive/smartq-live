@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "app/Controls.h"
+#include "model/Sections.h"
 #include "model/SongAudio.h"
 #include "model/SongMidi.h"
 #include "ui/CuesLane.h"
@@ -107,7 +108,8 @@ bool laneHasChanges(const model::SongDoc& song, const juce::String& deviceId) {
 // The lanes of the song the map shows: its cues first, when it has any; then a lane for each band device with a change in
 // the song. A place in song time is across the map once (a single step: from the count-in to the end), or once in each
 // step that plays it (sections: along the steps laid end to end).
-std::vector<ShowState::Lane> lanesOf(const app::Session& session, const juce::String& songId, const StepSpans& spans) {
+std::vector<ShowState::Lane> lanesOf(const app::Session& session, const juce::String& songId, const juce::String& arrangementId,
+                                     const StepSpans& spans) {
     std::vector<ShowState::Lane> lanes;
     const auto* song = session.model().song(songId);
     if (song == nullptr) return lanes;
@@ -126,8 +128,17 @@ std::vector<ShowState::Lane> lanesOf(const app::Session& session, const juce::St
     const auto byPlace = [](const ShowState::Lane::Chip& a, const ShowState::Lane::Chip& b) { return a.position01 < b.position01; };
 
     ShowState::Lane cues{"Cues", theme::mid, {}};
+    // What the voice says, step by step, as the engine plays the arrangement (model::announcements): each step's chip in
+    // that step, naming the section that follows it; none in the last step.
+    for (const auto& said : model::announcements(*song, band, arrangementId).said) {
+        if (said.step < 0 || static_cast<std::size_t>(said.step) >= spans.steps.size()) continue;
+        const auto& step = spans.steps[static_cast<std::size_t>(said.step)];
+        const double at = step.at + std::clamp(tempo.secondsAt(said.at), step.songStart, step.songEnd) - step.songStart;
+        cues.chips.push_back({std::clamp(at / total, 0.0, 1.0), typeName(band, said.typeId), true});
+    }
     for (const auto& chip : makeCuesLaneState(session, songId, EditorSelection{}).chips)
-        for (const double at : placesOf(tempo.secondsAt({chip.bar, chip.beat}))) cues.chips.push_back({at, chip.label, chip.automatic});
+        if (!chip.automatic)
+            for (const double at : placesOf(tempo.secondsAt({chip.bar, chip.beat}))) cues.chips.push_back({at, chip.label, false});
     std::stable_sort(cues.chips.begin(), cues.chips.end(), byPlace);
     if (!cues.chips.empty()) lanes.push_back(std::move(cues));
 
@@ -163,7 +174,7 @@ struct Kept {
     std::uint64_t keysFor = 0;                                    // the band's revision
     ShowKeys keys;
     bool haveLanes = false;
-    juce::String laneSong;
+    juce::String laneSong, laneArrangement;
     std::uint64_t laneSongRevision = 0, laneBandRevision = 0;
     StepSpans laneSpans;                                          // empty for a song with a single step
     std::vector<ShowState::Lane> lanes;
@@ -193,15 +204,18 @@ const ShowKeys& keptKeys(const model::BandModel& model) {
 
 // `spans` are the steps' (empty for a single step); `known` is false while there are none. The steps aren't known for a
 // moment while a song is prepared again: the lanes worked out for the same documents stay.
-const std::vector<ShowState::Lane>& keptLanes(const app::Session& session, const juce::String& songId, const StepSpans& spans,
+const std::vector<ShowState::Lane>& keptLanes(const app::Session& session, const juce::String& songId,
+                                              const juce::String& arrangementId, const StepSpans& spans,
                                               bool known) {
     auto& k = kept();
     const auto& model = session.model();
     const auto song = model.revision({model::DocKind::Song, songId});
     const auto band = model.revision({model::DocKind::Band, {}});
-    const bool sameDocuments = k.haveLanes && k.laneSong == songId && k.laneSongRevision == song && k.laneBandRevision == band;
+    const bool sameDocuments = k.haveLanes && k.laneSong == songId && k.laneArrangement == arrangementId
+                               && k.laneSongRevision == song && k.laneBandRevision == band;
     if (sameDocuments && (!known || spans == k.laneSpans)) return k.lanes;
-    k.lanes = lanesOf(session, songId, spans);
+    k.lanes = lanesOf(session, songId, arrangementId, spans);
+    k.laneArrangement = arrangementId;
     k.laneSong = songId;
     k.laneSongRevision = song;
     k.laneBandRevision = band;
@@ -489,8 +503,14 @@ ShowState makeShowState(const app::Session& session) {
         addHint(st.hints, view, "main view");
     }
 
-    // The song the map shows: the one playing, else the next.
-    st.lanes = keptLanes(session, now.playingSongId.isNotEmpty() ? now.playingSongId : now.nextSongId, st.spans, !steps.empty());
+    // The song the map shows: the one playing, else the next, as its setlist entry arranges it.
+    const bool shownPlaying = now.playingSongId.isNotEmpty();
+    const int shownIndex = shownPlaying ? now.playingIndex : now.nextIndex;
+    const auto* shownList = session.model().setlist(session.setlistId());
+    const auto shownArrangement = shownList != nullptr && shownIndex >= 0 && shownIndex < static_cast<int>(shownList->entries.size())
+                                      ? shownList->entries[static_cast<std::size_t>(shownIndex)].arrangementId
+                                      : juce::String();
+    st.lanes = keptLanes(session, shownPlaying ? now.playingSongId : now.nextSongId, shownArrangement, st.spans, !steps.empty());
     return st;
 }
 

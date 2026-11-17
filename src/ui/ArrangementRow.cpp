@@ -116,6 +116,10 @@ void ArrangementRow::reread() {
     choice_.setItems(state_.names, state_.chosen);
     resized();
     repaint();
+    if (arrangementId_ != shownArrangement_) {                    // another one shows: what depends on it follows
+        shownArrangement_ = arrangementId_;
+        if (onArrangementShown) onArrangementShown();
+    }
 }
 
 juce::String ArrangementRow::freeName() const {

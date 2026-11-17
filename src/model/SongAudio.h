@@ -47,6 +47,9 @@ engine::PreparedSong buildPreparedSong(const SongDoc&, const BandDoc&, const Rig
                                        const std::map<juce::String, std::shared_ptr<const engine::PartAudio>>& audioByPartId,
                                        double sampleRate, const PrepareOptions& = {});
 
+// A song's click sound that is a clip of the band's own (clicks/<name>.wav), rather than wood, beep or rim.
+bool isClickClip(const juce::String& sound);
+
 // The song's tempo map, from its tempo points.
 engine::TempoMap tempoMapOf(const SongDoc&);
 

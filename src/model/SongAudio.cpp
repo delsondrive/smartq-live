@@ -31,7 +31,6 @@ int clickSoundNamed(const juce::String& name) {
     return 0;   // "wood", and a clip of the band's own while it isn't loaded
 }
 
-bool isClipSound(const juce::String& name) { return name != "wood" && name != "beep" && name != "rim"; }
 
 std::shared_ptr<const engine::PartAudio> clipAt(const PrepareOptions& options, const juce::String& path) {
     if (path.isEmpty() || !options.clips) return nullptr;
@@ -54,43 +53,22 @@ void prepareSections(engine::PreparedSong& prepared, const SongDoc& song, const 
     if (song.sections.empty()) return;
     const auto rate = prepared.sampleRate;
     const auto bar = [&](int number) { return prepared.tempo.sampleAt({number, 1.0}, rate); };
-    auto tiled = tileSections(song, barsInSong(song));
-    // Those starting where the audio has ended would play nothing. The first starts at bar 1, so it goes only when there
-    // is no audio at all.
-    std::erase_if(tiled, [&](const TiledSection& t) { return bar(t.startBar) >= prepared.end; });
-    if (tiled.empty()) return;
-    // The last one left ends where the audio does; its cue is placed from the first bar line at or after that.
-    auto& last = tiled.back();
-    last.endBar = last.startBar + 1;
-    while (bar(last.endBar) < prepared.end) ++last.endBar;
-    auto steps = resolveArrangement(song, options.arrangementId, tiled);
-    // A last section shorter than a jump's crossfade would be cut short by a hand-over still fading into it: its few
-    // samples end the section before it instead. The steps that named it are dropped, so the sections in order still play
-    // once each; only an arrangement that named nothing else plays the section before in their place (no step at all
-    // would mean the sections in order).
-    const int lastIndex = (int) tiled.size() - 1;
-    if (lastIndex > 0 && prepared.end - bar(tiled.back().startBar) < engine::jumpFadeLength(rate)) {
-        tiled[(std::size_t) lastIndex - 1].endBar = tiled.back().endBar;
-        tiled.pop_back();
-        const bool onlyThat = std::all_of(steps.begin(), steps.end(), [&](int step) { return step == lastIndex; });
-        if (onlyThat) std::replace(steps.begin(), steps.end(), lastIndex, lastIndex - 1);
-        else std::erase(steps, lastIndex);
-    }
+    // The sections, steps and announcements as model::announcements has them, for the audio this song has.
+    const auto played = announcements(song, band, options.arrangementId, prepared.end, rate);
+    if (played.sections.empty()) return;
 
     prepared.sections.clear();
     prepared.arrangement.clear();
     prepared.sectionCue.clear();
     prepared.announceAt.clear();
-    for (std::size_t i = 0; i < tiled.size() && i <= 0xFFFF; ++i) {
-        const auto& t = tiled[i];
-        prepared.sections.push_back({bar(t.startBar), i + 1 == tiled.size() ? prepared.end : bar(t.endBar)});
-        const auto type = std::find_if(band.sectionTypes.begin(), band.sectionTypes.end(),
-                                       [&](const SectionTypeDoc& s) { return t.typeId.isNotEmpty() && s.id == t.typeId; });
-        prepared.sectionCue.push_back(type == band.sectionTypes.end() ? nullptr : clipAt(options, type->cueClip));
-        prepared.announceAt.push_back(prepared.tempo.sampleAt(announcePlace(song, t, band.cueLead), rate));
+    for (std::size_t i = 0; i < played.sections.size() && i <= 0xFFFF; ++i) {
+        const auto& t = played.sections[i];
+        prepared.sections.push_back({bar(t.startBar), i + 1 == played.sections.size() ? prepared.end : bar(t.endBar)});
+        prepared.sectionCue.push_back(clipAt(options, played.clips[i]));
+        prepared.announceAt.push_back(prepared.tempo.sampleAt(played.places[i], rate));
     }
-    for (const int step : steps)
-        if (step >= 0 && (std::size_t) step < prepared.sections.size()) prepared.arrangement.push_back((std::uint16_t) step);
+    for (const int step : played.steps)
+        if ((std::size_t) step < prepared.sections.size()) prepared.arrangement.push_back((std::uint16_t) step);
 }
 
 }  // namespace
@@ -147,7 +125,7 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     auto prepared = engine::prepareSong(song.id.toStdString(), tempo, song.countInBars,
                                         (engine::SamplePos) std::llround(song.audioStartSeconds * sampleRate), std::move(parts),
                                         click, sampleRate);
-    if (isClipSound(song.click.sound))
+    if (isClickClip(song.click.sound))
         if (const auto clip = clipAt(options, song.click.sound); clip != nullptr && !clip->left.empty())
             prepared.clickSound = engine::clickSoundFromClip(clip->left, sampleRate);
     if (const auto points = song.automation.find("click"); points != song.automation.end())
@@ -180,6 +158,8 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
     engine::finishSections(prepared);
     return prepared;
 }
+
+bool isClickClip(const juce::String& sound) { return sound.isNotEmpty() && sound != "wood" && sound != "beep" && sound != "rim"; }
 
 engine::TempoMap tempoMapOf(const SongDoc& song) {
     std::vector<engine::TempoPoint> points;

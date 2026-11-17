@@ -14,6 +14,7 @@
 #include "tests/support/Signals.h"
 #include "ui/AutomationOverlay.h"
 #include "ui/CuesLane.h"
+#include "ui/ShowState.h"
 #include "ui/LiveLookAndFeel.h"
 #include "ui/PartLanes.h"
 #include "ui/QuickActions.h"
@@ -633,4 +634,51 @@ TEST_CASE("a double-click on empty space with the Automation tool adds one point
     REQUIRE(s.commands().undo().ok);
     CHECK(songOf(s, song).automation.count(part) == 0);           // one undo step
     CHECK(s.commands().undoName() == before);
+}
+
+// ---- What is announced where, in an arrangement (the final review, I4) ----
+
+TEST_CASE("the Song editor's cues lane names what follows each section in the arrangement shown", "[cuesauto]") {
+    DemoSession d(true); auto& s = *d.session; auto songId = d.setlist().entries[0].songId;   // First Light, with "Long ending"
+    const auto& song = *s.model().song(songId);
+    juce::String longEnding;
+    for (const auto& a : song.arrangements) if (a.name == "Long ending") longEnding = a.id;
+    REQUIRE(longEnding.isNotEmpty());
+    const auto automatic = [](const CuesLaneState& state) {
+        std::vector<std::pair<juce::String, int>> chips;
+        for (const auto& chip : state.chips) if (chip.automatic) chips.push_back({chip.label, chip.bar});
+        return chips;
+    };
+    using Chips = std::vector<std::pair<juce::String, int>>;
+    CHECK(automatic(makeCuesLaneState(s, songId, {})) == Chips{{"Verse", 4}, {"Chorus", 8}, {"Outro", 12}});   // In order
+    // Intro, Verse 1, Chorus, Chorus, Outro: the Chorus is followed by itself, then by the Outro.
+    CHECK(automatic(makeCuesLaneState(s, songId, {}, longEnding)) == Chips{{"Verse", 4}, {"Chorus", 8}, {"Chorus / Outro", 12}});
+    juce::Array<juce::var> steps;  steps.add(song.sections[0].id);  steps.add(song.sections[2].id);
+    const auto short_ = s.commands().run("arrangement.add", params({{"songId", songId}, {"name", "Short"}, {"steps", steps}}))
+                            .value.toString();
+    CHECK(automatic(makeCuesLaneState(s, songId, {}, short_)) == Chips{{"Chorus", 4}});   // nothing follows the Chorus there
+}
+TEST_CASE("the Show map's cues lane says, step by step, what the voice says", "[cuesauto]") {
+    DemoSession d(true); auto& s = *d.session;
+    auto entry = d.setlist().entries[0];
+    const auto& song = *s.model().song(entry.songId);
+    juce::String longEnding;
+    for (const auto& a : song.arrangements) if (a.name == "Long ending") longEnding = a.id;
+    REQUIRE(s.commands().run("setlist.setArrangement", params({{"setlistId", s.setlistId()}, {"entryId", entry.id},
+                                                               {"arrangementId", longEnding}})).ok);
+    d.settle();  s.enterShow();
+    const auto st = makeShowState(s);
+    REQUIRE_FALSE(st.lanes.empty());
+    REQUIRE(st.lanes[0].name == "Cues");
+    juce::StringArray labels;
+    std::vector<double> places;
+    for (const auto& chip : st.lanes[0].chips) { labels.add(chip.label); places.push_back(chip.position01); }
+    // Intro → Verse, Verse 1 → Chorus, Chorus → Chorus (as the tiles' "then → Chorus" and the voice have it), Chorus → Outro;
+    // nothing in the Outro, the last step.
+    CHECK(labels == juce::StringArray{"Verse", "Chorus", "Chorus", "Outro"});
+    REQUIRE(st.spans.steps.size() == 5);
+    for (std::size_t i = 0; i < 4 && i < places.size(); ++i) {    // each in its own step, a bar before its end
+        CHECK(places[i] * st.spans.total > st.spans.steps[i].at);
+        CHECK(places[i] * st.spans.total < st.spans.steps[i + 1].at);
+    }
 }

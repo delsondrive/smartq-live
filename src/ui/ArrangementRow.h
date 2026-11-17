@@ -56,6 +56,7 @@ public:
     void renameArrangement(const juce::String& name);
     void removeArrangement();                                     // then "In order" shows
     std::function<void()> onPlayAsArranged;                       // the "⋯" menu's "▶ Play as arranged"
+    std::function<void()> onArrangementShown;                     // another arrangement shows (the Cues lane follows it)
 
     const std::vector<juce::Rectangle<float>>& chipAreas() const { return chipAreas_; }   // for tests: the chips drawn
     juce::Rectangle<float> playAsArrangedArea() const { return playArea_; }   // for tests: "▶ Play as arranged"; empty: none
@@ -95,6 +96,7 @@ private:
 
     app::Session& session_;
     juce::String songId_, arrangementId_;
+    juce::String shownArrangement_;                               // what onArrangementShown last told of
     ArrangementRowState state_;
     Choice choice_;
     // Laid out by resized(), drawn by paint().

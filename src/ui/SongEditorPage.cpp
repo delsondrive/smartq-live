@@ -314,6 +314,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
     };
     addChildComponent(inspector_);
     arrangementRow_.onPlayAsArranged = [this] { playAsArranged(); };
+    arrangementRow_.onArrangementShown = [this] { timeline_.refresh(); };   // the Cues lane names what follows in it
     addChildComponent(arrangementRow_);
 
     title_->onClick = [this] { showTitleMenu(); };
@@ -478,7 +479,7 @@ void SongEditorPage::buildLanes() {
         tempoLane_ = tempo.get();
         lanes.push_back(std::move(tempo));
         lanes.push_back(std::make_unique<SectionsLane>(session_, songId_));
-        lanes.push_back(std::make_unique<CuesLane>(session_, songId_));
+        lanes.push_back(std::make_unique<CuesLane>(session_, songId_, [this] { return arrangementRow_.arrangementId(); }));
         for (const auto& device : laneDevices_) lanes.push_back(std::make_unique<MidiLane>(session_, songId_, device));
         for (const auto& part : state_.parts) {
             auto lane = std::make_unique<PartLane>(session_, songId_, part.partId);

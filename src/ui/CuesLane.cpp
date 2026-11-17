@@ -43,20 +43,32 @@ juce::String wordsOf(const juce::String& path) {
 
 }  // namespace
 
-CuesLaneState makeCuesLaneState(const app::Session& session, const juce::String& songId, const EditorSelection& selection) {
+juce::String typeName(const model::BandDoc& band, const juce::String& typeId) {
+    for (const auto& type : band.sectionTypes)
+        if (type.id == typeId) return type.name;
+    return {};
+}
+
+CuesLaneState makeCuesLaneState(const app::Session& session, const juce::String& songId, const EditorSelection& selection,
+                                const juce::String& arrangementId) {
     CuesLaneState state;
     const auto& band = session.model().band();
     state.subtitle = leadWords(band.cueLead);
     const auto* song = session.model().song(songId);
     if (song == nullptr) return state;
-    const auto tiles = model::tileSections(*song, model::barsInSong(*song));
-    for (std::size_t i = 0; i + 1 < tiles.size(); ++i) {
-        const auto& next = tiles[i + 1];
-        const auto type = std::find_if(band.sectionTypes.begin(), band.sectionTypes.end(),
-                                       [&](const model::SectionTypeDoc& t) { return next.typeId.isNotEmpty() && t.id == next.typeId; });
-        if (type == band.sectionTypes.end() || type->cueClip.isEmpty()) continue;
-        const auto at = model::announcePlace(*song, tiles[i], band.cueLead);
-        state.chips.push_back({next.id, type->name, at.bar, at.beat, true, false});
+    // Each section's announcement, where the song in order has it, naming what follows the section in the arrangement.
+    const auto played = model::announcements(*song, band, arrangementId);
+    for (std::size_t section = 0; section < played.sections.size(); ++section) {
+        juce::StringArray names;
+        juce::String announces;
+        for (const auto& said : played.said)
+            if (said.section == (int) section) {
+                if (announces.isEmpty()) announces = played.sections[(std::size_t) said.next].id;
+                names.addIfNotAlreadyThere(typeName(band, said.typeId));
+            }
+        if (names.isEmpty()) continue;                            // nothing follows it, or nothing that is said
+        const auto at = played.places[section];
+        state.chips.push_back({announces, names.joinIntoString(" / "), at.bar, at.beat, true, false});
     }
     for (const auto& cue : song->cues) {
         const auto words = cue.text.isNotEmpty() ? kOpenQuote + cue.text + kCloseQuote : wordsOf(cue.clip);
@@ -83,7 +95,10 @@ std::vector<CueClip> cueClips(const app::Session& session) {
 
 // ---- The lane ----------------------------------------------------------------------------------------------------------
 
-CuesLane::CuesLane(app::Session& session, juce::String songId) : session_(session), songId_(std::move(songId)) { refresh(); }
+CuesLane::CuesLane(app::Session& session, juce::String songId, std::function<juce::String()> arrangement)
+    : session_(session), songId_(std::move(songId)), arrangement_(std::move(arrangement)) {
+    refresh();
+}
 
 bool CuesLane::editable() const { return session_.mode() == app::Mode::Edit && session_.model().song(songId_) != nullptr; }
 
@@ -94,13 +109,13 @@ bool CuesLane::has(const juce::String& cueId) const {
 }
 
 void CuesLane::refresh() {
-    state_ = makeCuesLaneState(session_, songId_, selection());
+    state_ = makeCuesLaneState(session_, songId_, selection(), arrangement_ ? arrangement_() : juce::String());
     layoutChips();
     repaint();
 }
 
 void CuesLane::contextChanged() {
-    state_ = makeCuesLaneState(session_, songId_, selection());
+    state_ = makeCuesLaneState(session_, songId_, selection(), arrangement_ ? arrangement_() : juce::String());
     layoutChips();
 }
 

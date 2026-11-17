@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -11,10 +12,12 @@
 namespace sqlive::ui {
 
 // What the Cues lane shows: how early the band's automatic cues come ("2 beats early", "1 bar early", "2 bars early"), and
-// every cue in place order. An automatic cue is spoken where model::announcePlace puts it in each tiled section but the
-// last, labelled with the type of the section after it, and only when that section has a type whose cueClip is set; its id
-// is that next section's (the one it announces). A manual cue is labelled with its words in curly quotes (its clip's file
-// name when it has none). At one place, automatic cues come first.
+// every cue in place order. Automatic cues are model::announcements for the arrangement ("" = In order): one chip per
+// section that announces what follows it, at its announcement place, labelled with the type of the section that follows
+// it in the arrangement, or with each of them ("Chorus / Outro") when the section is played more than once with different
+// sections after it; none where nothing follows that is said. Its id is the first of those sections' (the one a click
+// selects). A manual cue is labelled with its words in curly quotes (its clip's file name when it has none). At one
+// place, automatic cues come first.
 struct CuesLaneState {
     juce::String subtitle;
     struct Chip {
@@ -29,7 +32,11 @@ struct CuesLaneState {
 };
 
 // No chips for a song that isn't there.
-CuesLaneState makeCuesLaneState(const app::Session&, const juce::String& songId, const EditorSelection&);
+CuesLaneState makeCuesLaneState(const app::Session&, const juce::String& songId, const EditorSelection&,
+                                const juce::String& arrangementId = {});
+
+// The name of the band's section type with this id; "" for none.
+juce::String typeName(const model::BandDoc&, const juce::String& typeId);
 
 // The band's clips a cue can say: the extra phrases (VoiceMaker::extraPhrases, as cues/built-in/<phrase>.wav), then every
 // other audio file in cues/ (Session::cues().clipsInFolder()), each with its words (the phrase, or the file's name).
@@ -49,7 +56,8 @@ class CuesLane : public Lane, public juce::TooltipClient {
 public:
     static constexpr int height = 24;
 
-    CuesLane(app::Session&, juce::String songId);
+    // arrangement: the arrangement the Song editor shows ("" = In order), asked whenever the lane is worked out again.
+    CuesLane(app::Session&, juce::String songId, std::function<juce::String()> arrangement = {});
 
     juce::String title() const override { return "Cues"; }
     juce::String subtitle() const override { return state_.subtitle; }
@@ -86,6 +94,7 @@ private:
 
     app::Session& session_;
     const juce::String songId_;
+    std::function<juce::String()> arrangement_;
     CuesLaneState state_;
     std::vector<ChipArea> areas_;                                 // one a chip, as the scale places them
     juce::String dragging_;                                       // the manual cue pressed for a drag

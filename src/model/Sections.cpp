@@ -4,6 +4,7 @@
 #include <cmath>
 #include <initializer_list>
 
+#include "engine/PreparedSong.h"
 #include "model/SongAudio.h"
 
 namespace sqlive::model {
@@ -133,6 +134,58 @@ engine::BarBeat announcePlace(const SongDoc& song, const TiledSection& section, 
     }
     if (at.bar < section.startBar) return {section.startBar, 1.0};
     return at;
+}
+
+Announcements announcements(const SongDoc& song, const BandDoc& band, const juce::String& arrangementId) {
+    const double rate = band.sampleRate > 0.0 ? band.sampleRate : 48000.0;
+    const auto end = songExtentSeconds(song, tempoMapOf(song)).second;
+    return announcements(song, band, arrangementId, (engine::SamplePos) std::llround(end * rate), rate);
+}
+
+Announcements announcements(const SongDoc& song, const BandDoc& band, const juce::String& arrangementId, engine::SamplePos end,
+                            double sampleRate) {
+    Announcements a;
+    const auto tempo = tempoMapOf(song);
+    const auto bar = [&](int number) { return tempo.sampleAt({number, 1.0}, sampleRate); };
+    auto tiled = tileSections(song, barsInSong(song));
+    // Those starting where the audio has ended would play nothing. The first starts at bar 1, so it goes only when there is
+    // no audio at all.
+    std::erase_if(tiled, [&](const TiledSection& t) { return bar(t.startBar) >= end; });
+    if (tiled.empty()) return a;
+    // The last one left ends where the audio does; its cue is placed from the first bar line at or after that.
+    auto& last = tiled.back();
+    last.endBar = last.startBar + 1;
+    while (bar(last.endBar) < end) ++last.endBar;
+    auto steps = resolveArrangement(song, arrangementId, tiled);
+    // A last section shorter than a jump's crossfade would be cut short by a hand-over still fading into it: its few
+    // samples end the section before it instead. The steps that named it are dropped, so the sections in order still play
+    // once each; only an arrangement that named nothing else plays the section before in their place (no step at all
+    // would mean the sections in order).
+    const int lastIndex = (int) tiled.size() - 1;
+    if (lastIndex > 0 && end - bar(tiled.back().startBar) < engine::jumpFadeLength(sampleRate)) {
+        tiled[(std::size_t) lastIndex - 1].endBar = tiled.back().endBar;
+        tiled.pop_back();
+        const bool onlyThat = std::all_of(steps.begin(), steps.end(), [&](int step) { return step == lastIndex; });
+        if (onlyThat) std::replace(steps.begin(), steps.end(), lastIndex, lastIndex - 1);
+        else std::erase(steps, lastIndex);
+    }
+
+    for (const auto& t : tiled) {
+        const auto type = std::find_if(band.sectionTypes.begin(), band.sectionTypes.end(),
+                                       [&](const SectionTypeDoc& s) { return t.typeId.isNotEmpty() && s.id == t.typeId; });
+        a.places.push_back(announcePlace(song, t, band.cueLead));
+        a.clips.push_back(type == band.sectionTypes.end() ? juce::String() : type->cueClip);
+    }
+    a.sections = std::move(tiled);
+    for (const int step : steps)
+        if (step >= 0 && (std::size_t) step < a.sections.size()) a.steps.push_back(step);
+    for (std::size_t k = 0; k + 1 < a.steps.size(); ++k) {
+        const int here = a.steps[k], next = a.steps[k + 1];
+        const auto& clip = a.clips[(std::size_t) next];
+        if (clip.isEmpty()) continue;
+        a.said.push_back({(int) k, here, a.places[(std::size_t) here], next, a.sections[(std::size_t) next].typeId, clip});
+    }
+    return a;
 }
 
 }  // namespace sqlive::model

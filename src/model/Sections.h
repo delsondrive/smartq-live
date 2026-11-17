@@ -42,4 +42,32 @@ double arrangementSeconds(const SongDoc&, const juce::String& arrangementId);
 // tempo map, never before the section's own start. The one rule the engine and the Song editor both use.
 engine::BarBeat announcePlace(const SongDoc&, const TiledSection&, CueLead);
 
+// What the cue voice says along an arrangement, as the engine plays it: the one source for buildPreparedSong's announceAt
+// and sectionCue, both Cues lanes and the pre-show check. The sections are tileSections over barsInSong, less those
+// starting at or after the audio's end; the last one left ends at the first bar line at or after that end, and one then
+// shorter than a jump's crossfade (engine::jumpFadeLength) is folded into the one before it. The steps are
+// resolveArrangement's over what is left, less those that named a folded section (they play the one before only when the
+// arrangement named nothing else).
+struct Announcements {
+    struct Said {
+        int step = 0;                         // the step it is said in
+        int section = 0;                      // that step's section: an index into sections
+        engine::BarBeat at;                   // where in it: announcePlace for the band's cue lead
+        int next = 0;                         // the section it announces: the next step's
+        juce::String typeId, clip;            // that section's type, and the type's cueClip (never empty here)
+    };
+    std::vector<TiledSection> sections;       // as the engine plays them
+    std::vector<int> steps;                   // indices into sections
+    std::vector<engine::BarBeat> places;      // one per section: where what follows it is announced
+    std::vector<juce::String> clips;          // one per section: the clip that announces it, its type's cueClip ("" none)
+    // One per step that announces what follows it: every step but the last, less those whose next section has no type
+    // or a type with no cueClip. A section folded or dropped is never in it.
+    std::vector<Said> said;
+};
+// The song's audio ending where its document says (songExtentSeconds), at the band's sample rate.
+Announcements announcements(const SongDoc&, const BandDoc&, const juce::String& arrangementId);
+// Audio that ends `end` samples after bar 1, at sampleRate: buildPreparedSong's, with the audio it has.
+Announcements announcements(const SongDoc&, const BandDoc&, const juce::String& arrangementId, engine::SamplePos end,
+                            double sampleRate);
+
 }  // namespace sqlive::model

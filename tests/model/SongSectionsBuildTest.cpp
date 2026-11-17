@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>
@@ -9,6 +10,7 @@
 
 #include "engine/Click.h"
 #include "model/Defaults.h"
+#include "model/Sections.h"
 #include "model/SongAudio.h"
 #include "tests/support/Songs.h"
 
@@ -131,4 +133,77 @@ TEST_CASE("a song can click with a sound of the band's own", "[buildsections]") 
     CHECK(p.clickSound.beat.size() == 4800);
     auto none = buildPreparedSong(song, band, RigDoc{}, {}, 48000.0, {});
     CHECK(none.clickSound.beat == engine::makeClickSound(0, 48000.0).beat);       // no clip: the wood block
+}
+
+// ---- One source for what is announced where (the final review, I4) ----
+
+TEST_CASE("model::announcements says what buildPreparedSong announces, step by step, in every arrangement", "[buildsections]") {
+    BandDoc band; band.roles = defaultRoles(); band.sectionTypes = defaultSectionTypes();
+    band.sectionTypes[4].cueClip = {};                              // the Bridge type says nothing
+    SongDoc song; song.id = "s"; song.lengthSeconds = 40.0;        // 20 bars at 120
+    song.sections = {{"a", "Intro", 1, 5}, {"b", "Verse", 5, 9}, {"c", "Chorus", 9, 13}, {"d", "Bridge", 13, 17}, {"e", "Outro", 17, 21}};
+    for (const auto [section, type] : {std::pair{0, 0}, {1, 1}, {2, 3}, {3, 4}, {4, 8}})
+        song.sections[(std::size_t) section].typeId = band.sectionTypes[(std::size_t) type].id;
+    song.arrangements = {{"long", "Long ending", {"a", "b", "c", "c", "e"}}, {"odd", "Odd", {"c", "d", "a", "d", "b"}}};
+    song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, 0.0f, false, 1}};
+    std::map<juce::String, std::shared_ptr<const engine::PartAudio>> clips;   // one clip per path, made when asked for
+    PrepareOptions options;
+    options.clips = [&](const juce::String& path) {
+        auto& clip = clips[path];
+        if (clip == nullptr) clip = sqlive::test::constantAudio(100, 0.1f, NAN);
+        return clip;
+    };
+    const auto tempo = tempoMapOf(song);
+    for (const juce::String arrangement : {"", "long", "odd"}) {
+        INFO(arrangement);
+        options.arrangementId = arrangement;
+        const auto p = buildPreparedSong(song, band, RigDoc{}, keysOf(40 * 48000), 48000.0, options);
+        const auto a = announcements(song, band, arrangement);
+        REQUIRE(a.sections.size() == p.sections.size());
+        REQUIRE(a.steps.size() == p.arrangement.size());
+        for (std::size_t k = 0; k < a.steps.size(); ++k) CHECK(a.steps[k] == p.arrangement[k]);
+        for (std::size_t i = 0; i < a.sections.size(); ++i) {
+            CHECK(p.announceAt[i] == tempo.sampleAt(a.places[i], 48000.0));
+            CHECK(p.sectionCue[i] == (a.clips[i].isEmpty() ? nullptr : clips.at(a.clips[i])));
+        }
+        // Every step but the last says the next step's section, when that section has a clip; and only then.
+        std::size_t said = 0;
+        for (std::size_t k = 0; k + 1 < p.arrangement.size(); ++k) {
+            const auto next = p.arrangement[k + 1];
+            if (p.sectionCue[next] == nullptr) continue;
+            REQUIRE(said < a.said.size());
+            CHECK(a.said[said].step == (int) k);
+            CHECK(a.said[said].section == p.arrangement[k]);
+            CHECK(a.said[said].next == next);
+            CHECK(clips.at(a.said[said].clip) == p.sectionCue[next]);
+            ++said;
+        }
+        CHECK(said == a.said.size());
+    }
+    const auto longEnding = announcements(song, band, "long");
+    REQUIRE(longEnding.said.size() == 4);                           // nothing in the last step
+    CHECK(longEnding.said[2].section == 2);  CHECK(longEnding.said[2].next == 2);   // the first Chorus says "Chorus"
+    CHECK(longEnding.said[3].section == 2);  CHECK(longEnding.said[3].next == 4);   // the second says "Outro"
+    const auto odd = announcements(song, band, "odd");
+    REQUIRE(odd.said.size() == 2);                                  // the Bridge has no clip: nothing announces it
+    CHECK(odd.said[0].step == 1);  CHECK(odd.said[0].next == 0);    // the Bridge says "Intro"
+    CHECK(odd.said[1].step == 3);  CHECK(odd.said[1].next == 1);    // and then "Verse"
+}
+TEST_CASE("model::announcements drops and folds the sections buildPreparedSong drops and folds", "[buildsections]") {
+    BandDoc band; band.roles = defaultRoles(); band.sectionTypes = defaultSectionTypes();
+    SongDoc song; song.id = "s";
+    song.parts = {{"p1", "Keys", "audio/Keys.wav", band.roles[3].id, 0.0f, false, 1}};
+    song.sections = {{"a", "Intro", 1, 5}, {"b", "Chorus", 5, 9}, {"c", "Outro", 9, 17}, {"d", "Tag", 17, 19}};
+    song.sections[1].typeId = band.sectionTypes[3].id;  song.sections[2].typeId = band.sectionTypes[8].id;
+    song.arrangements = {{"long", "Long", {"a", "c", "b", "c", "d"}}};
+    PrepareOptions options; options.arrangementId = "long";
+    options.clips = [](const juce::String&) { return sqlive::test::constantAudio(100, 0.1f, NAN); };
+    // The audio runs 239 samples into bar 9: the Outro is folded into the Chorus, and the Tag (bar 17) is dropped.
+    song.lengthSeconds = (8 * 96000 + 239) / 48000.0;
+    const auto p = buildPreparedSong(song, band, RigDoc{}, keysOf(8 * 96000 + 239), 48000.0, options);
+    const auto a = announcements(song, band, "long");
+    REQUIRE(p.sections.size() == 2);  REQUIRE(a.sections.size() == 2);
+    CHECK(a.steps == std::vector<int>{0, 1});  CHECK(p.arrangement == std::vector<std::uint16_t>{0, 1});
+    REQUIRE(a.said.size() == 1);
+    CHECK(a.said[0].next == 1);  CHECK(a.said[0].typeId == band.sectionTypes[3].id);   // the Intro says "Chorus", never "Outro"
 }
