@@ -5,6 +5,8 @@
 
 #include "model/JsonObject.h"
 #include "model/Sections.h"
+#include "ui/CuesLane.h"
+#include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/Theme.h"
 
@@ -16,6 +18,7 @@ namespace {
 constexpr int kCardPadX = 12, kCardPadY = 10, kCapsHeight = 14, kCapsGap = 6, kCardRow = 30, kFieldHeight = 24;
 constexpr int kNameWidth = 150, kChoiceWidth = 150, kBarWidth = 64, kLabelGap = 10;
 constexpr int kTwoLineRow = 38, kMinLabel = 56;
+constexpr int kAtWidth = 120, kAtHeight = 22;                     // the CUE card's .val: "Bar 7 · beat 1"
 
 const juce::String kNoType = "No type";
 const juce::StringArray kTimings{"The end of the section", "The next bar"};
@@ -196,6 +199,102 @@ void SectionCard::finishStart(bool keep) {
     const int bar = typedBar(start_.getText());
     if (keep && bar > 0 && bar != state_.startBar) setStartBar(bar);
     else start_.setText(juce::String(state_.startBar), juce::dontSendNotification);
+}
+
+// ---- The CUE card ------------------------------------------------------------------------------------------------------
+
+CueCardState makeCueCardState(const app::Session& session, const juce::String& songId, const juce::String& cueId) {
+    CueCardState state;
+    const auto* song = session.model().song(songId);
+    if (song == nullptr || cueId.isEmpty()) return state;
+    const auto cue = std::find_if(song->cues.begin(), song->cues.end(), [&](const model::CueMarkerDoc& c) { return c.id == cueId; });
+    if (cue == song->cues.end()) return state;
+    state.visible = true;
+    state.cueId = cueId;
+    state.at = "Bar " + juce::String(cue->bar) + kDot + "beat " + formatBpm(cue->beat);
+    for (const auto& clip : cueClips(session)) {
+        state.says.add(clip.words);
+        state.clips.add(clip.path);
+    }
+    state.clip = state.clips.indexOf(cue->clip);
+    if (state.clip < 0 && cue->clip.isNotEmpty()) {               // one the band's folder doesn't have (yet)
+        state.says.add(cue->text.isNotEmpty() ? cue->text : cue->clip.fromLastOccurrenceOf("/", false, false));
+        state.clips.add(cue->clip);
+        state.clip = state.clips.size() - 1;
+    }
+    return state;
+}
+
+CueCard::CueCard(app::Session& session) : session_(session), hear_(juce::String::fromUTF8("\xe2\x96\xb6 Hear it")) {
+    says_.setPlaceholder("Choose a clip" + kEllipsis);
+    says_.onChange = [this](int item) { setClip(item); };
+    hear_.onClick = [this] { hear(); };
+    hear_.setWantsKeyboardFocus(false);
+    for (juce::Component* child : std::initializer_list<juce::Component*>{&label_, &says_, &hear_}) addAndMakeVisible(child);
+}
+
+void CueCard::show(const juce::String& songId, const juce::String& cueId) {
+    songId_ = songId;
+    state_ = makeCueCardState(session_, songId, cueId);
+    says_.setItems(state_.says, state_.clip);
+    says_.setEnabled(session_.mode() == app::Mode::Edit && state_.visible);
+    hear_.setEnabled(state_.clip >= 0 && !session_.now().playing);   // never over a song
+    resized();
+    repaint();
+}
+
+int CueCard::idealHeight() const { return rowsHeight(3); }
+
+void CueCard::setClip(int index) {
+    if (!state_.visible || index < 0 || index >= state_.clips.size() || index == state_.clip) return;
+    if (session_.mode() != app::Mode::Edit || session_.model().song(songId_) == nullptr) return;
+    // The cue says the clip, and its chip reads the clip's words.
+    const auto result = session_.commands().run("cue.set", model::jsonObject({{"songId", songId_},
+                                                                               {"cueId", state_.cueId},
+                                                                               {"clip", state_.clips[index]},
+                                                                               {"text", state_.says[index]}}));
+    if (!result.ok) tellUser(message_, *this, result.message);
+    show(songId_, state_.cueId);
+}
+
+bool CueCard::hear() {
+    if (!state_.visible || state_.clip < 0) return false;
+    return session_.hearCue(state_.clips[state_.clip]);           // false while a song plays, and until the clip has loaded
+}
+
+void CueCard::resized() {
+    auto inner = getLocalBounds().reduced(kCardPadX, kCardPadY);
+    label_.setBounds(inner.removeFromTop(kCapsHeight));
+    inner.removeFromTop(kCapsGap);
+    const auto row = [&inner](int width, int height, juce::Rectangle<int>& control) {
+        auto r = inner.removeFromTop(std::min(kCardRow, inner.getHeight()));
+        const int w = std::min(width, r.getWidth());
+        control = r.removeFromRight(w).withSizeKeepingCentre(w, std::min(height, r.getHeight()));
+        return r.withTrimmedRight(std::min(kLabelGap, r.getWidth()));
+    };
+    atLabel_ = row(std::min(kAtWidth, widthInPixels(theme::font(theme::sizeBody, true), state_.at) + 18), kAtHeight, atValue_);
+    juce::Rectangle<int> place;
+    saysLabel_ = row(kChoiceWidth, kFieldHeight, place);
+    says_.setBounds(place);
+    row(hear_.idealWidth(), 28, place);
+    hear_.setBounds(place);
+}
+
+void CueCard::paint(juce::Graphics& g) {
+    theme::paintPanel(g, getLocalBounds().toFloat());
+    g.setFont(bodyFont());
+    g.setColour(theme::mid);
+    g.drawText("At", atLabel_, juce::Justification::centredLeft, false);
+    g.drawText("Says", saysLabel_, juce::Justification::centredLeft, false);
+    // The mockup's .val: the place on a field with a hairline border, bright and semibold, on the right.
+    const auto value = atValue_.toFloat();
+    g.setColour(theme::field);
+    g.fillRoundedRectangle(value, theme::radiusField);
+    g.setColour(theme::hairline);
+    g.drawRoundedRectangle(value.reduced(0.5f), theme::radiusField, 1.0f);
+    g.setColour(theme::text);
+    g.setFont(theme::font(theme::sizeBody, true));
+    g.drawText(state_.at, atValue_.reduced(8, 0), juce::Justification::centredRight, true);
 }
 
 // ---- WHEN A SECTION IS CHOSEN LIVE -------------------------------------------------------------------------------------

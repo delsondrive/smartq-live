@@ -14,8 +14,9 @@
 
 namespace sqlive::ui {
 
-// The Song editor's tools: Select picks and drags what is on a lane, Draw adds where it is pressed.
-enum class EditTool { Select, Draw };
+// The Song editor's tools: Select picks and drags what is on a lane, Draw adds where it is pressed, Automation draws and
+// drags the level lines over the parts and the click (AutomationOverlay); on the other lanes it picks as Select does.
+enum class EditTool { Select, Draw, Automation };
 enum class SnapTo { Bar, Beat, Eighth };                          // the mockup's "Bar · Beat · 1/8"
 
 // What is picked on the timeline: a tempo point (by index), a lane's marker (by device and id), a section (by id), or a cue
@@ -49,6 +50,7 @@ public:
     virtual juce::String subtitle() const { return {}; }
     virtual juce::Colour dot() const { return {}; }               // transparent = no dot
     virtual bool dimmed() const { return false; }                 // its header's dot and words drawn at 55%
+    virtual bool subtitleInMint() const { return false; }         // the subtitle is "automation": drawn in mint, not dim
     virtual int laneHeight() const = 0;
     virtual bool removeSelected() { return false; }               // Delete: removes this lane's selected item, if it has it
     virtual void refresh() {}                                     // the band, the song or its audio changed: read again
@@ -97,7 +99,7 @@ private:
 // behind them.
 //
 // The white cursor line runs over the ruler and the lanes. A press or drag on the ruler or on a lane's empty space moves it
-// (snapped as the snap says; Alt for no snap), and on a lane, with the Select tool, also clears the selection. While the
+// (snapped as the snap says; Alt for no snap), and on a lane, with the Select or Automation tool, also clears the selection. While the
 // song plays the cursor is the playhead, follows it (followPlayhead), and the view scrolls to keep it in sight.
 class Timeline : public juce::Component, private juce::ScrollBar::Listener {
 public:

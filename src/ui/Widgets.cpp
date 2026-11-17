@@ -57,7 +57,7 @@ struct DisabledLayer {
 };
 
 juce::Font buttonFont() { return theme::font(theme::sizeBody, true); }
-juce::Font chipFont(bool bold) { return theme::font(theme::sizeBody, bold); }
+juce::Font chipFont(bool bold, float size = theme::sizeBody) { return theme::font(size, bold); }
 juce::Font pillFont() { return theme::font(theme::sizeSmall); }
 juce::Font capsFont() { return theme::tracked(theme::font(theme::sizeCaption, true), 0.8f); }
 juce::Font segmentFont() { return theme::font(theme::sizeSmall, true); }
@@ -127,12 +127,12 @@ void PillButton::paintButton(juce::Graphics& g, bool highlighted, bool down) {
 
 namespace {
 
-std::vector<Run> chipRuns(const juce::String& label, const juce::String& value, bool labelFirst) {
-    const Run valueRun{value, chipFont(true), theme::text};
+std::vector<Run> chipRuns(const juce::String& label, const juce::String& value, bool labelFirst, float size) {
+    const Run valueRun{value, chipFont(true, size), theme::text};
     if (label.isEmpty()) return {valueRun};
-    if (value.isEmpty()) return {{label, chipFont(false), theme::mid}};
-    if (labelFirst) return {{label + " ", chipFont(false), theme::mid}, valueRun};
-    return {valueRun, {" " + label, chipFont(false), theme::mid}};
+    if (value.isEmpty()) return {{label, chipFont(false, size), theme::mid}};
+    if (labelFirst) return {{label + " ", chipFont(false, size), theme::mid}, valueRun};
+    return {valueRun, {" " + label, chipFont(false, size), theme::mid}};
 }
 
 }  // namespace
@@ -147,17 +147,23 @@ void Chip::setText(const juce::String& label, const juce::String& value, bool la
     repaint();
 }
 
-int Chip::idealWidth() const { return ceilToInt(widthOf(chipRuns(label_, value_, labelFirst_)) + 2.0f * 10.0f + 2.0f); }
+int Chip::idealWidth() const { return ceilToInt(widthOf(chipRuns(label_, value_, labelFirst_, fontSize())) + 2.0f * padding() + 2.0f); }
+
+void Chip::setCompact(bool compact) {
+    if (compact == compact_) return;
+    compact_ = compact;
+    repaint();
+}
 
 void Chip::paint(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat();
     LiveLookAndFeel::fillButton(g, area, theme::field, theme::hairline, false, false);
 
-    const auto runs = chipRuns(label_, value_, labelFirst_);
-    const float x = std::max(area.getX() + 10.0f, area.getCentreX() - 0.5f * widthOf(runs));
+    const auto runs = chipRuns(label_, value_, labelFirst_, fontSize());
+    const float x = std::max(area.getX() + padding(), area.getCentreX() - 0.5f * widthOf(runs));
     g.saveState();
     g.reduceClipRegion(getLocalBounds().reduced(1));
-    drawRuns(g, runs, x, centredBaseline(chipFont(false), area.getCentreY()));
+    drawRuns(g, runs, x, centredBaseline(chipFont(false, fontSize()), area.getCentreY()));
     g.restoreState();
 }
 

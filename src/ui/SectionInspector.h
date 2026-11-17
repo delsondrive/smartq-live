@@ -67,6 +67,48 @@ private:
     juce::ScopedMessageBox message_;
 };
 
+// What the CUE card shows for a song's cue, in its words.
+struct CueCardState {
+    bool visible = false;                                         // the song has that cue
+    juce::String cueId, at;                                       // "Bar 7 · beat 1"
+    juce::StringArray says, clips;                                // what each clip says (cueClips), and its path; the cue's own
+                                                                  // clip last when it isn't among them
+    int clip = -1;                                                // the cue's, into says and clips
+    bool operator==(const CueCardState&) const = default;
+};
+
+// Not visible unless the song has that cue.
+CueCardState makeCueCardState(const app::Session&, const juce::String& songId, const juce::String& cueId);
+
+// The right-hand column's CUE card, while a cue is selected: "At" (its bar and beat; dragged on the lane), "Says" (a Choice
+// of the band's clips: cue.set gives the cue that clip and its words, one undo step, in Edit mode only) and "▶ Hear it"
+// (Session::hearCue: nothing while a song plays, when the button is disabled; a clip not loaded yet is asked for, and
+// heard at the next press).
+class CueCard : public juce::Component {
+public:
+    explicit CueCard(app::Session&);
+
+    void show(const juce::String& songId, const juce::String& cueId);
+    const CueCardState& state() const { return state_; }
+    int idealHeight() const;
+
+    void setClip(int index);                                      // into state().clips
+    bool hear();                                                  // false when nothing was heard
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    app::Session& session_;
+    juce::String songId_;
+    CueCardState state_;
+    CapsLabel label_{"CUE"};
+    Choice says_;
+    PillButton hear_;
+    juce::Rectangle<int> atLabel_, atValue_, saysLabel_;
+    juce::ScopedMessageBox message_;
+};
+
 // The song's "WHEN A SECTION IS CHOSEN LIVE" card: "It happens at" "The end of the section" or "The next bar"
 // (song.setJumpTiming), in Edit mode only.
 class JumpTimingCard : public juce::Component {

@@ -24,7 +24,7 @@ juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 }  // namespace
 
 EditorInspector::EditorInspector(app::Session& session)
-    : session_(session), markerInspector_(session), sectionCard_(session), jumpCard_(session) {
+    : session_(session), markerInspector_(session), sectionCard_(session), cueCard_(session), quickActions_(session), jumpCard_(session) {
     addChildComponent(tempoCard_);
     markerInspector_.onSelect = [this](EditorSelection picked) {
         if (onSelect) onSelect(std::move(picked));
@@ -37,6 +37,12 @@ EditorInspector::EditorInspector(app::Session& session)
         if (onSelect) onSelect({});
     };
     addChildComponent(sectionCard_);
+    addChildComponent(cueCard_);
+    quickActions_.onHeightChanged = [this] {
+        resized();
+        repaint();
+    };
+    addChildComponent(quickActions_);
     addChildComponent(jumpCard_);
 
     barOneEditor_.setFont(theme::font(theme::sizeSmall));
@@ -67,11 +73,24 @@ bool EditorInspector::show(const juce::String& songId, const EditorSelection& pi
     const bool change = picked.kind == Kind::Marker && findMarker(session_, songId, picked.deviceId, picked.id) != nullptr;
     sectionCard_.show(songId, picked.kind == Kind::Section ? picked.id : juce::String());
     const bool section = sectionCard_.state().visible;
-    if ((picked.kind == Kind::Tempo && !tempo) || (picked.kind == Kind::Marker && !change) || (picked.kind == Kind::Section && !section))
+    cueCard_.show(songId, picked.kind == Kind::Cue ? picked.id : juce::String());
+    const bool cue = cueCard_.state().visible;
+    const auto hasPoint = [&] {                                   // an automation point: no card of its own
+        const auto* song = session_.model().song(songId);
+        if (song == nullptr) return false;
+        const auto lane = song->automation.find(picked.id);
+        return lane != song->automation.end() && picked.index >= 0 && picked.index < static_cast<int>(lane->second.size());
+    };
+    const bool point = picked.kind == Kind::Automation && hasPoint();
+    if ((picked.kind == Kind::Tempo && !tempo) || (picked.kind == Kind::Marker && !change) || (picked.kind == Kind::Section && !section)
+        || (picked.kind == Kind::Cue && !cue) || (picked.kind == Kind::Automation && !point))
         return false;
     tempoCard_.show(tempo ? tempoLane : nullptr, picked.index, editable);
     tempoCard_.setVisible(tempo);
     sectionCard_.setVisible(section);
+    cueCard_.setVisible(cue);
+    quickActions_.show(songId, picked);
+    quickActions_.setVisible(quickActions_.state().visible);
     jumpCard_.show(songId);
     jumpCard_.setVisible(true);
     markerInspector_.show(songId, change ? picked : EditorSelection{});
@@ -125,17 +144,26 @@ void EditorInspector::resized() {
     };
     if (changeShown()) {
         songCard_ = clickCard_ = {};
+        // QUICK ACTIONS is given the column's width first: its height depends on how its message wraps.
+        quickActions_.setSize(column.getWidth(), quickActions_.getHeight());
+        const int quick = quickActions_.isVisible() ? quickActions_.idealHeight() + kCardGap : 0;
         const int ideal = markerInspector_.idealHeight();
-        const int room = std::max(0, column.getHeight() - jumpCard_.idealHeight() - kCardGap);
+        const int room = std::max(0, column.getHeight() - jumpCard_.idealHeight() - kCardGap - quick);
         markerView_.setBounds(card(std::min(ideal, room)));
         const int w = std::max(0, column.getWidth() - (ideal > room ? markerView_.getScrollBarThickness() : 0));
         markerInspector_.setSize(w, ideal);
+        if (quickActions_.isVisible()) quickActions_.setBounds(card(quickActions_.idealHeight()));
         jumpCard_.setBounds(card(jumpCard_.idealHeight()));
         return;
     }
     const auto rowsCard = [&](int rows) { return card(2 * kCardPadY + kCapsHeight + kCapsGap + rows * kCardRow); };
     if (tempoCard_.isVisible()) tempoCard_.setBounds(card(tempoCard_.idealHeight()));
     if (sectionCard_.isVisible()) sectionCard_.setBounds(card(sectionCard_.idealHeight()));
+    if (cueCard_.isVisible()) cueCard_.setBounds(card(cueCard_.idealHeight()));
+    if (quickActions_.isVisible()) {
+        quickActions_.setSize(column.getWidth(), quickActions_.getHeight());
+        quickActions_.setBounds(card(quickActions_.idealHeight()));
+    }
     const auto rowOf = [this](juce::Rectangle<int>& inner, const juce::String& label, juce::Component* control, int controlWidth,
                               int height) {
         auto r = inner.removeFromTop(std::min(kCardRow, inner.getHeight()));

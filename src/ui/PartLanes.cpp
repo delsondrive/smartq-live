@@ -7,6 +7,7 @@
 
 #include "app/SongCache.h"
 #include "model/JsonObject.h"
+#include "model/SongAudio.h"
 #include "ui/BarScale.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
@@ -28,13 +29,36 @@ void say(juce::Graphics& g, juce::Rectangle<int> area, const juce::String& words
     g.drawText(words, area, juce::Justification::centredLeft, true);
 }
 
+bool sameCurve(const std::vector<engine::AutoPoint>& a, const std::vector<engine::AutoPoint>& b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const auto& x, const auto& y) { return x.at == y.at && x.db == y.db; });
+}
+
 }  // namespace
 
 // ---- A part ------------------------------------------------------------------------------------------------------------
 
 PartLane::PartLane(app::Session& session, juce::String songId, juce::String partId)
-    : session_(session), songId_(std::move(songId)), partId_(std::move(partId)) {
+    : session_(session), songId_(std::move(songId)), partId_(std::move(partId)), automation_(session, songId_, partId_) {
+    automation_.onSelect = [this](EditorSelection picked) {
+        if (onSelect) onSelect(std::move(picked));
+    };
+    addChildComponent(automation_);
     refresh();
+}
+
+juce::String PartLane::subtitle() const { return automation_.hasPoints() ? kAutomationWord : juce::String(); }
+
+void PartLane::contextChanged() { automation_.setContext(scale(), tool(), snap(), &selection()); }
+
+void PartLane::resized() { automation_.setBounds(getLocalBounds().reduced(0, waveInset)); }
+
+void PartLane::readAutomation() {
+    const auto* song = session_.model().song(songId_);
+    if (song == nullptr) return;
+    auto curve = automationCurve(automation_.state(), model::tempoMapOf(*song));
+    if (sameCurve(curve, curve_)) return;
+    curve_ = std::move(curve);
+    built_ = false;
 }
 
 void PartLane::setMissing(bool missing) {
@@ -61,6 +85,8 @@ void PartLane::refresh() {
         barOne_ = song->audioStartSeconds;
         built_ = false;
     }
+    automation_.refresh();
+    readAutomation();
     repaint();
 }
 
@@ -75,18 +101,21 @@ void PartLane::paint(juce::Graphics& g) {
     const float mid = static_cast<float>(getHeight()) * 0.5f;
     const float half = static_cast<float>(height - 2 * waveInset) * 0.5f;
     const float gain = peak_ > 1.0e-6f ? 0.9f * half / peak_ : 0.0f;
-    // The mockup's canvas.wf: a 1.3 px bar every 2 px, at 75 % opacity, so a dense part keeps its texture.
+    // The mockup's canvas.wf: a 1.3 px bar every 2 px, at 75 % opacity, so a dense part keeps its texture. Each is drawn at
+    // the level the automation gives there (silent: none), within the waveform's area.
     g.setColour(colour_.withMultipliedAlpha(0.75f));
+    const float highest = static_cast<float>(waveInset), lowest = static_cast<float>(height - waveInset);
     for (std::size_t x = 0; x < lo_.size(); x += 2) {
         float lo = lo_[x], hi = hi_[x];
         if (x + 1 < lo_.size() && !std::isnan(lo_[x + 1])) {     // the bar covers both pixels' columns
             lo = std::isnan(lo) ? lo_[x + 1] : std::min(lo, lo_[x + 1]);
             hi = std::isnan(hi) ? hi_[x + 1] : std::max(hi, hi_[x + 1]);
         }
-        if (std::isnan(lo)) continue;
+        const float level = x < gain_.size() ? gain_[x] : 1.0f;
+        if (std::isnan(lo) || level <= 0.0f) continue;
         // From the bar's top to its bottom, always through the centre line: a bar wholly above or below zero still
         // reaches it.
-        const float top = mid - hi * gain, bottom = mid - lo * gain;
+        const float top = std::max(highest, mid - hi * gain * level), bottom = std::min(lowest, mid - lo * gain * level);
         const float y = std::min(top, mid - 0.5f);
         g.fillRect(static_cast<float>(x), y, 1.3f, std::max(bottom, mid + 0.5f) - y);
     }
@@ -109,6 +138,9 @@ void PartLane::build() {
     peak_ = summary.peak;
     lo_.assign(static_cast<std::size_t>(std::max(0, width)), std::numeric_limits<float>::quiet_NaN());
     hi_ = lo_;
+    gain_.assign(lo_.size(), 1.0f);
+    if (!curve_.empty())                                          // at the middle of each 2 px bar
+        for (std::size_t x = 0; x < gain_.size(); ++x) gain_[x] = automationGainAt(curve_, scale.secondsAtX(static_cast<float>(x) + 1.0f));
     constexpr double kBlock = app::WaveSummary::blockFrames;
     const auto frameAt = [&](float px) { return (scale.secondsAtX(px) + barOne_) * rate; };
     for (int x = 0; x < width; ++x) {
@@ -177,13 +209,27 @@ void PartLane::headerPressed(const juce::MouseEvent&) {
 
 // ---- The click ---------------------------------------------------------------------------------------------------------
 
-ClickLane::ClickLane(app::Session& session, juce::String songId) : session_(session), songId_(std::move(songId)) { refresh(); }
+ClickLane::ClickLane(app::Session& session, juce::String songId)
+    : session_(session), songId_(std::move(songId)), automation_(session, songId_, "click") {
+    automation_.onSelect = [this](EditorSelection picked) {
+        if (onSelect) onSelect(std::move(picked));
+    };
+    addChildComponent(automation_);
+    refresh();
+}
 
 juce::Colour ClickLane::dot() const { return theme::ember; }
+
+juce::String ClickLane::subtitle() const { return automation_.hasPoints() ? kAutomationWord : juce::String(); }
+
+void ClickLane::contextChanged() { automation_.setContext(scale(), tool(), snap(), &selection()); }
+
+void ClickLane::resized() { automation_.setBounds(getLocalBounds().reduced(0, inset)); }
 
 void ClickLane::refresh() {
     const auto* song = session_.model().song(songId_);
     if (song == nullptr) return;
+    automation_.refresh();
     const bool on = song->click.enabled;
     const int subdivision = std::max(0, kSubdivisionNames.indexOf(song->click.subdivision));
     const int countIn = std::max(0, song->countInBars);

@@ -202,7 +202,8 @@ public:
 
 private:
     // The mockup's .hd: a darker cell with its dot, its title in 12 px semibold and its subtitle on the right in dim, or under
-    // the title (11 and 10 px) when the two don't fit side by side. A dimmed lane's dot and words are drawn at 55%.
+    // the title (11 and 10 px) when the two don't fit side by side. A dimmed lane's dot and words are drawn at 55%. A lane's
+    // "automation" is in mint.
     static void paintHeader(juce::Graphics& g, juce::Rectangle<int> head, const Lane& lane) {
         g.setColour(juce::Colours::black.withAlpha(0.18f));
         g.fillRect(head);
@@ -210,6 +211,7 @@ private:
         g.fillRect(head.getRight() - 1, head.getY(), 1, head.getHeight());
         g.fillRect(head.getX(), head.getBottom() - 1, head.getWidth(), 1);
         const float alpha = lane.dimmed() ? 0.55f : 1.0f;
+        const auto subtitleColour = (lane.subtitleInMint() ? theme::mint : theme::dim).withMultipliedAlpha(alpha);
         const auto dot = lane.dot();
         const auto words = laneHeaderText(lane.title(), lane.subtitle(), head.getWidth(), !dot.isTransparent());
         auto text = head.toFloat().withTrimmedRight(1.0f).reduced(8.0f, 0.0f);
@@ -225,19 +227,19 @@ private:
             g.setColour(theme::mid.withMultipliedAlpha(alpha));
             g.setFont(titleFont);
             g.drawText(words.title, top, juce::Justification::centredLeft, false);
-            g.setColour(theme::dim.withMultipliedAlpha(alpha));
+            g.setColour(subtitleColour);
             g.setFont(subtitleFont);
             g.drawText(words.subtitle, bottom, juce::Justification::centredLeft, false);
             return;
         }
         if (words.title.isEmpty()) {                              // the subtitle says it all
-            g.setColour(theme::dim.withMultipliedAlpha(alpha));
+            g.setColour(subtitleColour);
             g.setFont(subtitleFont);
             g.drawText(words.subtitle, text, juce::Justification::centredLeft, false);
             return;
         }
         if (words.subtitle.isNotEmpty()) {
-            g.setColour(theme::dim.withMultipliedAlpha(alpha));
+            g.setColour(subtitleColour);
             g.setFont(subtitleFont);
             g.drawText(words.subtitle, text, juce::Justification::centredRight, false);
         }
@@ -435,7 +437,7 @@ void Timeline::pointerAt(float x, juce::ModifierKeys mods, bool fromLane, bool p
     if (press && onPressed) onPressed();
     // The song is looked up every time: an undo can take it away before the editor has heard.
     if (!scale_ || session_.model().song(songId_) == nullptr) return;
-    if (fromLane && press && tool_ == EditTool::Select) select({});
+    if (fromLane && press && tool_ != EditTool::Draw) select({});
     const auto now = session_.now();
     if (now.playing && now.playingSongId == songId_) return;     // while it plays, the cursor follows the playhead
     x = juce::jlimit(0.0f, scale_->width(), x);

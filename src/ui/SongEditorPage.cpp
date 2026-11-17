@@ -15,6 +15,7 @@
 #include "model/DocumentsJson.h"
 #include "model/JsonObject.h"
 #include "model/SongAudio.h"
+#include "ui/CuesLane.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/MidiImportDialog.h"
@@ -37,6 +38,7 @@ constexpr int kSongsWidth = 200, kSongsPad = 10, kCapsHeight = 14, kCapsGap = 8;
 constexpr int kSongItemHeight = 30, kSongGap = 4, kNewSongGap = 10, kSongPadX = 9;
 constexpr int kBarHeight = 47, kBarPadX = 12, kBarGap = 8, kTitleGap = 6, kChipHeight = 24, kButtonHeight = 30, kToolsRow = 38;
 constexpr int kMinTitleWidth = 60;                                  // narrower than this, the tools go to a second row
+constexpr int kMaxSqueeze = 10, kToolCount = 3, kSnapCount = 3;    // a segment gives up at most 10 px (.tools span: 9 a side)
 constexpr int kFooterHeight = 32, kFooterPadX = 12, kFooterGap = 14;
 constexpr int kEmptyCardWidth = 460, kEmptyCardHeight = 150;
 
@@ -317,6 +319,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
     addAndMakeVisible(*title_);
     for (auto& chip : chips_) {
         chip = std::make_unique<EditChip>();
+        chip->setCompact(true);                                   // the mockup's .ebar .chip
         addAndMakeVisible(*chip);
     }
     chips_[0]->onClick = [this] { editBpm(); };
@@ -325,6 +328,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
     chips_[3]->onClick = [this] { showCountInMenu(); };
 
     tap_.onClick = [this] { tap(app::wallClockSeconds()); };
+    tap_.setPadding(8);                                           // as the chips beside it
     play_.onClick = [this] { togglePlay(); };
     play_.onMenu = [this] { showPlayMenu(); };
     play_.setTooltip("Right-click for Play as arranged");
@@ -345,9 +349,11 @@ SongEditorPage::SongEditorPage(app::Session& session)
     bpmEditor_.onFocusLost = [this] { finishBpm(true); };
     addChildComponent(bpmEditor_);
 
-    tools_.setItems({"Select", "Draw"}, 0);
+    tools_.setItems({"Select", "Draw", "Automation"}, 0);
     snapTo_.setItems({"Bar", "Beat", "1/8"}, 1);
-    tools_.onChange = [this](int item) { timeline_.setTool(item == 1 ? EditTool::Draw : EditTool::Select); };
+    tools_.onChange = [this](int item) {
+        timeline_.setTool(item == 1 ? EditTool::Draw : item == 2 ? EditTool::Automation : EditTool::Select);
+    };
     snapTo_.onChange = [this](int item) { timeline_.setSnap(item == 0 ? SnapTo::Bar : item == 2 ? SnapTo::Eighth : SnapTo::Beat); };
     for (juce::Component* child : std::initializer_list<juce::Component*>{&songsLabel_, &tools_, &snapTo_})
         addAndMakeVisible(child);
@@ -421,8 +427,9 @@ void SongEditorPage::refresh(bool force) {
     std::vector<int> ports;
     for (const auto& device : devices) ports.push_back(session_.midi() != nullptr ? static_cast<int>(session_.midi()->status(device.id)) : -1);
     const bool sameMidi = devices == devicesShown_ && ports == portsShown_;
-    // The sections and the arrangement row take their colours from the band's section types.
-    const bool sameTypes = session_.model().band().sectionTypes == typesShown_;
+    // The sections and the arrangement row take their colours from the band's section types, and the cues lane its cues
+    // from them and from how early the band has them.
+    const bool sameTypes = session_.model().band().sectionTypes == typesShown_ && session_.model().band().cueLead == cueLeadShown_;
     const bool onlyCursor = sameDoc && sameMidi && sameTypes && loaded == loaded_ && editable() == shownEditable_
                             && withoutCursor(next) == withoutCursor(state_);
     const bool footerChanged = next.footerBar != state_.footerBar || next.footerTime != state_.footerTime;
@@ -437,6 +444,7 @@ void SongEditorPage::refresh(bool force) {
     devicesShown_ = devices;
     portsShown_ = std::move(ports);
     typesShown_ = session_.model().band().sectionTypes;
+    cueLeadShown_ = session_.model().band().cueLead;
     shownEditable_ = editable();
     buildLanes();
     timeline_.refresh();
@@ -469,6 +477,7 @@ void SongEditorPage::buildLanes() {
         tempoLane_ = tempo.get();
         lanes.push_back(std::move(tempo));
         lanes.push_back(std::make_unique<SectionsLane>(session_, songId_));
+        lanes.push_back(std::make_unique<CuesLane>(session_, songId_));
         for (const auto& device : laneDevices_) lanes.push_back(std::make_unique<MidiLane>(session_, songId_, device));
         for (const auto& part : state_.parts) {
             auto lane = std::make_unique<PartLane>(session_, songId_, part.partId);
@@ -542,14 +551,21 @@ void SongEditorPage::resized() {
     auto edit = area;
 
     // The bar under the top bar: the title, the chips (Tap after the BPM), a gap, the tools, then ▶ Play on the right. When
-    // they would leave the title too little room, the tools go to a second row. Play is as wide as the wider of its two
-    // words, so it doesn't move when it changes (PillButton's font and padding). The arrangement row is under it.
+    // they would shorten the title, the tools' segments give up as much of the room beside their words as it needs, up to
+    // 5 px a side (kMaxSqueeze); when they would still leave it less than kMinTitleWidth, the tools go to a second row. Play
+    // is as wide as the wider of its two words, so it doesn't move when it changes (PillButton's font and padding). The
+    // arrangement row is under it.
     const int playWidth = std::max(play_.idealWidth(), ceilToInt(widthOf(boldFont(), juce::String::fromUTF8("\xe2\x96\xa0 Stop")) + 26.0f));
-    int chipsWidth = tap_.idealWidth();
+    int chipsWidth = tap_.idealWidth() + 4;
     for (auto& chip : chips_) chipsWidth += chip->idealWidth() + kBarGap;
-    const int toolsWidth = kBarGap + tools_.idealWidth() + kBarGap + snapTo_.idealWidth();
+    const int idealTools = kBarGap + tools_.idealWidth() + kBarGap + snapTo_.idealWidth();
     const int rowWidth = edit.getWidth() - 2 * kBarPadX - playWidth - kBarGap;
-    const bool twoRows = rowWidth - chipsWidth - kTitleGap - toolsWidth < kMinTitleWidth;
+    const int spare = rowWidth - chipsWidth - kTitleGap;          // for the title and the tools
+    constexpr int segments = kToolCount + kSnapCount;
+    const int lacking = idealTools + title_->idealWidth() - spare;   // what the title would lose
+    const bool twoRows = spare - (idealTools - kMaxSqueeze * segments) < kMinTitleWidth;
+    const int squeeze = twoRows ? 0 : juce::jlimit(0, kMaxSqueeze, (lacking + segments - 1) / segments);   // a segment
+    const int toolsWidth = idealTools - squeeze * segments;
     bar_ = edit.removeFromTop(kBarHeight + (twoRows ? kToolsRow : 0));
     arrangementRow_.setBounds(edit.removeFromTop(ArrangementRow::height));
     footer_ = edit.removeFromBottom(kFooterHeight);
@@ -561,8 +577,8 @@ void SongEditorPage::resized() {
     placeIn(play_, juce::Rectangle<int>(bar.getRight() - playWidth, bar.getCentreY() - kButtonHeight / 2, playWidth, kButtonHeight));
     auto row = bar.withTrimmedRight(playWidth + kBarGap);
     if (!twoRows) toolsRow = row.removeFromRight(std::min(toolsWidth, std::max(0, row.getWidth()))).withTrimmedLeft(kBarGap);
-    for (auto* tools : {&tools_, &snapTo_}) {                     // left to right, in the second row or on the right
-        const int w = std::min(tools->idealWidth(), std::max(0, toolsRow.getWidth()));
+    for (auto [tools, count] : {std::pair{&tools_, kToolCount}, std::pair{&snapTo_, kSnapCount}}) {   // left to right
+        const int w = std::min(tools->idealWidth() - squeeze * count, std::max(0, toolsRow.getWidth()));
         placeIn(*tools, toolsRow.removeFromLeft(w).withSizeKeepingCentre(w, kChipHeight + 2));
         toolsRow.removeFromLeft(std::min(kBarGap, toolsRow.getWidth()));
     }

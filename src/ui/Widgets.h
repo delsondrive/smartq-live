@@ -40,16 +40,21 @@ private:
 
 // The mockup's .chip: "128 BPM" with the value bright and semibold and the label in mid, on a field with a hairline
 // border. The value comes first unless labelFirst ("Key E", "Count-in 1 bar"); an empty label shows the value alone ("4/4").
+// Compact, it is the Song editor bar's .ebar .chip: 12 px words, 8 px either side (else 13 px and 10 px).
 class Chip : public juce::Component {
 public:
     Chip();
     void setText(const juce::String& label, const juce::String& value, bool labelFirst = false);
+    void setCompact(bool);
     int idealWidth() const;
     void paint(juce::Graphics&) override;
 
 private:
+    float fontSize() const { return compact_ ? theme::sizeSmall : theme::sizeBody; }
+    float padding() const { return compact_ ? 8.0f : 10.0f; }
+
     juce::String label_, value_;
-    bool labelFirst_ = false;
+    bool labelFirst_ = false, compact_ = false;
 };
 
 // The mockup's .st: a 12 px pill in mint (Ok), caution (Warning) or danger (Bad), its tint behind the words.

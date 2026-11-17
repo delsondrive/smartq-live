@@ -1,5 +1,6 @@
 #include "ui/Screens.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -250,6 +251,19 @@ std::pair<juce::String, juce::String> addMockupSections(app::Session& session, c
     return made.ok ? std::pair{made.value.toString(), ids[4]} : std::pair<juce::String, juce::String>{};
 }
 
+// As the mockup's screen 9 has them: "Watch me" said in the Bridge, between the automatic cues, and the second part faded
+// in over the first Chorus (the mockup's Gtr FX lane).
+void addMockupCuesAndAutomation(app::Session& session, const juce::String& songId) {
+    session.commands().run("cue.add", model::jsonObject({{"songId", songId}, {"bar", 11}, {"beat", 2.0},
+                                                         {"clip", "cues/built-in/Watch me.wav"}, {"text", "Watch me"}}));
+    const auto* song = session.model().song(songId);
+    if (song == nullptr || song->parts.size() < 2) return;
+    const auto chorus = std::find_if(song->sections.begin(), song->sections.end(), [](const auto& s) { return s.startBar == 5; });
+    if (chorus == song->sections.end()) return;
+    session.commands().run("automation.fadeIn",
+                           model::jsonObject({{"songId", songId}, {"target", song->parts[1].id}, {"sectionId", chorus->id}}));
+}
+
 juce::Image render(const juce::String& name, int width, int height) {
     Scene scene(name == "interrupted" || name == "new-computer" || name == "routing");
     if (!scene.ok()) return {};
@@ -297,6 +311,7 @@ juce::Image render(const juce::String& name, int width, int height) {
             setlists->onNewSong(stemsFor(scene));
     } else if (name == "song-editor") {
         const auto [arrangementId, chorusId] = addMockupSections(session, scene.songIdAt(0));
+        addMockupCuesAndAutomation(session, scene.songIdAt(0));
         if (auto* setlists = scene.page<SetlistsPage>(Page::Setlists); setlists != nullptr && setlists->onOpenSong)
             setlists->onOpenSong(scene.songIdAt(0));              // as a double-click does: the editor, and the Mixer's song
         if (auto* editor = scene.page<SongEditorPage>(Page::SongEditor)) {

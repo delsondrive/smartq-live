@@ -8,6 +8,7 @@
 
 #include "app/Session.h"
 #include "ui/MarkerInspector.h"
+#include "ui/QuickActions.h"
 #include "ui/SectionInspector.h"
 #include "ui/TempoLane.h"
 #include "ui/Timeline.h"
@@ -25,8 +26,9 @@ struct SongCardValues {
 
 // The Song editor's right-hand column (the mockup's .insp, 290 px), its cards stacked from the top with 10 px between them:
 // the MarkerInspector while a change is selected (scrolling when it is taller than the room it has); else TEMPO while a
-// tempo point is selected or SECTION while a section is, then SONG ("Bar 1 starts at", "Set to the cursor") and CLICK (On,
-// Sound, Subdivision, Accent the first beat); and under either, WHEN A SECTION IS CHOSEN LIVE. The cards that edit a
+// tempo point is selected, SECTION while a section is or CUE while a cue is, then SONG ("Bar 1 starts at", "Set to the
+// cursor") and CLICK (On, Sound, Subdivision, Accent the first beat). QUICK ACTIONS comes straight under the change's or
+// the section's card, when it has something to offer; WHEN A SECTION IS CHOSEN LIVE is always last. The cards that edit a
 // selection run their own commands; SONG and CLICK report through the callbacks, and the page runs them.
 class EditorInspector : public juce::Component {
 public:
@@ -48,6 +50,8 @@ public:
 
     const SectionCard& sectionCard() const { return sectionCard_; }   // for tests
     SectionCard& sectionCard() { return sectionCard_; }
+    CueCard& cueCard() { return cueCard_; }
+    QuickActions& quickActions() { return quickActions_; }
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -62,6 +66,8 @@ private:
     MarkerInspector markerInspector_;
     juce::Viewport markerView_;                                   // the change inspector, scrolling when it is taller than its room
     SectionCard sectionCard_;
+    CueCard cueCard_;
+    QuickActions quickActions_;
     JumpTimingCard jumpCard_;
     CapsLabel songLabel_{"SONG"}, clickLabel_{"CLICK"};
     juce::TextEditor barOneEditor_;

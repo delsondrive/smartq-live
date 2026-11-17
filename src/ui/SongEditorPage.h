@@ -51,16 +51,17 @@ std::set<juce::String> missingParts(const app::Session&, const juce::String& son
 SongEditorState makeSongEditorState(const app::Session&, const juce::String& songId, double cursorSeconds,
                                     const std::set<juce::String>* missing = nullptr);
 
-// The mockup's screen 9, as far as sections and arrangements go: no cue lanes or automation yet. Left (200 px):
+// The mockup's screen 9. Left (200 px):
 // every song by title, the open one outlined in mint, and "+ New song". Under the top bar: the title (a click: Rename…,
 // Import a MIDI file…), the chips edited in place (BPM typed or tapped, the time signature, the key and the count-in from
-// menus), the tools "Select · Draw" and the snap "Bar · Beat · 1/8", and "▶ Play" / "■ Stop" (a right-click: "▶ Play
-// from the cursor", "▶ Play as arranged") (the tools go to a second row when the window is too narrow for one). Under that,
-// the ArrangementRow. The Timeline: the Tempo lane, the SectionsLane, a MidiLane per device (midiLaneDevices: the
-// band's, then any the song still has changes for), one PartLane per part (a click on its name: Rename, Role, Remove) and
-// the ClickLane, under the BARS ruler, with the white cursor line (moved by a click or drag on the ruler or a lane's empty
-// space, snapped as the snap says; Alt for no snap), which follows the playhead while the song plays. Right (290 px): the
-// EditorInspector (the change inspector, or TEMPO or SECTION, SONG and CLICK; and WHEN A SECTION IS CHOSEN LIVE).
+// menus), the tools "Select · Draw · Automation" and the snap "Bar · Beat · 1/8", and "▶ Play" / "■ Stop" (a right-click:
+// "▶ Play from the cursor", "▶ Play as arranged") (the tools go to a second row when the window is too narrow for one).
+// Under that, the ArrangementRow. The Timeline: the Tempo lane, the SectionsLane, the CuesLane, a MidiLane per device
+// (midiLaneDevices: the band's, then any the song still has changes for), one PartLane per part (a click on its name:
+// Rename, Role, Remove) and the ClickLane, the parts and the click each with its AutomationOverlay, under the BARS ruler,
+// with the white cursor line (moved by a click or drag on the ruler or a lane's empty space, snapped as the snap says; Alt
+// for no snap), which follows the playhead while the song plays. Right (290 px): the EditorInspector (the change
+// inspector, or TEMPO, SECTION or CUE, then SONG and CLICK; QUICK ACTIONS; and WHEN A SECTION IS CHOSEN LIVE).
 // Footer: where the cursor is, the key hints and how the save went. With no song open: "Choose a song on the left, or add
 // one." and "+ New song".
 //
@@ -153,6 +154,7 @@ private:
     EditorInspector inspector_;                                   // the right-hand column
     ArrangementRow arrangementRow_;
     std::vector<model::SectionTypeDoc> typesShown_;               // the band's section types, as last shown
+    model::CueLead cueLeadShown_ = model::CueLead::OneBar;        // and how early its cues come
     std::vector<model::MidiDeviceDoc> devicesShown_;              // the band's devices, and their ports' states, as last shown
     std::vector<int> portsShown_;
     std::unique_ptr<TitleLabel> title_;
