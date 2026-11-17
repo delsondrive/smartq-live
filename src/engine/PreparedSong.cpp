@@ -42,6 +42,8 @@ SamplePos countOffFloor(const TempoMap& tempo, double sampleRate, SamplePos star
     return std::min(start, tempo.sampleAt({0, 1.0}, sampleRate));
 }
 
+std::int64_t jumpFadeLength(double sampleRate) noexcept { return std::llround(240.0 * sampleRate / 48000.0); }
+
 PreparedSong prepareSong(std::string id, TempoMap tempo, int countInBars, SamplePos audioStartOffset,
                          std::vector<PreparedPart> parts, ClickSetup click, double sampleRate, SamplePos explicitEnd) {
     PreparedSong s;

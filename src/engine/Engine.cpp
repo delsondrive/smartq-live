@@ -13,7 +13,6 @@ constexpr std::size_t kCommandCapacity = 1024;
 constexpr std::size_t kGarbageCapacity = 1024;
 constexpr std::size_t kEventCapacity = 256;
 constexpr double kStopFadeSeconds = 0.050;
-constexpr double kJumpFadeAt48k = 240.0;   // samples at 48 kHz, scaled to the engine's rate
 
 } // namespace
 
@@ -30,7 +29,7 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     cue_buffer_.assign(static_cast<std::size_t>(max_block_), 0.0f);
     cue_player_.prepare(sampleRate, max_block_);   // what it was saying stops; with process not running it is freed here
     fade_length_ = std::llround(kStopFadeSeconds * sampleRate);
-    jump_fade_ = std::llround(kJumpFadeAt48k * sampleRate / 48000.0);
+    jump_fade_ = jumpFadeLength(sampleRate);
 
     // Song times made at another rate mean nothing now, so whatever played stops. The audio thread isn't running, so it
     // is freed here. The mix is kept: a start snaps it into the renderer again. So is the cue, unless it was made for

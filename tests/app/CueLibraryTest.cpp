@@ -70,7 +70,9 @@ TEST_CASE("the cue library stops at once when closed, even while loading", "[cue
     {
         auto lib = std::make_unique<app::CueLibrary>(d.session->folder(), 48000.0);
         lib->clip("cues/Long.wav");
-        juce::Thread::sleep(50);                                   // let the loader begin
+        // No waiting for a result: the point is to close while the load is still going. The pause only lets the loader
+        // start reading; closing is prompt either way, and a load that had already finished would only make this easier.
+        juce::Thread::sleep(50);
         closing = juce::Time::getMillisecondCounterHiRes();
         lib.reset();
         closing = juce::Time::getMillisecondCounterHiRes() - closing;
@@ -88,6 +90,18 @@ TEST_CASE("the voice maker passes the words in a file, never in the command", "[
     CHECK_FALSE(ran[0].arguments.joinIntoString(" ").contains("Verse"));                 // the words are never in the command
     CHECK_FALSE(ran[0].wavFile.isAChildOf(d.session->folder().root()));                  // made elsewhere, moved in once whole
     CHECK_FALSE(target.exists());
+#if JUCE_WINDOWS
+    // The script PowerShell runs (base64 of UTF-16LE) names the app-made files and holds none of the words.
+    const auto encoded = ran[0].arguments.indexOf("-EncodedCommand");
+    REQUIRE(encoded >= 0);
+    juce::MemoryOutputStream bytes;
+    REQUIRE(juce::Base64::convertFromBase64(bytes, ran[0].arguments[encoded + 1]));
+    bytes.writeShort(0);                                           // a UTF-16 terminator
+    const auto script = juce::String(juce::CharPointer_UTF16(static_cast<const juce::CharPointer_UTF16::CharType*>(bytes.getData())));
+    CHECK(script.contains("System.Speech"));
+    CHECK(script.contains(ran[0].textFile.getFullPathName()));  CHECK(script.contains(ran[0].wavFile.getFullPathName()));
+    CHECK_FALSE(script.contains("Verse"));
+#endif
     CHECK(maker.make("Don't; rm -rf \"$HOME\" `x`", target).failed());
     CHECK(words[1] == "Don't rm -rf HOME x");                      // only letters, digits, spaces and , . ' - are kept
     app::VoiceMaker writes([](const app::VoiceCommand& c) { return c.wavFile.replaceWithText("not really a wav"); });
@@ -95,13 +109,18 @@ TEST_CASE("the voice maker passes the words in a file, never in the command", "[
     CHECK(app::VoiceMaker::extraPhrases().size() == 4);  CHECK(app::VoiceMaker::spokenAs("1-2-3-4") == "One, two, three, four");
 }
 TEST_CASE("the voice maker cleans up after itself and refuses empty words", "[cuelib]") {
-    DemoSession d; std::vector<app::VoiceCommand> ran;
-    app::VoiceMaker maker([&](const app::VoiceCommand& c) { ran.push_back(c); return c.wavFile.replaceWithText("not really a wav"); });
+    DemoSession d; std::vector<app::VoiceCommand> ran; juce::StringArray words;
+    app::VoiceMaker maker([&](const app::VoiceCommand& c) {
+        ran.push_back(c);
+        words.add(c.textFile.loadFileAsString());
+        return c.wavFile.replaceWithText("not really a wav");
+    });
     auto target = d.session->folder().root().getChildFile("cues/built-in/Verse.wav");
     CHECK(maker.make("$;`\"", target).failed());                   // nothing left to say
     CHECK(ran.empty());
     REQUIRE(maker.make(juce::String::repeatedString("a", 200), target).wasOk());
     REQUIRE(ran.size() == 1);
+    CHECK(words[0] == juce::String::repeatedString("a", 80));     // the voice is given 80 characters at most
     CHECK(target.loadFileAsString() == "not really a wav");
     CHECK_FALSE(ran[0].textFile.exists());                         // the temporary folder is gone
     CHECK_FALSE(ran[0].wavFile.getParentDirectory().exists());

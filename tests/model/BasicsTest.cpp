@@ -49,6 +49,18 @@ TEST_CASE("an atomic write replaces the file whole and leaves nothing behind", "
     auto failed = writeFileAtomically(folder, "x");
     CHECK(failed.failed());  CHECK(failed.getErrorMessage().isNotEmpty());  CHECK(folder.isDirectory());
 }
+TEST_CASE("an atomic write takes bytes too", "[basics]") {
+    sqlive::test::TempDir t;
+    auto file = t.dir().getChildFile("cues/voice.wav");
+    const unsigned char raw[] = {'R', 'I', 'F', 'F', 0, 1, 2, 255};
+    REQUIRE(writeFileAtomically(file, juce::MemoryBlock(raw, sizeof(raw))).wasOk());
+    juce::MemoryBlock back;
+    REQUIRE(file.loadFileAsData(back));
+    CHECK(back == juce::MemoryBlock(raw, sizeof(raw)));            // every byte, a zero and 255 among them
+    CHECK(file.getParentDirectory().getNumberOfChildFiles(juce::File::findFiles) == 1);
+    REQUIRE(writeFileAtomically(file, juce::MemoryBlock()).wasOk());   // nothing at all: an empty file
+    CHECK(file.getSize() == 0);
+}
 
 TEST_CASE("a reserved name stays within 60 characters", "[basics]") {
     auto name = safeFileName("CON." + juce::String::repeatedString("a", 80));

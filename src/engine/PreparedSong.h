@@ -60,6 +60,10 @@ struct ClickSetup {
 
 struct Section { SamplePos start = 0, end = 0; };                 // song time; end is one past the last sample
 
+// How long a jump's crossfade between sections lasts, and the fade after a last step: 240 samples at 48 kHz, scaled to the
+// rate. The one length the engine plays and buildPreparedSong folds a too-short last section by.
+std::int64_t jumpFadeLength(double sampleRate) noexcept;
+
 struct CueEvent { SamplePos at = 0; std::shared_ptr<const PartAudio> clip; };   // a manual cue, spoken at `at`
 
 // When a chosen step (or a loop turned on) takes effect: at the end of the playing section, or at the next bar line.

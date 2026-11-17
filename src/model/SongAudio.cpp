@@ -33,9 +33,6 @@ int clickSoundNamed(const juce::String& name) {
 
 bool isClipSound(const juce::String& name) { return name != "wood" && name != "beep" && name != "rim"; }
 
-// A jump's crossfade as the engine makes it (Engine.cpp's kJumpFadeAt48k): 240 samples at 48 kHz, scaled to the rate.
-std::int64_t jumpFadeLength(double sampleRate) { return std::llround(240.0 * sampleRate / 48000.0); }
-
 std::shared_ptr<const engine::PartAudio> clipAt(const PrepareOptions& options, const juce::String& path) {
     if (path.isEmpty() || !options.clips) return nullptr;
     return options.clips(path);
@@ -67,14 +64,17 @@ void prepareSections(engine::PreparedSong& prepared, const SongDoc& song, const 
     last.endBar = last.startBar + 1;
     while (bar(last.endBar) < prepared.end) ++last.endBar;
     auto steps = resolveArrangement(song, options.arrangementId, tiled);
-    // A last section shorter than a jump's crossfade would be cut short by a hand-over still fading into it: it joins the
-    // section before it, and the steps that named it play that one.
+    // A last section shorter than a jump's crossfade would be cut short by a hand-over still fading into it: its few
+    // samples end the section before it instead. The steps that named it are dropped, so the sections in order still play
+    // once each; only an arrangement that named nothing else plays the section before in their place (no step at all
+    // would mean the sections in order).
     const int lastIndex = (int) tiled.size() - 1;
-    if (lastIndex > 0 && prepared.end - bar(tiled.back().startBar) < jumpFadeLength(rate)) {
+    if (lastIndex > 0 && prepared.end - bar(tiled.back().startBar) < engine::jumpFadeLength(rate)) {
         tiled[(std::size_t) lastIndex - 1].endBar = tiled.back().endBar;
         tiled.pop_back();
-        for (auto& step : steps)
-            if (step == lastIndex) step = lastIndex - 1;
+        const bool onlyThat = std::all_of(steps.begin(), steps.end(), [&](int step) { return step == lastIndex; });
+        if (onlyThat) std::replace(steps.begin(), steps.end(), lastIndex, lastIndex - 1);
+        else std::erase(steps, lastIndex);
     }
 
     prepared.sections.clear();

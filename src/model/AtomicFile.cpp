@@ -3,6 +3,10 @@
 namespace sqlive::model {
 
 juce::Result writeFileAtomically(const juce::File& target, const juce::String& text) {
+    return writeFileAtomically(target, juce::MemoryBlock(text.toRawUTF8(), text.getNumBytesAsUTF8()));
+}
+
+juce::Result writeFileAtomically(const juce::File& target, const juce::MemoryBlock& bytes) {
     const auto name = target.getFileName();
     auto fail = [&](const juce::String& why) { return juce::Result::fail("Couldn't save " + name + ": " + why); };
 
@@ -23,7 +27,9 @@ juce::Result writeFileAtomically(const juce::File& target, const juce::String& t
     {
         juce::FileOutputStream out(tmp);
         if (out.failedToOpen()) return fail("the temporary file couldn't be created (" + out.getStatus().getErrorMessage() + ").");
-        if (!out.write(text.toRawUTF8(), text.getNumBytesAsUTF8()) || (out.flush(), out.getStatus().failed())) {
+        // Nothing to write is still a write: an empty file (and the stream won't take a null pointer).
+        const bool written = bytes.getSize() == 0 || out.write(bytes.getData(), bytes.getSize());
+        if (!written || (out.flush(), out.getStatus().failed())) {
             auto why = out.getStatus().getErrorMessage();
             writeProblem = "it couldn't be written (" + (why.isEmpty() ? juce::String("the disk may be full") : why) + ").";
         }

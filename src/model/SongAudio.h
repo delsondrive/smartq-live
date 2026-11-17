@@ -36,8 +36,9 @@ struct PrepareOptions {
 //
 // Sections: a song with none plays as one section, [0, end). Otherwise tileSections over barsInSong, in samples; those
 // starting at or after `end` are dropped and the last one left ends at `end`; a last section then shorter than a jump's
-// crossfade joins the one before it (steps that named it play that one). The arrangement is resolveArrangement's for
-// options.arrangementId over what is left. Each section's cue is its type's cueClip through options.clips, spoken at
+// crossfade (engine::jumpFadeLength) joins the one before it. The arrangement is resolveArrangement's for
+// options.arrangementId over what is left, less the steps that named a joined section (they play the one before only when
+// the arrangement named nothing else). Each section's cue is its type's cueClip through options.clips, spoken at
 // announcePlace for the band's cue lead; manual cues are placed at their bar and beat, those whose clip isn't loaded left
 // out. Automation (each part's, "click" and "cues") is in samples, sorted by time, ties in written order. A click sound
 // that isn't wood, beep or rim is a clip in the band folder, made into a click with clickSoundFromClip; while it isn't

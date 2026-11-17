@@ -75,8 +75,14 @@ TEST_CASE("a last section shorter than a jump's crossfade joins the one before i
     auto folded = buildPreparedSong(song, band, RigDoc{}, justOver, 48000.0, options);
     REQUIRE(folded.sections.size() == 2);
     CHECK(folded.sections[1].start == 4 * 96000);  CHECK(folded.sections[1].end == folded.end);  CHECK(folded.end == 8 * 96000 + 239);
-    CHECK(folded.arrangement == std::vector<std::uint16_t>{0, 1, 1, 1});          // the steps that named the Outro play the Chorus
+    CHECK(folded.arrangement == std::vector<std::uint16_t>{0, 1});                // the steps that named the Outro are dropped
     CHECK(folded.announceAt.size() == 2);  CHECK(folded.sectionCue.size() == 2);
+    // In order, each section still plays once: the Outro's few samples end the Chorus.
+    CHECK(buildPreparedSong(song, band, RigDoc{}, justOver, 48000.0, {}).arrangement == std::vector<std::uint16_t>{0, 1});
+    // An arrangement of the Outro alone plays the section before it, rather than becoming empty (the sections in order).
+    song.arrangements.push_back({"outro", "Outro only", {"c"}});
+    PrepareOptions outroOnly; outroOnly.arrangementId = "outro";
+    CHECK(buildPreparedSong(song, band, RigDoc{}, justOver, 48000.0, outroOnly).arrangement == std::vector<std::uint16_t>{1});
     // At exactly the crossfade's length it stays.
     const auto enough = keysOf(8 * 96000 + 240);
     auto kept = buildPreparedSong(song, band, RigDoc{}, enough, 48000.0, options);

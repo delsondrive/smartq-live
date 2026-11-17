@@ -128,8 +128,8 @@ TEST_CASE("songs and parts", "[core]") {
           == "A click sound is wood, beep, rim or a file in clicks/.");
     CHECK(f.run("song.setClick", params({{"songId", id}, {"subdivision", "fifths"}})).ok == false);
     CHECK(f.model.song(id)->click.sound == "rim");
-    for (const char* refused : {"clicks/../band.json", "clicks/..wav", "clicks/.wav", "clicks/a/b.wav", "clicks/C:x.wav", "cues/Cowbell.wav",
-                                "clicks/Cowbell.mp3"})
+    for (const char* refused : {"clicks/../band.json", "clicks/../../x.wav", "clicks/CON.wav", "clicks/nul.wav", "clicks/.wav",
+                                "clicks/a/b.wav", "clicks/C:x.wav", "cues/Cowbell.wav", "clicks/Cowbell.mp3", "/clicks/x.wav"})
         CHECK_FALSE(f.run("song.setClick", params({{"songId", id}, {"sound", refused}})).ok);
     CHECK(f.run("song.setClick", params({{"songId", id}, {"sound", "clicks/Cowbell.wav"}})).ok);   // the file may come later
     CHECK(f.model.song(id)->click.sound == "clicks/Cowbell.wav");

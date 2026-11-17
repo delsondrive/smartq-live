@@ -8,4 +8,7 @@ namespace sqlive::model {
 // Makes the parent folders. Fails with a plain sentence, leaving the target as it was.
 juce::Result writeFileAtomically(const juce::File& target, const juce::String& text);
 
+// The same for any bytes (a WAV made elsewhere, say): every write into the band folder goes through one of these two.
+juce::Result writeFileAtomically(const juce::File& target, const juce::MemoryBlock& bytes);
+
 }  // namespace sqlive::model

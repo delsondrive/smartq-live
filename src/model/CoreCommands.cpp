@@ -9,6 +9,7 @@
 #include "model/CommandParams.h"
 #include "model/Defaults.h"
 #include "model/DocumentsJson.h"
+#include "model/FileNames.h"
 #include "model/Routing.h"
 #include "model/Units.h"
 
@@ -54,9 +55,10 @@ String pickText(const Params& p, const char* key, std::initializer_list<const ch
 String clickSound(const Params& p) {
     const auto sound = p.text("sound");
     if (sound == "wood" || sound == "beep" || sound == "rim") return sound;
+    // isPathInsideFolder refuses a ".." step, a drive or stream colon, and a Windows device name such as clicks/CON.wav.
     const auto name = sound.fromFirstOccurrenceOf("clicks/", false, false).dropLastCharacters(4);
-    if (sound.startsWith("clicks/") && sound.endsWithIgnoreCase(".wav") && name.trim().isNotEmpty() && !sound.contains("..")
-        && !name.containsAnyOf("/\\:"))
+    if (sound.startsWith("clicks/") && sound.endsWithIgnoreCase(".wav") && isPathInsideFolder(sound) && name.trim().isNotEmpty()
+        && !name.containsAnyOf("/\\"))
         return sound;
     refuse("A click sound is wood, beep, rim or a file in clicks/.");
 }

@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include "model/AtomicFile.h"
+
 namespace sqlive::app {
 
 namespace {
@@ -33,24 +35,13 @@ bool runAndWait(const VoiceCommand& command) {
     return process.getExitCode() == 0;
 }
 
-// Puts the finished voice in place: copied next to the target first, then swapped in, so the target is the old clip or
-// the new one, never part of it.
+// Puts the finished voice in place through writeFileAtomically, as every write into the band folder goes: the target is
+// the old clip or the new one, never part of it.
 juce::Result placeVoice(const juce::File& voice, const juce::File& target) {
-    const auto name = target.getFileName();
-    auto fail = [&](const juce::String& why) { return juce::Result::fail("Couldn't save " + name + ": " + why); };
-    if (target.isDirectory()) return fail("there is a folder with that name.");
-    if (target.getParentDirectory().createDirectory().failed()) return fail("its folder couldn't be created.");
-    const juce::File part(target.getFullPathName() + ".tmp");
-    if (part.exists() && !part.deleteFile()) return fail("an old temporary file (" + part.getFileName() + ") is in the way.");
-    if (!voice.copyFileTo(part)) {
-        part.deleteFile();
-        return fail("it couldn't be written. The disk may be full.");
-    }
-    if (!(target.exists() ? part.replaceFileIn(target) : part.moveFileTo(target))) {
-        part.deleteFile();
-        return fail("the new clip couldn't replace the old one. Is it open in another program?");
-    }
-    return juce::Result::ok();
+    juce::MemoryBlock bytes;
+    if (!voice.loadFileAsData(bytes) || bytes.getSize() == 0)
+        return juce::Result::fail("Couldn't save " + target.getFileName() + ": the voice that was made couldn't be read.");
+    return model::writeFileAtomically(target, bytes);
 }
 
 }  // namespace
