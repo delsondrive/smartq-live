@@ -34,6 +34,7 @@ struct RemoteServerLimits {
                                       // given up on within bodyMs + ioTimeoutMs)
     int actionWaitMs = 2000;          // an action's wait for the message thread before 503
     int stateEveryMs = 100;           // the state goes to a phone at most this often; the latest wins, nothing queues
+    int queuedConnections = 64;       // connections waiting for a web thread; one more is closed at once, unanswered
 };
 
 // The phone remote's web server, on the local network only. Off until start(); it listens only while it runs.
@@ -43,20 +44,25 @@ struct RemoteServerLimits {
 //   GET  /api/access?token=   200 {"access": "waiting" | "view" | "full"}, or 403 for a token that isn't known
 //   GET  /api/events?token=   403 for a token that isn't known; else a text/event-stream that starts with "retry: 2000",
 //                             sends "access" at once and whenever it changes, and, once the phone is let in, "state" (the
-//                             injected JSON) at once and whenever it changes, at most 10 times a second (the latest one
-//                             each time, so the last always arrives); a comment line after 10 s of nothing. It ends
-//                             when the phone is forgotten, when the same phone opens another, or when the server stops. One
-//                             stream per phone, at most 16 (503 beyond); while one is open the phone is marked connected.
+//                             injected JSON) within a tick of the timer (the state is built only while a stream is open)
+//                             and whenever it changes, at most 10 times a second (the latest one each time, so the last
+//                             always arrives); a comment line after 10 s of nothing. It ends when the phone is forgotten,
+//                             when the same phone opens another, or when the server stops. One stream per phone, at most
+//                             16 (503 beyond); while one is open the phone is marked connected.
 //   POST /api/action          {"token", "action"} → performRemoteAction's status and {"message"}, performed on the message
-//                             thread; 503 "The laptop is busy." when that takes over 2 s
+//                             thread; 503 "The laptop is busy." when that takes over 2 s. A phone without full control is
+//                             refused (403) here on the web thread, and nothing is posted; a phone's second action while
+//                             its first still waits for the message thread gets 429
 //   anything else             404
 //
-// Nothing a phone sends is trusted. A request from outside the local network gets 403. A body sent in chunks, or a POST
+// Nothing a phone sends is trusted. A request from outside the local network gets 403, and so does a POST whose Origin is
+// there and isn't the server's own (http:// and the Host it was asked as). A body sent in chunks, or a POST
 // without a Content-Length, gets 411, whatever the method; a body over 4 KB, 413; a body on anything but a POST, 400; a
 // POST to a path that takes none, 404; a body still arriving 2 s after its headers, 408, within bodyMs + ioTimeoutMs
 // (3 s) at worst (all of these close the connection). A
 // body that isn't UTF-8, nests deeper than 4, uses single-quoted strings, or isn't a JSON object of strings where strings
-// are expected gets 400. Every answer carries X-Content-Type-Options: nosniff.
+// are expected gets 400. Every answer carries X-Content-Type-Options: nosniff. A connection that finds all 40 web threads
+// busy waits in a queue of RemoteServerLimits::queuedConnections; one more is closed unanswered.
 //
 // The web threads never touch the session: they read the state the message thread published and RemoteAccess (which is
 // thread-safe), and post actions to the message thread. Build, start, stop and destroy it on the message thread, before the

@@ -164,8 +164,16 @@ RemoteAccess::JoinResult RemoteAccess::join(const juce::String& name, const juce
 
         const auto phoneName = saneName(name);
         if (phoneName.isEmpty()) return {400, {}, "Give this phone a name."};
-        if (static_cast<int>(memory_.phones.size()) >= maxPhones)
-            return {429, {}, "Too many phones are waiting. Ask at the laptop."};
+        if (static_cast<int>(memory_.phones.size()) >= maxPhones) {
+            // Room is made by forgetting the oldest phone neither let in nor connected (one that lost its token, most
+            // likely); a phone let in is never forgotten here.
+            const auto stale = std::find_if(memory_.phones.begin(), memory_.phones.end(), [](const Phone& p) {
+                return p.access == PhoneAccess::Waiting && !p.connected;
+            });
+            if (stale == memory_.phones.end())
+                return {429, {}, "This laptop already knows " + juce::String(maxPhones) + " phones. Forget one in Setup."};
+            eraseLocked(static_cast<int>(stale - memory_.phones.begin()));
+        }
 
         Phone phone;
         phone.name = phoneName;
@@ -260,7 +268,15 @@ std::uint64_t RemoteAccess::version() const { return version_.load(); }
 void RemoteAccess::changed(bool keepIt) {
     ++version_;
     if (keepIt) keep();
-    sendChangeMessage();
+    // The listener list is the message thread's: a change made on a web thread is announced from there.
+    if (juce::MessageManager::existsAndIsCurrentThread()) {
+        sendChangeMessage();
+        return;
+    }
+    std::weak_ptr<int> alive = alive_;
+    juce::MessageManager::callAsync([this, alive] {
+        if (alive.lock() != nullptr) sendChangeMessage();
+    });
 }
 
 void RemoteAccess::keep() {

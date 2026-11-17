@@ -512,14 +512,16 @@ TEST_CASE("the stream limits: at most so many streams, and a comment line when t
     CHECK(msNow() - quietSince < 1000);
 }
 
-TEST_CASE("a phone gets the state at most 10 times a second, and always the last one", "[remoteserver]") {
+TEST_CASE("a phone gets the state at most once every stateEveryMs, and always the last one", "[remoteserver]") {
     DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
     int counter = 0;
     bool changing = true;
+    app::RemoteServerLimits limits;
+    limits.stateEveryMs = 250;                                                       // well apart from the 33 ms of a tick
     app::RemoteServer server(s, access, [&] {                                        // a new state every time it is asked
         if (changing) ++counter;
         return "{\"n\":" + juce::String(counter) + "}";
-    });
+    }, limits);
     s.enterShow();
     s.perform(app::Action::Start);  s.advanceWithoutDevice(4800);
     REQUIRE(s.now().playing);                                                        // so the state is built 30 times a second
@@ -528,23 +530,151 @@ TEST_CASE("a phone gets the state at most 10 times a second, and always the last
     const auto token = joinedToken(port, access, "Phone");
     access.decide(access.phones()[0].id, PhoneAccess::FullControl, true);
 
+    // Every state this stream gets is sent after it opens and at least 250 ms after the one before, so over any stretch
+    // there are at most (its length / 250 ms) + 1: a bound that holds however slow the machine is. (A count over a fixed
+    // window from below would not.)
+    const auto opened = msNow();
     Events stream(port, token);
-    REQUIRE(stream.read(2).size() == 2);
-    const auto countStates = [](const std::vector<Event>& events) {
-        return std::count_if(events.begin(), events.end(), [](const Event& e) { return e.first == "state"; });
-    };
-    const auto before = countStates(stream.read(2));
-    const int builtBefore = counter;
-    stream.readUntil([](const std::vector<Event>&) { return false; }, 2000);         // two seconds of a song playing
-    const auto sent = countStates(stream.read(2)) - before;
-    const int built = counter - builtBefore;
-    CHECK(built >= 40);                                                              // about 60 states were built…
-    CHECK(sent >= 12);                                                               // …and about 20 sent: never more than
-    CHECK(sent <= 23);                                                               // 10 a second, with a little slack
+    stream.readUntil([](const std::vector<Event>&) { return false; }, 1500);         // a song playing, states changing
+    const auto events = stream.read(2);
+    const auto elapsed = static_cast<long long>(msNow() - opened);
+    const auto states = std::count_if(events.begin(), events.end(), [](const Event& e) { return e.first == "state"; });
+    CHECK(states >= 1);
+    CHECK(states <= elapsed / limits.stateEveryMs + 1);
 
     changing = false;                                                                // it settles: the last state arrives
     const auto last = counter;
-    const auto events = stream.readUntil(lastStateIs([last](const juce::var& state) { return int(state["n"]) == last; }), 1000);
-    REQUIRE_FALSE(events.empty());
-    CHECK(int(juce::JSON::parse(events.back().second)["n"]) == last);
+    const auto settled = stream.readUntil(lastStateIs([last](const juce::var& state) { return int(state["n"]) == last; }), 5000);
+    REQUIRE_FALSE(settled.empty());
+    CHECK(int(juce::JSON::parse(settled.back().second)["n"]) == last);
+}
+
+TEST_CASE("a phone without full control is refused on the web thread, before anything reaches the laptop", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServer server(s, access, stateOf(s));
+    REQUIRE(server.start(18170, "127.0.0.1").wasOk());
+    const int port = server.port();
+    const auto waiting = joinedToken(port, access, "Waiting"), watching = joinedToken(port, access, "Watching");
+    REQUIRE(access.decide(access.phones()[1].id, PhoneAccess::ViewOnly, true));
+    s.enterShow();
+    // The message loop isn't pumped: a request posted to it would wait 2 s and be answered 503.
+    for (const auto& [token, why] : {std::pair{waiting, "This phone is waiting to be let in on the laptop."},
+                                     std::pair{watching, "This phone can only watch."}}) {
+        const auto body = actionBody(token, "nextSongLater").toStdString();
+        Connection c(port);
+        c.send("POST /api/action HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: "
+               + std::to_string(body.size()) + "\r\n\r\n" + body);
+        const auto asked = msNow();
+        c.readFor(5000, [] { return false; }, false);
+        CHECK(parse(c).status == 403);
+        CHECK(parse(c).body.contains(why));
+        CHECK(msNow() - asked < 1000);
+    }
+    for (int i = 0; i < 20; ++i) pump();
+    CHECK(s.now().nextIndex == 0);
+}
+
+TEST_CASE("a phone has one action in flight at a time", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServer server(s, access, stateOf(s));
+    REQUIRE(server.start(18180, "127.0.0.1").wasOk());
+    const int port = server.port();
+    const auto token = joinedToken(port, access, "Phone"), other = joinedToken(port, access, "Other");
+    for (const auto& phone : access.phones()) REQUIRE(access.decide(phone.id, PhoneAccess::FullControl, true));
+    s.enterShow();
+
+    const auto post = [port](Connection& c, const juce::String& t) {
+        const auto body = actionBody(t, "nextSongLater").toStdString();
+        c.send("POST /api/action HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: "
+               + std::to_string(body.size()) + "\r\n\r\n" + body);
+    };
+    Connection first(port), second(port), another(port);
+    post(first, token);
+    first.readFor(300, [] { return false; }, false);                               // in flight: the laptop isn't pumped
+    REQUIRE(first.status() == 0);
+    post(second, token);
+    second.readFor(3000, [&] { return second.status() != 0; }, false);
+    CHECK(second.status() == 429);                                                 // the same phone's second one
+    post(another, other);                                                           // another phone isn't held up by it
+    first.readFor(3000, [&] { return first.status() != 0; });                       // the laptop gets to them
+    another.readFor(3000, [&] { return another.status() != 0; });
+    CHECK(first.status() == 200);
+    CHECK(another.status() == 200);
+    CHECK(s.now().nextIndex == 2);
+    CHECK(request(port, "POST", "/api/action", actionBody(token, "nextSongEarlier")).status == 200);   // done: free again
+}
+
+TEST_CASE("connections waiting for a web thread are bounded: one more is closed at once", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServerLimits limits;
+    limits.queuedConnections = 4;
+    app::RemoteServer server(s, access, stateOf(s), limits);
+    REQUIRE(server.start(18190, "127.0.0.1").wasOk());
+    const int port = server.port();
+    // Idle connections each hold a web thread (for up to 5 s between requests), then wait in the queue.
+    std::vector<std::unique_ptr<Connection>> idle;
+    for (int i = 0; i < app::RemoteServer::webThreads + limits.queuedConnections; ++i) {
+        idle.push_back(std::make_unique<Connection>(port));
+        idle.back()->readFor(5, [] { return false; });
+    }
+    Connection extra(port);
+    extra.send("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    const auto asked = msNow();
+    extra.readFor(3000, [] { return false; });
+    CHECK(extra.closed());
+    CHECK(extra.status() == 0);                                                     // closed unanswered, not left waiting
+    CHECK(msNow() - asked < 1000);
+    idle.clear();
+}
+
+TEST_CASE("a POST from another page's origin is refused", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServer server(s, access, stateOf(s));
+    REQUIRE(server.start(18200, "127.0.0.1").wasOk());
+    const int port = server.port();
+    const auto host = "127.0.0.1:" + std::to_string(port);
+    const auto body = joinBody("Phone", access.pin()).toStdString();
+    const auto join = [&](const std::string& origin) {
+        return rawRequest(port, "POST /api/join HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n" + origin
+                                    + "Content-Type: text/plain\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body);
+    };
+    const auto foreign = join("Origin: http://example.com\r\n");
+    CHECK(foreign.status == 403);
+    CHECK(foreign.body.contains("This remote only takes requests from its own page."));
+    CHECK(join("Origin: null\r\n").status == 403);
+    CHECK(join("Origin: http://127.0.0.1:" + std::to_string(port + 1) + "\r\n").status == 403);
+    CHECK(access.phones().empty());
+    CHECK(join("Origin: http://" + host + "\r\n").status == 200);                    // its own page
+    CHECK(join("").status == 200);                                                   // no Origin: not from a browser's page
+    CHECK(request(port, "GET", "/").status == 200);
+}
+
+TEST_CASE("no state is built while no phone follows the show", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    int built = 0;
+    app::RemoteServer server(s, access, [&] { ++built;  return "{\"n\":" + juce::String(built) + "}"; });
+    REQUIRE(server.start(18210, "127.0.0.1").wasOk());
+    const int port = server.port();
+    const auto token = joinedToken(port, access, "Phone");
+    REQUIRE(access.decide(access.phones()[0].id, PhoneAccess::FullControl, true));
+    for (int i = 0; i < 30; ++i) pump();                                             // 300 ms: three ticks at least
+    CHECK(built == 0);
+    {
+        Events stream(port, token);                                                  // a phone opens its stream: published
+        const auto events = stream.read(2);
+        REQUIRE(events.size() == 2);
+        CHECK(events[1].first == "state");
+        CHECK(built > 0);
+        stream.drop();
+    }
+    for (int i = 0; i < 500 && server.connectedPhones() > 0; ++i) pump();
+    REQUIRE(server.connectedPhones() == 0);
+    for (int i = 0; i < 3; ++i) pump();
+    const int after = built;
+    for (int i = 0; i < 30; ++i) pump();
+    CHECK(built == after);
+    Events back(port, token);                                                        // and the state again when one comes back
+    const auto events = back.read(2);
+    REQUIRE(events.size() == 2);
+    CHECK(events[1].first == "state");
 }

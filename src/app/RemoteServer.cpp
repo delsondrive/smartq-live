@@ -25,6 +25,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -169,6 +170,8 @@ struct Hub {
     bool stopping = false;
     std::map<juce::String, std::uint64_t> streams;                // phone id → its one open stream
     std::uint64_t lastStream = 0;
+    std::set<juce::String> acting;                                // phones with an action waiting for the message thread
+    bool stateReady = false;                                      // state is current: false while no stream is open
 
     void wake() {
         { std::lock_guard lock(mutex);  ++wakes; }
@@ -247,7 +250,7 @@ public:
         bool stateHeld = false;
         if (mayWatch(access_)) {
             std::lock_guard lock(hub_->mutex);
-            if (hub_->stateVersion != 0 && hub_->stateVersion != sentState_) {
+            if (hub_->stateReady && hub_->stateVersion != sentState_) {
                 if (sentState_ == 0 || now - lastState_ >= stateEvery) {
                     out += "event: state\n" + dataLines(hub_->state) + "\n";
                     sentState_ = hub_->stateVersion;
@@ -378,6 +381,16 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
             refuseUnread(res, 404, "There's nothing here.");
             return Answer::Handled;
         }
+        // A browser names the page a POST comes from: one from any page but the remote's own (another site open on a phone
+        // on the same Wi-Fi) is refused. A request without an Origin didn't come from a page's script.
+        if (post && req.has_header("Origin")) {
+            const auto origin = fromStd(req.get_header_value("Origin")).trim().toLowerCase();
+            const auto own = "http://" + fromStd(req.get_header_value("Host")).trim().toLowerCase();
+            if (origin != own) {
+                refuseUnread(res, 403, "This remote only takes requests from its own page.");
+                return Answer::Handled;
+            }
+        }
         return Answer::Unhandled;
     });
 
@@ -437,8 +450,22 @@ void route(httplib::Server& svr, const std::shared_ptr<Hub>& hub, const std::wea
         if (!body) return;
         const auto token = stringField(*body, "token"), action = stringField(*body, "action");
         if (!token || !action) return answerMessage(res, 400, "That isn't what the remote sends.");
-        if (accessWord(hub->access.accessFor(*token)).isEmpty()) return answerMessage(res, 403, "This phone isn't let in.");
+        // Only a phone with full control reaches the message thread (where its access is read again): a waiting phone, or
+        // one that may only watch, can't put work there however fast it asks.
+        if (const auto refusal = remoteRefusal(hub->access.accessFor(*token)))
+            return answerMessage(res, refusal->status, refusal->message);
         const auto phoneId = hub->access.phoneIdFor(*token);
+        // And one action at a time per phone: a second one while the first waits for the laptop is refused.
+        {
+            std::lock_guard lock(hub->mutex);
+            if (!hub->acting.insert(phoneId).second)
+                return answerMessage(res, 429, "The laptop is still on this phone's last tap.");
+        }
+        struct Acting {
+            Hub& hub;
+            const juce::String& phoneId;
+            ~Acting() { std::lock_guard lock(hub.mutex);  hub.acting.erase(phoneId); }
+        } acting{*hub, phoneId};
 
         // Performed on the message thread, with the phone's access read again there; and only while the phone still waits
         // for the answer. Whichever comes first takes the request: the message thread to perform it, or this thread to
@@ -494,8 +521,13 @@ void setUp(httplib::Server& svr, const RemoteServerLimits& limits) {
     svr.set_keep_alive_timeout(keepConnectionSeconds);           // between requests: ends within 10 ms of a stop
     svr.set_tcp_nodelay(true);
     svr.set_default_headers({{"X-Content-Type-Options", "nosniff"}});
-    // Every open stream holds a worker for as long as it is open: room for 16 of them and the requests besides.
-    svr.new_task_queue = [] { return new httplib::ThreadPool(static_cast<size_t>(RemoteServer::webThreads)); };
+    // Every open stream holds a worker for as long as it is open: room for 16 of them and the requests besides. Connections
+    // that find every worker busy wait in a queue of limits.queuedConnections; one more is closed at once, unanswered.
+    const auto queued = static_cast<size_t>(std::max(1, limits.queuedConnections));
+    svr.new_task_queue = [queued] {
+        const auto threads = static_cast<size_t>(RemoteServer::webThreads);
+        return new httplib::ThreadPool(threads, threads, queued);
+    };
     // A port already in use is never shared: on Windows SO_REUSEADDR would let this bind a port another program listens
     // on, so the socket is exclusive there instead, and start() moves on to the next port.
     // A send buffer of 256 KB (accepted sockets inherit it from the listening one): over 10 s of 2 KB states at 10 a second,
@@ -540,7 +572,6 @@ juce::Result RemoteServer::listen(int preferredPort, const juce::String& bindAdd
 
     hub_ = std::make_shared<remote_detail::Hub>(access_, limits_);
     published_ = {};
-    publishState();                                               // a phone's first stream has the state at once
 
     const int last = std::min(preferredPort + portsTried - 1, 65535);
     try {
@@ -612,12 +643,23 @@ int RemoteServer::connectedPhones() const {
 void RemoteServer::publishState() {
     JUCE_ASSERT_MESSAGE_THREAD
     if (hub_ == nullptr) return;
+    {
+        // Nobody follows the show: no state is built. A stream that opens meanwhile gets one at the next tick.
+        std::lock_guard lock(hub_->mutex);
+        if (hub_->streams.empty()) {
+            hub_->stateReady = false;
+            hub_->state.clear();
+            published_.clear();
+            return;
+        }
+    }
     auto json = stateJson_ ? stateJson_() : juce::String();
     if (json == published_) return;
     published_ = json;
     {
         std::lock_guard lock(hub_->mutex);
         hub_->state = json.toStdString();
+        hub_->stateReady = true;
         ++hub_->stateVersion;
         ++hub_->wakes;
     }

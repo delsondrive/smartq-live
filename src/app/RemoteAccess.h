@@ -15,9 +15,9 @@ namespace sqlive::app {
 
 // Who may use the phone remote of one band folder: the PIN a new phone types, the phones that joined and how far each is
 // let in, and the addresses locked out after wrong PINs. Thread-safe: the web threads and the message thread both call it.
-// Every change bumps version() and sends a change message (on the message thread); a change worth keeping is written to
-// Settings and saved, on the message thread too (at once when called there, posted otherwise). A phone's token is never
-// kept, only its SHA-256.
+// Every change bumps version() and sends a change message from the message thread (a change made on a web thread is
+// posted there, behind a token that dies with this); a change worth keeping is written to Settings and saved, on the
+// message thread too (at once when called there, posted otherwise). A phone's token is never kept, only its SHA-256.
 class RemoteAccess : public juce::ChangeBroadcaster {
 public:
     static constexpr int maxPhones = 16;
@@ -34,7 +34,8 @@ public:
     int port() const;
     bool setPort(int port);                                             // false, and nothing changes, outside 1...65535
 
-    // 200 with a token; 403 wrong PIN; 429 locked out, or too many phones; 400 no usable name. message says why, for the
+    // 200 with a token; 403 wrong PIN; 429 locked out, or 16 phones known and none of them both waiting and unconnected
+    // (when one is, the oldest such is forgotten to make room); 400 no usable name. message says why, for the
     // phone to show. Five wrong PINs from one address within 60 s lock it out for 60 s from the last one.
     struct JoinResult { int status = 400; juce::String token, message; };
     JoinResult join(const juce::String& name, const juce::String& pin, const juce::String& address, double nowSeconds);

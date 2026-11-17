@@ -70,6 +70,11 @@ juce::String remoteHoldFor(const juce::String& action) {
     return {};
 }
 
+std::optional<RemoteActionResult> remoteRefusal(PhoneAccess access) {
+    if (access == PhoneAccess::FullControl) return std::nullopt;
+    return refusedFor(access);
+}
+
 RemoteActionResult performRemoteAction(Session& session, RemoteHolds& holds, const juce::String& action,
                                        PhoneAccess access, const juce::String& phoneId, double nowSeconds) {
     JUCE_ASSERT_MESSAGE_THREAD

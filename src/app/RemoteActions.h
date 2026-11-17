@@ -50,6 +50,10 @@ struct RemoteActionResult {
     juce::String message;                 // "" when done
 };
 
+// Why a phone with this access may not act (403, as performRemoteAction answers it); nothing for FullControl. Any thread:
+// the web threads refuse such a phone before anything reaches the message thread.
+std::optional<RemoteActionResult> remoteRefusal(PhoneAccess);
+
 // Performs a phone's action. Refused (403), in this order: a phone that isn't let in, waits, or may only watch (any access
 // but FullControl, a value outside the enum too); then (400) a name that isn't one of remotePageActions(); then (403)
 // outside Show mode.

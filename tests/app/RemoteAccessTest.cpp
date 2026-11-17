@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <thread>
+
 #include "app/RemoteAccess.h"
 #include "tests/support/DemoSession.h"
 
@@ -43,8 +45,45 @@ TEST_CASE("wrong PINs lock an address out, and names are kept sane", "[remoteacc
     for (auto& p : access.phones()) CHECK(p.name.length() <= 40);
     auto old = access.pin();  access.newPin();
     CHECK(access.join("Z", old, "10.0.0.9", 0.0).status == (old == access.pin() ? 200 : 403));
-    for (int i = 0; i < 40; ++i) access.join("Flood " + juce::String(i), access.pin(), "10.0.1." + juce::String(i), 100.0);
-    CHECK(access.phones().size() <= 16);                                              // waiting phones beyond 16 are refused
+    for (int i = 0; i < 40; ++i)                                                      // a full list makes room: never a 429
+        CHECK(access.join("Flood " + juce::String(i), access.pin(), "10.0.1." + juce::String(i), 100.0).status == 200);
+    const auto phones = access.phones();
+    REQUIRE(phones.size() == 16);                                                     // the oldest waiting ones made room
+    CHECK(phones.front().name == "Flood 24");  CHECK(phones.back().name == "Flood 39");
+}
+
+TEST_CASE("a full phone list drops the oldest phone neither let in nor connected, and never one let in", "[remoteaccess]") {
+    DemoSession d; app::RemoteAccess access(*d.settings, d.session->folder().root());
+    std::vector<juce::String> tokens;
+    for (int i = 0; i < app::RemoteAccess::maxPhones; ++i) {
+        auto joined = access.join("Phone " + juce::String(i), access.pin(), "10.0.2." + juce::String(i), 0.0);
+        REQUIRE(joined.status == 200);
+        tokens.push_back(joined.token);
+    }
+    auto phones = access.phones();
+    for (int i = 3; i < app::RemoteAccess::maxPhones; ++i) REQUIRE(access.decide(phones[(size_t) i].id, PhoneAccess::ViewOnly, true));
+    access.setConnected(phones[0].id, true);                                          // waiting, but its page is open
+    // 0 waits connected, 1 and 2 wait unconnected, the rest are let in: 1 goes, then 2.
+    auto next = access.join("Newcomer", access.pin(), "10.0.3.1", 0.0);
+    CHECK(next.status == 200);
+    CHECK(access.accessFor(tokens[1]) == PhoneAccess::Refused);
+    CHECK(access.accessFor(tokens[0]) == PhoneAccess::Waiting);
+    CHECK(access.accessFor(tokens[2]) == PhoneAccess::Waiting);
+    CHECK(access.join("Another", access.pin(), "10.0.3.2", 0.0).status == 200);
+    CHECK(access.accessFor(tokens[2]) == PhoneAccess::Refused);
+    CHECK(access.phones().size() == 16);
+    // Only the connected waiting phone and let-in ones are left (and the two newcomers): nothing is dropped.
+    phones = access.phones();
+    for (const auto& p : phones)
+        if (p.access == PhoneAccess::Waiting && !p.connected) REQUIRE(access.decide(p.id, PhoneAccess::FullControl, true));
+    REQUIRE(access.decide(phones[0].id, PhoneAccess::ViewOnly, true));                // all 16 let in now
+    const auto full = access.join("One too many", access.pin(), "10.0.3.3", 0.0);
+    CHECK(full.status == 429);  CHECK(full.token.isEmpty());
+    CHECK(full.message == "This laptop already knows 16 phones. Forget one in Setup.");
+    CHECK(access.phones().size() == 16);
+    for (int i = 3; i < app::RemoteAccess::maxPhones; ++i) CHECK(access.accessFor(tokens[(size_t) i]) == PhoneAccess::ViewOnly);
+    access.forget(access.phones()[5].id);                                             // forgotten in Setup: room again
+    CHECK(access.join("One too many", access.pin(), "10.0.3.3", 0.0).status == 200);
 }
 
 TEST_CASE("the lockout counts only wrong PINs within a minute, and a right PIN clears it", "[remoteaccess]") {
@@ -145,12 +184,43 @@ TEST_CASE("remote memory that was damaged by hand is made sane on load", "[remot
     memory.pin = "12a4";  memory.port = -3;
     for (int i = 0; i < 20; ++i) {
         memory.phones.push_back({"id" + juce::String(i), "Phone " + juce::String(i), i == 0 ? PhoneAccess::Refused : PhoneAccess::ViewOnly, true});
-        memory.tokenHashes.add(juce::String::repeatedString("a", 63) + juce::String::toHexString(i % 16));
+        // Each its own hash, but phone 5 has phone 4's.
+        memory.tokenHashes.add(juce::String::repeatedString("a", 62) + juce::String::toHexString(i == 5 ? 4 : i).paddedLeft('0', 2));
     }
     d.settings->setRemoteMemory(root, memory);
     app::RemoteAccess access(*d.settings, root);
     CHECK(access.pin().length() == 4);  CHECK(access.pin().containsOnly("0123456789"));
     CHECK(access.port() == 8080);
-    CHECK(access.phones().size() <= 16);
+    const auto phones = access.phones();
+    REQUIRE(phones.size() == 16);                                                     // 1-4 and 6-17: the first 16 usable ones
+    CHECK(phones.front().id == "id1");  CHECK(phones[4].id == "id6");  CHECK(phones.back().id == "id17");
     for (const auto& p : access.phones()) { CHECK(p.access != PhoneAccess::Refused);  CHECK_FALSE(p.connected); }
+}
+
+TEST_CASE("a change made on a web thread is announced on the message thread, and never after the access has gone",
+          "[remoteaccess]") {
+    DemoSession d;
+    struct Listener : juce::ChangeListener {
+        int calls = 0;
+        bool onMessageThread = true;
+        void changeListenerCallback(juce::ChangeBroadcaster*) override {
+            ++calls;
+            onMessageThread = onMessageThread && juce::MessageManager::existsAndIsCurrentThread();
+        }
+    } listener;
+    {
+        app::RemoteAccess access(*d.settings, d.session->folder().root());
+        access.addChangeListener(&listener);
+        int status = 0;
+        std::thread([&] { status = access.join("Phone", access.pin(), "10.0.0.1", 0.0).status; }).join();
+        REQUIRE(status == 200);
+        for (int i = 0; i < 100 && listener.calls == 0; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+        CHECK(listener.calls >= 1);
+        CHECK(listener.onMessageThread);
+        const auto id = access.phones()[0].id;
+        std::thread([&] { access.setConnected(id, true); }).join();               // posted, then the access goes first
+    }
+    const int calls = listener.calls;
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);                // what was posted finds it gone: nothing
+    CHECK(listener.calls == calls);
 }
