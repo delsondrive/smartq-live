@@ -42,6 +42,7 @@ using Ms = std::chrono::milliseconds;
 
 constexpr int maxJsonDepth = 4;
 constexpr int keepConnectionSeconds = 5;                          // an idle connection between two requests
+constexpr int sendBufferBytes = 256 * 1024;
 
 // The clock performRemoteAction's holds are measured on, read when the web thread receives the request.
 double secondsNow() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
@@ -238,15 +239,25 @@ public:
             out += "event: access\ndata: \"" + word.toStdString() + "\"\n\n";
             sentAccess_ = word;
         }
-        if (mayWatch(access_)) {                                  // a waiting phone is shown nothing of the show
+        // A waiting phone is shown nothing of the show. One let in gets the state at most every stateEveryMs (10 times a
+        // second): while a song plays the state changes 30 times a second, and on a crowded Wi-Fi that much would fill the
+        // send buffer. Nothing queues: when its turn comes the phone gets the latest state, so the last one always arrives.
+        const auto now = Clock::now();
+        const auto stateEvery = Ms(hub_->limits.stateEveryMs);
+        bool stateHeld = false;
+        if (mayWatch(access_)) {
             std::lock_guard lock(hub_->mutex);
             if (hub_->stateVersion != 0 && hub_->stateVersion != sentState_) {
-                out += "event: state\n" + dataLines(hub_->state) + "\n";
-                sentState_ = hub_->stateVersion;
+                if (sentState_ == 0 || now - lastState_ >= stateEvery) {
+                    out += "event: state\n" + dataLines(hub_->state) + "\n";
+                    sentState_ = hub_->stateVersion;
+                    lastState_ = now;
+                } else {
+                    stateHeld = true;
+                }
             }
         }
 
-        const auto now = Clock::now();
         const auto keepAlive = Ms(hub_->limits.keepAliveMs);
         if (out.empty() && now - lastWrite_ >= keepAlive) out = ": still here\n\n";
         if (!out.empty()) {
@@ -254,7 +265,8 @@ public:
             return sink.write(out.data(), out.size());
         }
 
-        const auto wait = std::min<Clock::duration>(Ms(hub_->limits.streamCheckMs), lastWrite_ + keepAlive - now);
+        auto wait = std::min<Clock::duration>(Ms(hub_->limits.streamCheckMs), lastWrite_ + keepAlive - now);
+        if (stateHeld) wait = std::min<Clock::duration>(wait, lastState_ + stateEvery - now);
         std::unique_lock lock(hub_->mutex);
         hub_->woken.wait_for(lock, wait, [&] { return hub_->wakes != wakes; });
         return true;
@@ -297,7 +309,7 @@ private:
     PhoneAccess access_ = PhoneAccess::Refused;
     juce::String sentAccess_;
     std::uint64_t sentState_ = 0;
-    Clock::time_point lastWrite_;
+    Clock::time_point lastWrite_, lastState_;
 };
 
 const std::string& page() {
@@ -313,7 +325,9 @@ const std::string& page() {
 bool readBody(const httplib::ContentReader& reader, Hub& hub, std::string& body, httplib::Response& res) {
     const auto deadline = Clock::now() + Ms(hub.limits.bodyMs);
     enum class Why { none, tooBig, tooSlow, stopping } why = Why::none;
-    const bool whole = reader([&](const char* data, size_t size) {
+    // A request whose headers came in as the server began to stop isn't read at all: its first read could wait a whole
+    // read timeout on a client that sends nothing more.
+    const bool whole = !hub.isStopping() && reader([&](const char* data, size_t size) {
         if (hub.isStopping()) why = Why::stopping;
         else if (Clock::now() > deadline) why = Why::tooSlow;
         else if (body.size() + size > static_cast<size_t>(RemoteServer::maxBodyBytes)) why = Why::tooBig;
@@ -321,6 +335,7 @@ bool readBody(const httplib::ContentReader& reader, Hub& hub, std::string& body,
         return false;
     });
     if (whole && why == Why::none) return true;
+    if (why == Why::none && hub.isStopping()) why = Why::stopping;
     res.set_header("Connection", "close");
     switch (why) {
     case Why::tooBig: answerMessage(res, 413, "That's more than the remote ever sends.");  break;
@@ -483,12 +498,15 @@ void setUp(httplib::Server& svr, const RemoteServerLimits& limits) {
     svr.new_task_queue = [] { return new httplib::ThreadPool(static_cast<size_t>(RemoteServer::webThreads)); };
     // A port already in use is never shared: on Windows SO_REUSEADDR would let this bind a port another program listens
     // on, so the socket is exclusive there instead, and start() moves on to the next port.
+    // A send buffer of 256 KB (accepted sockets inherit it from the listening one): over 10 s of 2 KB states at 10 a second,
+    // so a phone whose Wi-Fi stalls for a few seconds stays connected although one write may only wait ioTimeoutMs.
     svr.set_socket_options([](socket_t sock) {
 #ifdef _WIN32
         httplib::set_socket_opt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
 #else
         httplib::set_socket_opt(sock, SOL_SOCKET, SO_REUSEADDR, 1);
 #endif
+        httplib::set_socket_opt(sock, SOL_SOCKET, SO_SNDBUF, sendBufferBytes);
     });
 }
 

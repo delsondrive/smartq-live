@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -509,4 +510,41 @@ TEST_CASE("the stream limits: at most so many streams, and a comment line when t
     two.readUntil([&](const std::vector<Event>&) { return two.text().find(": still here\n\n") != std::string::npos; }, 2000);
     CHECK(two.text().find(": still here\n\n") != std::string::npos);
     CHECK(msNow() - quietSince < 1000);
+}
+
+TEST_CASE("a phone gets the state at most 10 times a second, and always the last one", "[remoteserver]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    int counter = 0;
+    bool changing = true;
+    app::RemoteServer server(s, access, [&] {                                        // a new state every time it is asked
+        if (changing) ++counter;
+        return "{\"n\":" + juce::String(counter) + "}";
+    });
+    s.enterShow();
+    s.perform(app::Action::Start);  s.advanceWithoutDevice(4800);
+    REQUIRE(s.now().playing);                                                        // so the state is built 30 times a second
+    REQUIRE(server.start(18160, "127.0.0.1").wasOk());
+    const int port = server.port();
+    const auto token = joinedToken(port, access, "Phone");
+    access.decide(access.phones()[0].id, PhoneAccess::FullControl, true);
+
+    Events stream(port, token);
+    REQUIRE(stream.read(2).size() == 2);
+    const auto countStates = [](const std::vector<Event>& events) {
+        return std::count_if(events.begin(), events.end(), [](const Event& e) { return e.first == "state"; });
+    };
+    const auto before = countStates(stream.read(2));
+    const int builtBefore = counter;
+    stream.readUntil([](const std::vector<Event>&) { return false; }, 2000);         // two seconds of a song playing
+    const auto sent = countStates(stream.read(2)) - before;
+    const int built = counter - builtBefore;
+    CHECK(built >= 40);                                                              // about 60 states were built…
+    CHECK(sent >= 12);                                                               // …and about 20 sent: never more than
+    CHECK(sent <= 23);                                                               // 10 a second, with a little slack
+
+    changing = false;                                                                // it settles: the last state arrives
+    const auto last = counter;
+    const auto events = stream.readUntil(lastStateIs([last](const juce::var& state) { return int(state["n"]) == last; }), 1000);
+    REQUIRE_FALSE(events.empty());
+    CHECK(int(juce::JSON::parse(events.back().second)["n"]) == last);
 }

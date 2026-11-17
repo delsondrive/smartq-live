@@ -29,8 +29,10 @@ struct RemoteServerLimits {
     int keepAliveMs = 10000;          // a stream with nothing to say sends a comment line after this long
     int streamCheckMs = 1000;         // how soon an open stream notices its phone has gone
     int ioTimeoutMs = 1000;           // one read or write on a connection; also every header of a request, together
-    int bodyMs = 2000;                // all of a request's body, after its headers
+    int bodyMs = 2000;                // all of a request's body, after its headers (checked as data arrives, so a body is
+                                      // given up on within bodyMs + ioTimeoutMs)
     int actionWaitMs = 2000;          // an action's wait for the message thread before 503
+    int stateEveryMs = 100;           // the state goes to a phone at most this often; the latest wins, nothing queues
 };
 
 // The phone remote's web server, on the local network only. Off until start(); it listens only while it runs.
@@ -40,7 +42,8 @@ struct RemoteServerLimits {
 //   GET  /api/access?token=   200 {"access": "waiting" | "view" | "full"}, or 403 for a token that isn't known
 //   GET  /api/events?token=   403 for a token that isn't known; else a text/event-stream that starts with "retry: 2000",
 //                             sends "access" at once and whenever it changes, and, once the phone is let in, "state" (the
-//                             injected JSON) at once and whenever it changes; a comment line after 10 s of nothing. It ends
+//                             injected JSON) at once and whenever it changes, at most 10 times a second (the latest one
+//                             each time, so the last always arrives); a comment line after 10 s of nothing. It ends
 //                             when the phone is forgotten, when the same phone opens another, or when the server stops. One
 //                             stream per phone, at most 16 (503 beyond); while one is open the phone is marked connected.
 //   POST /api/action          {"token", "action"} → performRemoteAction's status and {"message"}, performed on the message
@@ -49,7 +52,8 @@ struct RemoteServerLimits {
 //
 // Nothing a phone sends is trusted. A request from outside the local network gets 403. A body sent in chunks, or a POST
 // without a Content-Length, gets 411, whatever the method; a body over 4 KB, 413; a body on anything but a POST, 400; a
-// POST to a path that takes none, 404; a body that takes over 2 s to arrive, 408 (all of these close the connection). A
+// POST to a path that takes none, 404; a body still arriving 2 s after its headers, 408, within bodyMs + ioTimeoutMs
+// (3 s) at worst (all of these close the connection). A
 // body that isn't UTF-8, nests deeper than 4, uses single-quoted strings, or isn't a JSON object of strings where strings
 // are expected gets 400. Every answer carries X-Content-Type-Options: nosniff.
 //
@@ -57,10 +61,11 @@ struct RemoteServerLimits {
 // thread-safe), and post actions to the message thread. Build, start, stop and destroy it on the message thread, before the
 // RemoteAccess and the Session it was given go: stop() ends every stream and joins every web thread.
 //
-// How long stop() takes, whatever a client does: about one ioTimeoutMs (1 s) at most. Streams and waiting actions end at
-// once; a connection between requests ends within 10 ms; a request whose headers or body are still arriving, or a write
-// to a phone that stopped reading, gives up within one read or write timeout. So stopping during a show stalls the
-// laptop's screen for up to a second, never longer.
+// How long stop() takes, whatever a client does: about 2 × ioTimeoutMs (2 s) at worst, usually far less. Streams and
+// waiting actions end at once; a connection between requests ends within 10 ms; a request whose headers or body are still
+// arriving gives up within one read timeout, and its answer may then wait one write timeout; a write to a phone that
+// stopped reading gives up within one write timeout. So stopping during a show can stall the laptop's screen for up to
+// about two seconds, never longer.
 class RemoteServer : private juce::Timer, private juce::ChangeListener {
 public:
     static constexpr int portsTried = 10;
