@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -232,5 +233,93 @@ TEST_CASE("go to next with a next-bar end allocates and frees nothing on the aud
                                                            : std::vector<T>{T::Started, T::Ended, T::Started, T::Ended};  // after a's fade and the gap
         CHECK(drainEvents(e) == expected);
         e.collectGarbage();
+    }
+}
+
+// ---- Fix round 1 ----
+
+TEST_CASE("the new song's click is at full level from the crossfade's first sample: only the stop fade applies to it", "[transition]") {
+    auto bSong = [] { return share(testSong("b", 96000, 0.5f, 0, true)); };
+    Engine ref; ref.prepare(48000.0, 512); ref.setMix(splitMix());   // parts on channel 0, the click on channel 1
+    ref.cue(bSong());  ref.start();
+    auto alone = renderOffline(ref, 2, 3000, 512, {{100, [](Engine& en) { en.stop(); }}});   // b on its own, stopped 100 samples in
+    Engine e; e.prepare(48000.0, 512); e.setMix(splitMix());
+    e.cue(share(testSong("a", 96000, 1.0f)));  e.start();  e.setFollowOn({FollowKind::Crossfade, 0.5});
+    auto out = renderOffline(e, 2, 72000 + 3000, 512, {{10, [&](Engine& en) { en.cue(bSong()); }},
+                                                       {72000 + 100, [](Engine& en) { en.stop(); }}});
+    float loudest = 0.0f;
+    for (int i = 0; i < 100; ++i) loudest = std::max(loudest, std::abs(alone[1][i]));
+    REQUIRE(loudest > 0.05f);                                                  // the click sounds in those samples
+    for (int i = 0; i < 3000; ++i) REQUIRE(out[1][72000 + i] == alone[1][i]);  // full level, then the stop fade alone
+    CHECK(out[0][72000 + 50] == Catch::Approx(1.0f * (24000 - 50) / 24000 + 0.5f * 50 / 24000).margin(1e-4));   // the parts do fade
+}
+TEST_CASE("a stop silences a song still fading out after the new one has ended or gone into a gap", "[transition]") {
+    for (bool gap : {false, true}) {
+        INFO(gap);
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        auto a = e.cue(share(testSong("a", 96000, 1.0f)));  e.start();  e.setFollowOn({FollowKind::Crossfade, 1.0});   // from 48000 to 96000
+        std::uint64_t b = 0;
+        auto out = renderOffline(e, 2, 70000, 512, {
+            {10, [&](Engine& en) { b = en.cue(share(testSong("b", 10000, 0.5f))); }},                   // b ends at 58000; a still fades
+            {50000, [&](Engine& en) { if (gap) { en.setFollowOn({FollowKind::Gap, 1.0});  en.cue(share(testSong("c", 1000, 0.25f))); } }},
+            {60000, [](Engine& en) { en.stop(); }}});
+        CHECK(out[0][59999] > 0.5f);                                           // a alone, fading
+        CHECK(out[0][60000 + 1200] > 0.0f);
+        CHECK(out[0][60000 + 1200] < out[0][59999]);
+        for (int i = 60000 + 2400; i < 70000; ++i) REQUIRE(out[0][i] == 0.0f);   // silent after the stop fade
+        CHECK(e.status().state == PlayState::Stopped);
+        std::vector<std::tuple<EngineEvent::Type, std::uint64_t, std::int64_t>> seen;
+        for (const auto& ev : drainFull(e)) if (ev.type != EngineEvent::Type::StepChanged) seen.push_back({ev.type, ev.serial, ev.streamTime});
+        using T = EngineEvent::Type;
+        std::vector<std::tuple<T, std::uint64_t, std::int64_t>> expected = {{T::Started, a, 0}, {T::Started, b, 48000}, {T::Ended, b, 58000}};
+        if (gap) expected.push_back({T::Stopped, b, 60000});                   // the stop inside the gap, at once
+        expected.push_back({T::Stopped, a, 60000 + 2400});
+        CHECK(seen == expected);
+    }
+}
+TEST_CASE("a crossfade of no length plays as seamless, at a song's end and with go to next", "[transition]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    e.cue(share(testSong("a", 1000, 0.25f)));  e.start();  e.setFollowOn({FollowKind::Crossfade, 0.0});
+    auto out = renderOffline(e, 2, 3000, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 1000, 0.5f, 1))); }}});
+    CHECK(out[0][999] == 0.25f);  CHECK(out[0][1000] == 0.5f);                // straight into bar 1, the count-in skipped
+    CHECK(e.status().state == PlayState::Stopped);
+    e.cue(share(rampSong("a", 4, {4})));  e.start();
+    auto next = renderOffline(e, 2, 2 * 96000, 512, {{20, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }},
+                                                     {30000, [](Engine& en) { en.goToNext(); }}});
+    CHECK(next[0][96000 - 1] == float(96000 - 1));                            // at the next bar, as with Seamless
+    CHECK(next[0][96000 + 1200] == Catch::Approx(float(96000 + 1200) * 0.5f + 0.5f));   // a's 50 ms fade over b at full level
+    CHECK(next[0][96000 + 3000] == Catch::Approx(0.5f).margin(1e-4));
+}
+TEST_CASE("go to next is ignored in a lead-in and in a start-from-step count-off", "[transition]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    auto a = e.cue(share(testSong("a", 96000, 1.0f, 1)));  e.start();  e.setFollowOn({FollowKind::Seamless, 0.0});   // a bar of count-in first
+    renderOffline(e, 2, 150000, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }},
+                                      {1000, [](Engine& en) { en.goToNext(); }},
+                                      {140000, [&](Engine& en) { CHECK(en.status().playingSerial == a); }}});
+    e.stop();  renderOffline(e, 2, 5000, 512);
+    auto c = e.cue(share(rampSong("c", 2, {1, 1})));  e.startAtStep(1);    // a bar of count-off, then step 1
+    renderOffline(e, 2, 150000, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }},
+                                      {1000, [](Engine& en) { en.goToNext(); }},
+                                      {140000, [&](Engine& en) { CHECK(en.status().playingSerial == c);  CHECK(en.status().step == 1); }}});
+}
+TEST_CASE("a stop during go to next's 50 ms fade makes it a stop, with no follow-on", "[transition]") {
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    e.cue(share(rampSong("a", 4, {4})));  e.start();  e.setFollowOn({FollowKind::Gap, 0.1});
+    auto out = renderOffline(e, 2, 96000 + 10000, 512, {{10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f))); }},
+                                                        {30000, [](Engine& en) { en.goToNext(); }},
+                                                        {97000, [](Engine& en) { en.stop(); }}});
+    CHECK(out[0][97000 - 1] > 0.0f);
+    for (int i = 96000 + 2400; i < 96000 + 10000; ++i) REQUIRE(out[0][i] == 0.0f);   // over with the fade; no gap, no b
+    CHECK(drainEvents(e) == std::vector<EngineEvent::Type>{EngineEvent::Type::Started, EngineEvent::Type::Stopped});
+    CHECK(e.status().state == PlayState::Stopped);  CHECK(e.status().cuedSerial != 0);
+}
+TEST_CASE("go to next's next-bar end doesn't depend on the block size", "[transition]") {
+    for (auto kind : {FollowKind::Seamless, FollowKind::Gap}) {
+        auto run = [kind](int block) { Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+            e.cue(share(rampSong("a", 4, {4})));  e.start();  e.setFollowOn({kind, 0.05});
+            return renderOffline(e, 2, 2 * 96000, block, {{10, [](Engine& en) { en.cue(share(testSong("b", 96000, 0.5f, 0, true))); }},
+                                                          {30001, [](Engine& en) { en.goToNext(); }}}); };
+        auto reference = run(512);
+        for (int block : {1, 64, 4096}) CHECK(run(block) == reference);
     }
 }

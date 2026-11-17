@@ -9,10 +9,7 @@ void Transition::prepare(int maxBlockFrames) {
     envelope_.assign(static_cast<std::size_t>(std::max(1, maxBlockFrames)), 0.0f);
     if (renderer_ != nullptr) renderer_->setSong(nullptr);
     slot_ = {};
-    renderer_ = nullptr;
-    time_ = 0;
-    length_ = left_ = 0;
-    fade_in_ = false;
+    forget();
     cancel();
 }
 
@@ -53,11 +50,28 @@ void Transition::begin(SongSlot&& slot, SongRenderer& renderer, SamplePos songTi
     time_ = songTime;
     length_ = left_ = length;
     fade_in_ = fadeIn;
+    stopping_ = false;
+    stop_length_ = stop_done_ = 0;
     cancel();
 }
 
 bool Transition::fading() const noexcept { return slot_.song != nullptr; }
-std::int64_t Transition::left() const noexcept { return fading() ? left_ : 0; }
+
+std::int64_t Transition::left() const noexcept {
+    if (!fading()) return 0;
+    return stopping_ ? std::max<std::int64_t>(0, std::min(left_, stop_length_ - stop_done_)) : left_;
+}
+
+bool Transition::over() const noexcept { return fading() && left() <= 0; }
+bool Transition::ranOut() const noexcept { return left_ <= 0; }
+
+void Transition::stop(std::int64_t length) noexcept {
+    if (!fading() || stopping_) return;
+    stopping_ = true;
+    stop_length_ = length;
+    stop_done_ = 0;
+}
+
 bool Transition::fadingIn() const noexcept { return fading() && fade_in_; }
 
 double Transition::incomingGain(std::int64_t k) const noexcept {
@@ -65,13 +79,12 @@ double Transition::incomingGain(std::int64_t k) const noexcept {
     return static_cast<double>(length_ - left_ + k) / static_cast<double>(length_);
 }
 
-void Transition::render(float* const* out, int numChannels, std::int64_t frames, std::int64_t stopLength,
-                        std::int64_t stopDone) noexcept {
+void Transition::render(float* const* out, int numChannels, std::int64_t frames) noexcept {
     const std::int64_t n = std::min(frames, left());
     if (n <= 0) return;
     const std::int64_t done = length_ - left_;
     for (std::int64_t k = 0; k < n; ++k) {
-        const double stop = stopLength > 0 ? std::max(0.0, fallingLine(stopLength, stopDone + k)) : 1.0;
+        const double stop = stopping_ ? fallingLine(stop_length_, stop_done_ + k) : 1.0;
         envelope_[static_cast<std::size_t>(k)] = static_cast<float>(fallingLine(length_, done + k) * stop);
     }
     const std::int64_t audible = std::clamp<std::int64_t>(slot_.song->end - time_, 0, n);
@@ -79,17 +92,24 @@ void Transition::render(float* const* out, int numChannels, std::int64_t frames,
         renderer_->render(time_, static_cast<int>(audible), out, numChannels, envelope_.data(), {.click = false});
     time_ += n;
     left_ -= n;
+    if (stopping_) stop_done_ += n;
 }
 
 SongSlot Transition::release() noexcept {
     if (renderer_ != nullptr) renderer_->setSong(nullptr);   // before the song can be freed
     SongSlot gone = std::move(slot_);
     slot_ = {};   // its hold was moved out, so this frees nothing
+    forget();
+    return gone;
+}
+
+void Transition::forget() noexcept {
     renderer_ = nullptr;
     time_ = 0;
     length_ = left_ = 0;
     fade_in_ = false;
-    return gone;
+    stopping_ = false;
+    stop_length_ = stop_done_ = 0;
 }
 
 } // namespace sqlive::engine

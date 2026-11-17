@@ -70,20 +70,26 @@ public:
     // fadeIn: the playing song fades in over the same samples (a crossfade). Clears what was asked for. length > 0.
     void begin(SongSlot&& slot, SongRenderer& renderer, SamplePos songTime, std::int64_t length, bool fadeIn) noexcept;
     bool fading() const noexcept;
-    std::int64_t left() const noexcept;            // samples of the fade still to come; 0 when nothing fades
+    // Samples until it falls silent: what is left of its fade, or of a stop's if that ends first; 0 when nothing fades.
+    std::int64_t left() const noexcept;
+    bool over() const noexcept;                    // it fades out and has fallen silent: the caller releases it
+    bool ranOut() const noexcept;                  // its own fade is over (Ended), rather than a stop's (Stopped)
+    // A stop: it also falls silent in a straight line over `length` samples from here, times its own fade. Nothing when
+    // nothing fades, or when a stop already applies.
+    void stop(std::int64_t length) noexcept;
     // The playing song's gain k samples on from where the fade stands: rising in a straight line during a crossfade's
     // fade, else 1. k < left().
     double incomingGain(std::int64_t k) const noexcept;
     bool fadingIn() const noexcept;                // the playing song is fading in: incomingGain is not 1
     // The fading song's next `frames` samples (at most left()) into out, added to what is there, each at its fade's gain
-    // times the stop fade's (stopLength samples long, stopDone of them played; stopLength 0: no stop). Past its audio's
-    // end it is silent.
-    void render(float* const* out, int numChannels, std::int64_t frames, std::int64_t stopLength,
-                std::int64_t stopDone) noexcept;
+    // times a stop's. Past its audio's end it is silent.
+    void render(float* const* out, int numChannels, std::int64_t frames) noexcept;
     // Its fade is over, or it must go: its renderer lets go of it, and the caller retires what this returns.
     SongSlot release() noexcept;
 
 private:
+    void forget() noexcept;              // nothing fades (the slot already emptied)
+
     bool now_ = false;                   // crossfadeNow, not yet begun
     SamplePos end_at_ = kNever;          // endAt, not yet reached
     SongSlot slot_;                      // the song fading out; empty when none
@@ -92,6 +98,9 @@ private:
     std::int64_t length_ = 0;            // the fade's length
     std::int64_t left_ = 0;              // samples of it still to come
     bool fade_in_ = false;               // the playing song fades in beside it
+    bool stopping_ = false;              // a stop applies: its fade is stop_length_ long ...
+    std::int64_t stop_length_ = 0;
+    std::int64_t stop_done_ = 0;         // ... and samples of it played
     std::vector<float> envelope_;        // maxBlockFrames: the fade of one render
 };
 

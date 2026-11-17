@@ -86,11 +86,13 @@ inline constexpr int kMaxDeviceChannels = 256;
 // starting patches sent, and from then on the click, MIDI, clock and cues are its own (the old song's MIDI ends there, its
 // voice is silenced with the 5 ms fade, and its cues are not said). The old song's parts carry on underneath on a second
 // renderer, at the levels they had, in a straight line down to silence at its last step's end (no tail after it), then
-// Ended for it; the new song fades in over the same samples. Less than N seconds left when the moment is worked out: it
-// starts at once and lasts what is left. A loop or a choice before the moment puts it off until the last step plays freely
+// Ended for it; the new song's parts fade in over the same samples, while its click is at full level from its first
+// sample (the drummer needs the new tempo at once). Less than N seconds left when the moment is worked out: it starts at
+// once and lasts what is left. A loop or a choice before the moment puts it off until the last step plays freely
 // again; a cue, a follow-on or a loop turned off works it out again; with nothing cued when it comes, the song just ends.
 // Worked out from song time, so it doesn't depend on the block size. While a song fades out no other one can: a moment
-// that comes meanwhile waits for that fade's end. A stop fades both out over the stop fade and reports Stopped for each.
+// that comes meanwhile waits for that fade's end. A stop fades both out over the stop fade and reports Stopped for each;
+// a song still fading out when nothing else plays (the new one ended, or is in a gap) falls silent with a stop too.
 class Engine {
 public:
     Engine();
@@ -240,6 +242,7 @@ private:
     void endAtBar(std::int64_t streamTime) noexcept;  // goToNext's end is reached
     void renderFading(int numChannels, std::int64_t frames) noexcept;
     void finishFade(EngineEvent::Type, std::int64_t streamTime) noexcept;   // the fading song is retired, reported so
+    void settleFade(std::int64_t streamTime) noexcept;   // finishFade, once the fading song has fallen silent
     SongRenderer& spareRenderer() noexcept;           // the renderer renderer_ is not
     void settle(std::int64_t streamTime) noexcept;
     bool handOver(std::int64_t streamTime) noexcept;
@@ -283,6 +286,7 @@ private:
     int max_block_ = 0;
     std::vector<float> envelope_;            // max_block_: the fade of one chunk (a stop, a song's tail, a crossfade's
                                              // fade-in, or more than one)
+    std::vector<float> click_envelope_;      // max_block_: the click's fade of one chunk while the parts fade in
     std::vector<float*> channels_;           // the output channels from where a chunk's render begins
     SongSlot playing_, cued_;
     std::shared_ptr<const void> mix_hold_;

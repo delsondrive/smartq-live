@@ -301,6 +301,8 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
 
         const int at = offset + i;
         const float env = envelope != nullptr ? envelope[at] : 1.0f;
+        const float clickEnv =
+            what.clickFollowsEnvelope ? env : (what.clickEnvelope != nullptr ? what.clickEnvelope[at] : 1.0f);
         const SamplePos audioPos = songTime + i + audioOffset;
 
         for (int p = 0; what.parts && p < part_count_; ++p) {
@@ -333,7 +335,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
                 for (int b = 0; b < bus_count_; ++b) {
                     const float cell = static_cast<float>(row[b].value);
                     if (cell == 0.0f) continue;
-                    const float v = click * (cell * env);
+                    const float v = click * (cell * clickEnv);
                     if (bus_left_[b] != nullptr) bus_left_[b][at] += v;
                     if (bus_right_[b] != nullptr) bus_right_[b][at] += v;
                 }

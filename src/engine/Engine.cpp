@@ -23,6 +23,7 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     sample_rate_.store(sampleRate, std::memory_order_relaxed);
     max_block_ = std::max(1, maxBlockFrames);
     envelope_.assign(static_cast<std::size_t>(max_block_), 0.0f);
+    click_envelope_.assign(static_cast<std::size_t>(max_block_), 0.0f);
     channels_.assign(static_cast<std::size_t>(kMaxDeviceChannels), nullptr);
     for (SongRenderer& renderer : renderers_) renderer.prepare(sampleRate, max_block_);
     transition_.prepare(max_block_);   // the song fading out, if any, is freed here: process isn't running
@@ -254,8 +255,9 @@ void Engine::handle(Command& command) noexcept {
     }
     case Type::Stop:
         cue_player_.silence();   // a stop silences the voice, a preview too
+        transition_.stop(fade_length_);   // and a song fading out, whether or not another plays (Stopped for it)
         if (state_ != PlayState::Playing) break;
-        transition_.cancel();      // and what goToNext asked for; a song fading out fades with the stop
+        transition_.cancel();      // and what goToNext asked for
         arrangement_.choose(-1);   // stop clears the choice and the loop at once
         boundary_ = arrangement_.boundary(song_time_);
         if (in_gap_) {   // nothing sounds, so there is nothing to fade: stopped at once, for the song that ended; the cue stays
@@ -475,7 +477,7 @@ void Engine::renderChunk(float* const* out, int numChannels, int offset, int fra
             if (cue_player_.active()) renderCueAlone(numChannels, static_cast<int>(n));
             renderFading(numChannels, n);
             pos += static_cast<int>(n);
-            if (transition_.fading() && transition_.left() <= 0) finishFade(EngineEvent::Type::Ended, stream_time_ + pos);
+            settleFade(stream_time_ + pos);
             if (!in_gap_) continue;
             gap_left_ -= n;
             if (gap_left_ <= 0) endGap(stream_time_ + pos);
@@ -507,13 +509,24 @@ std::int64_t Engine::renderStraight(int numChannels, std::int64_t frames, std::i
         cue_schedule_.fire(arrangement_, song_time_, cue_player_);
         n = std::min(n, cue_schedule_.until(song_time_));   // at least 1: never stalls
     }
+    // A crossfade's fade-in is the parts' only: the click takes just the stop fade, so the drummer hears the new tempo at
+    // full level at once.
     const float* envelope = nullptr;
-    if (state_ == PlayState::Stopping || transition_.fadingIn()) {
+    const bool fadingIn = transition_.fadingIn();
+    if (state_ == PlayState::Stopping || fadingIn) {
         for (std::int64_t k = 0; k < n; ++k) envelope_[static_cast<std::size_t>(k)] = static_cast<float>(gainAt(k));
         envelope = envelope_.data();
     }
     RenderParts what;
     if (count_off_) what = {.parts = false, .forcedClickFrom = count_off_from_, .forcedClickTo = count_off_to_};
+    if (fadingIn) {
+        what.clickFollowsEnvelope = false;
+        if (state_ == PlayState::Stopping) {
+            for (std::int64_t k = 0; k < n; ++k)
+                click_envelope_[static_cast<std::size_t>(k)] = static_cast<float>(stopGain(k));
+            what.clickEnvelope = click_envelope_.data();
+        }
+    }
     what.cue = renderCue(n);
     renderer_->render(song_time_, static_cast<int>(n), channels_.data(), numChannels, envelope, what);
     midi_.play(song_time_, n, streamTime);
@@ -533,10 +546,14 @@ std::int64_t Engine::renderCrossfade(int numChannels, std::int64_t frames, std::
     const double length = static_cast<double>(jump_fade_);
     const float outgoing = static_cast<float>(static_cast<double>(jump_fade_ - k) / length * stop);
     const float incoming = static_cast<float>(static_cast<double>(k) / length * stop);
+    // The incoming click without a crossfade's fade-in (the same as `incoming` when there is none).
+    const double stopOnly = state_ == PlayState::Stopping ? stopGain(0) : 1.0;
+    const float incomingClick = static_cast<float>(static_cast<double>(k) / length * stopOnly);
     if (tail_time_ < playing_.song->end)
         renderer_->render(tail_time_, 1, channels_.data(), numChannels, &outgoing, {.click = false, .advance = false});
     ++tail_time_;
-    renderer_->render(song_time_, 1, channels_.data(), numChannels, &incoming, {.cue = renderCue(1)});
+    renderer_->render(song_time_, 1, channels_.data(), numChannels, &incoming,
+                      {.cue = renderCue(1), .clickFollowsEnvelope = false, .clickEnvelope = &incomingClick});
     midi_.play(song_time_, 1, streamTime);
     ++song_time_;
     --xfade_left_;
@@ -586,7 +603,7 @@ double Engine::gainAt(std::int64_t k) const noexcept {
 // begins) as soon as song time reaches its moment, even on a chunk's last sample, so a command taken on the next block
 // finds it done.
 void Engine::settle(std::int64_t streamTime) noexcept {
-    if (transition_.fading() && transition_.left() <= 0) finishFade(EngineEvent::Type::Ended, streamTime);
+    settleFade(streamTime);
     if (state_ == PlayState::Stopping && fade_pos_ >= fade_length_) {
         finishSong(EngineEvent::Type::Stopped, streamTime);
         return;
@@ -755,14 +772,19 @@ void Engine::endAtBar(std::int64_t streamTime) noexcept {
 
 void Engine::renderFading(int numChannels, std::int64_t frames) noexcept {
     if (!transition_.fading()) return;
-    const bool stopping = state_ == PlayState::Stopping;
-    transition_.render(channels_.data(), numChannels, frames, stopping ? fade_length_ : 0, stopping ? fade_pos_ : 0);
+    transition_.render(channels_.data(), numChannels, frames);
 }
 
 void Engine::finishFade(EngineEvent::Type type, std::int64_t streamTime) noexcept {
     SongSlot gone = transition_.release();   // its renderer lets go of it first
     report(type, gone.serial, streamTime);
     retire(gone);
+}
+
+// The song fading out has fallen silent: at the end of its own fade (Ended), or of a stop's (Stopped).
+void Engine::settleFade(std::int64_t streamTime) noexcept {
+    if (transition_.over())
+        finishFade(transition_.ranOut() ? EngineEvent::Type::Ended : EngineEvent::Type::Stopped, streamTime);
 }
 
 SongRenderer& Engine::spareRenderer() noexcept { return renderer_ == &renderers_[0] ? renderers_[1] : renderers_[0]; }

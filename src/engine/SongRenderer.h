@@ -21,6 +21,10 @@ struct RenderParts {
                                                         // those before its start too (startAtStep's count-off)
     const float* cue = nullptr;     // `frames` samples of mono cue audio, mixed as the mix's cuesRole inside the per-sample loop, through
                                     // the same smoothed mix levels as the parts and the click; nullptr = none
+    // false: the click is not faded by render's envelope but by clickEnvelope (`frames` gains; nullptr = none). A song
+    // fading in at a crossfade keeps its click at full level: the drummer needs the new tempo at once.
+    bool clickFollowsEnvelope = true;
+    const float* clickEnvelope = nullptr;
 };
 
 // Mixes one song's parts, click and cue voice into the output buses of a mix. Every gain, every mix level, the click gain
