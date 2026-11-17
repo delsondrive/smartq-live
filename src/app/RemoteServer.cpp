@@ -152,6 +152,19 @@ bool isLocalNetworkAddress(const juce::String& address) {
     return a == "::1" || isPrivateIPv4(a, true);
 }
 
+juce::StringArray remoteAddressesFor(const juce::StringArray& localAddresses, int port) {
+    juce::StringArray out;
+    for (const auto& address : localAddresses)
+        if (isPrivateIPv4(address, false)) out.addIfNotAlreadyThere("http://" + address + ":" + juce::String(port));
+    return out;
+}
+
+int preferredRemoteAddress(const juce::StringArray& addresses) {
+    for (int i = 0; i < addresses.size(); ++i)
+        if (addresses[i].startsWith("http://192.168.")) return i;
+    return addresses.isEmpty() ? -1 : 0;
+}
+
 namespace remote_detail {
 
 // What the web threads share with the message thread. They never touch the session: the state is a string the message
@@ -625,13 +638,19 @@ bool RemoteServer::isRunning() const { return web_ != nullptr && !web_->ended; }
 
 int RemoteServer::port() const { return isRunning() ? port_ : 0; }
 
-juce::String RemoteServer::address() const {
-    const auto local = "http://localhost:" + juce::String(port());
+juce::StringArray RemoteServer::addresses() const {
+    const auto local = juce::StringArray{"http://localhost:" + juce::String(port())};
     const auto bound = normaliseRemoteAddress(bindAddress_);
-    if (bound != "0.0.0.0" && bound != "::") return isPrivateIPv4(bound, false) ? "http://" + bound + ":" + juce::String(port()) : local;
-    for (const auto& address : juce::IPAddress::getAllAddresses(false))
-        if (isPrivateIPv4(address.toString(), false)) return "http://" + address.toString() + ":" + juce::String(port());
-    return local;
+    if (bound != "0.0.0.0" && bound != "::") return isPrivateIPv4(bound, false) ? remoteAddressesFor({bound}, port()) : local;
+    juce::StringArray all;
+    for (const auto& address : juce::IPAddress::getAllAddresses(false)) all.add(address.toString());
+    const auto found = remoteAddressesFor(all, port());
+    return found.isEmpty() ? local : found;
+}
+
+juce::String RemoteServer::address() const {
+    const auto all = addresses();
+    return all[std::max(0, preferredRemoteAddress(all))];
 }
 
 int RemoteServer::connectedPhones() const {

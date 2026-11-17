@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "ui/RemoteSetupPage.h"
 #include "ui/RemoteState.h"
 #include "ui/SetupPage.h"
+#include "ui/Theme.h"
 #include "ui/TopBar.h"
 
 using namespace sqlive;
@@ -92,7 +94,10 @@ TEST_CASE("the remote page lists phones and who is waiting", "[remotesetup]") {
     s.enterShow();
     CHECK(makeRemoteSetupState(s, access, server).note == "New phones can be let in when the show is over.");
     top = makeTopBarState(s, nullptr, nullptr, Page::Setup, false, app::remoteStatusOf(access, server));
-    CHECK(std::any_of(top.pills.begin(), top.pills.end(), [](auto& p) { return p.text == "Remote 1"; }));
+    // In Show mode a waiting phone is nothing the drummer can act on: the pill isn't amber for it.
+    REQUIRE(remotePill(top) != nullptr);
+    CHECK(remotePill(top)->text == "Remote 1");
+    CHECK(remotePill(top)->level == StatusPill::Level::Ok);  CHECK(remotePill(top)->tooltip.isEmpty());
     server.stop();
     CHECK_FALSE(makeRemoteSetupState(s, access, server).on);
     CHECK(remotePill(makeTopBarState(s, nullptr, nullptr, Page::Setup, false, app::remoteStatusOf(access, server))) == nullptr);
@@ -195,6 +200,73 @@ TEST_CASE("the remote page draws a state it is given, with no server", "[remotes
     // The QR code at the panel's top left (12, 10), drawn at full strength: its border white, its finder pattern black.
     CHECK(image.getPixelAt(12 + 4, 10 + 4) == juce::Colours::white);
     CHECK(image.getPixelAt(12 + 26, 10 + 26) == juce::Colours::black);
+}
+
+TEST_CASE("every private IPv4 address is offered, a 192.168 one first, and the QR code follows the one chosen", "[remotesetup]") {
+    const auto all = app::remoteAddressesFor({"127.0.0.1", "172.20.1.5", "169.254.3.4", "192.168.1.20", "8.8.8.8", "10.0.0.2", "fe80::1"},
+                                             8080);
+    CHECK(all == juce::StringArray{"http://172.20.1.5:8080", "http://192.168.1.20:8080", "http://10.0.0.2:8080"});
+    CHECK(app::preferredRemoteAddress(all) == 1);                    // a virtual adapter's 172.20 isn't the default
+    CHECK(app::preferredRemoteAddress({"http://172.20.1.5:8080", "http://10.0.0.2:8080"}) == 0);
+    CHECK(app::preferredRemoteAddress({}) == -1);
+    CHECK(chosenRemoteAddress(all, "http://10.0.0.2:8080") == "http://10.0.0.2:8080");
+    CHECK(chosenRemoteAddress(all, "http://10.9.9.9:8080") == "http://192.168.1.20:8080");   // gone: the default again
+    CHECK(chosenRemoteAddress({}, "http://10.0.0.2:8080").isEmpty());
+
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServer server(s, access, stateOf(s));
+    REQUIRE(server.start(18130, "127.0.0.1").wasOk());
+    const auto state = makeRemoteSetupState(s, access, server, "http://10.0.0.2:8080");
+    CHECK(state.addresses == juce::StringArray{server.address()});   // this computer only: localhost
+    CHECK(state.address == server.address());
+    server.stop();
+
+    RemoteSetupPage page(s, access, server, "127.0.0.1");
+    page.setBounds(0, 0, 900, 600);  page.setVisible(true);
+    RemoteSetupState shown;
+    shown.on = true;  shown.addresses = all;  shown.address = all[1];  shown.pin = "4719";
+    page.showState(shown);
+    const Choice* choice = nullptr;
+    for (auto* child : page.getChildren())
+        if (auto* c = dynamic_cast<Choice*>(child); c != nullptr && c->isVisible()) choice = c;
+    REQUIRE(choice != nullptr);
+    CHECK(choice->items() == all);  CHECK(choice->selected() == 1);
+    const auto qrMatches = [&page](const juce::String& address) {
+        const auto drawn = page.createComponentSnapshot(page.getLocalBounds());
+        const auto code = makeQrImage(address, 150);
+        for (int y = 20; y < 130; ++y)
+            for (int x = 20; x < 130; ++x)
+                if (drawn.getPixelAt(12 + x, 10 + y) != code.getPixelAt(x, y)) return false;
+        return true;
+    };
+    CHECK(qrMatches(all[1]));
+    page.chooseAddress(2);
+    CHECK(page.state().address == all[2]);
+    CHECK(qrMatches(all[2]));
+    CHECK_FALSE(qrMatches(all[1]));
+}
+
+TEST_CASE("a waiting phone's row is tinted caution, not ember", "[remotesetup]") {
+    DemoSession d; auto& s = *d.session; app::RemoteAccess access(*d.settings, s.folder().root());
+    app::RemoteServer server(s, access, stateOf(s));
+    RemoteSetupPage page(s, access, server, "127.0.0.1");
+    page.setBounds(0, 0, 900, 600);  page.setVisible(true);
+    RemoteSetupState shown;
+    shown.on = true;  shown.address = "http://192.168.1.20:8080";  shown.addresses = {shown.address};  shown.pin = "4719";
+    shown.rows.push_back({"a", "Sam's iPhone", "waiting", PhoneAccess::Waiting, true, false});
+    shown.rows.push_back({"b", "Drummer's iPhone", "connected", PhoneAccess::FullControl, false, true});
+    page.showState(shown);
+    const auto image = page.createComponentSnapshot(page.getLocalBounds());
+    const auto waitingRow = page.rowBounds(0), otherRow = page.rowBounds(1);
+    REQUIRE_FALSE(waitingRow.isEmpty());
+    const auto x = waitingRow.getRight() - 3;                        // the action cell's empty end
+    const auto base = image.getPixelAt(x, otherRow.getCentreY());
+    const auto tinted = image.getPixelAt(x, waitingRow.getCentreY());
+    const auto asCaution = base.overlaidWith(theme::caution.withAlpha(0.08f)), asEmber = base.overlaidWith(theme::ember.withAlpha(0.08f));
+    CHECK(std::abs(tinted.getRed() - asCaution.getRed()) <= 1);
+    CHECK(std::abs(tinted.getGreen() - asCaution.getGreen()) <= 1);
+    CHECK(std::abs(tinted.getBlue() - asCaution.getBlue()) <= 1);
+    CHECK(std::abs(tinted.getBlue() - asEmber.getBlue()) >= 2);
 }
 
 TEST_CASE("the controls table says what a phone can do", "[remotesetup][midisetup]") {

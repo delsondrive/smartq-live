@@ -142,10 +142,11 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
             t.pills.push_back({"MIDI: not connected", Level::Warning, true, "No MIDI"});   // no device has a port on this computer
         }
     }
-    // The phone remote, while it runs: how many phones follow it; a phone waiting to be let in needs a look, in Edit mode too.
+    // The phone remote, while it runs: how many phones follow it. A phone waiting to be let in needs a look in Edit mode,
+    // where it can be let in; in Show mode it can't be, so it isn't flagged there.
     if (remote.running) {
         const auto text = "Remote " + juce::String(remote.connected);
-        if (remote.waiting) t.pills.push_back({text, Level::Warning, true, {}, "A phone is waiting to be let in."});
+        if (remote.waiting && t.mode == Mode::Edit) t.pills.push_back({text, Level::Warning, true, {}, "A phone is waiting to be let in."});
         else t.pills.push_back({text, Level::Ok});
     } else if (remote.leftOn) {
         // Left on, yet not listening: phones can't follow the show, and that is never silent.

@@ -17,6 +17,11 @@ namespace sqlive::app {
 juce::String normaliseRemoteAddress(const juce::String& address);
 // After normalising: 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, or ::1. Every other address is refused (403).
 bool isLocalNetworkAddress(const juce::String& address);
+// The http:// address a phone opens for each of these local addresses that is a private IPv4 one (10/8, 172.16/12,
+// 192.168/16; not loopback or link-local), in their order, each once. And which to offer first: the first 192.168 one (a
+// home or venue Wi-Fi, most likely; a virtual adapter's, Hyper-V's or WSL's, is usually 172.x), else the first; -1 for none.
+juce::StringArray remoteAddressesFor(const juce::StringArray& localAddresses, int port);
+int preferredRemoteAddress(const juce::StringArray& addresses);
 
 namespace remote_detail {
 struct Hub;                                            // what the web threads share: the published state, the open streams
@@ -93,8 +98,9 @@ public:
 
     bool isRunning() const;
     int port() const;                                  // 0 when not running
-    // "http://192.168.1.20:8080": this computer's first private IPv4 address; "http://localhost:<port>" when it has none,
-    // or when the server listens on this computer only.
+    // Every address a phone may open (remoteAddressesFor this computer's addresses), "http://localhost:<port>" alone when it
+    // has none, or when the server listens on this computer only. address(): the one to offer first (preferredRemoteAddress).
+    juce::StringArray addresses() const;
     juce::String address() const;
     int connectedPhones() const;                       // phones with an event stream open
 

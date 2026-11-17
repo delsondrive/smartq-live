@@ -64,12 +64,19 @@ int valueWidth(const juce::String& text, const juce::Font& font, int most) {
 
 }  // namespace
 
+juce::String chosenRemoteAddress(const juce::StringArray& addresses, const juce::String& chosen) {
+    if (addresses.contains(chosen)) return chosen;
+    const int preferred = app::preferredRemoteAddress(addresses);
+    return preferred >= 0 ? addresses[preferred] : juce::String();
+}
+
 RemoteSetupState makeRemoteSetupState(const app::Session& session, const app::RemoteAccess& access,
-                                      const app::RemoteServer& server) {
+                                      const app::RemoteServer& server, const juce::String& chosenAddress) {
     RemoteSetupState state;
     state.on = server.isRunning();
     if (state.on) {
-        state.address = server.address();
+        state.addresses = server.addresses();
+        state.address = chosenRemoteAddress(state.addresses, chosenAddress);
         state.pin = access.pin();
     } else {
         state.problem = server.lastError();
@@ -100,6 +107,8 @@ RemoteSetupPage::RemoteSetupPage(app::Session& session, app::RemoteAccess& acces
                                  juce::String bindAddress)
     : session_(session), access_(access), server_(server), bindAddress_(std::move(bindAddress)), mode_(session.mode()) {
     switch_.onChange = [this](bool on) { setOn(on); };
+    addressChoice_.onChange = [this](int index) { chooseAddress(index); };
+    addChildComponent(addressChoice_);
     addAndMakeVisible(switch_);
     access_.addChangeListener(this);
     session_.changes().addChangeListener(this);
@@ -132,7 +141,7 @@ void RemoteSetupPage::visibilityChanged() {
 void RemoteSetupPage::refresh(bool force) {
     mode_ = session_.mode();
     if (!force && !shownWithParents(*this)) return;               // made again when it is shown
-    auto next = makeRemoteSetupState(session_, access_, server_);
+    auto next = makeRemoteSetupState(session_, access_, server_, chosen_);
     if (next == state_ && !force) return;
     state_ = std::move(next);
     apply();
@@ -167,6 +176,17 @@ void RemoteSetupPage::newPin() {
     refresh(true);
 }
 
+void RemoteSetupPage::chooseAddress(int index) {
+    if (!juce::isPositiveAndBelow(index, state_.addresses.size())) return;
+    chosen_ = state_.addresses[index];
+    state_.address = chosen_;
+    apply();
+}
+
+juce::Rectangle<int> RemoteSetupPage::rowBounds(int row) const {
+    return juce::isPositiveAndBelow(row, static_cast<int>(rows_.size())) ? rows_[static_cast<std::size_t>(row)] : juce::Rectangle<int>();
+}
+
 void RemoteSetupPage::letIn(int row, PhoneAccess access) {
     if (const auto* r = rowAt(row); r != nullptr && (access == PhoneAccess::FullControl || access == PhoneAccess::ViewOnly))
         access_.decide(r->id, access, session_.mode() == app::Mode::Edit);   // a waiting phone only in Edit mode
@@ -187,6 +207,7 @@ void RemoteSetupPage::forget(int row) {
 
 void RemoteSetupPage::apply() {
     switch_.setOn(state_.on);
+    addressChoice_.setItems(state_.addresses, state_.addresses.indexOf(state_.address));
     if (state_.address != qrFor_) {
         qrFor_ = state_.address;
         qrImage_ = state_.address.isNotEmpty() ? makeQrImage(state_.address, kQrSize) : juce::Image();
@@ -242,10 +263,16 @@ void RemoteSetupPage::resized() {
     switch_.setBounds(right.removeFromRight(kSwitchW).withSizeKeepingCentre(kSwitchW, kSwitchH));
 
     address_ = addressValue_ = pin_ = pinValue_ = newPin_ = noteLine_ = head_ = empty_ = {};
+    addressChoice_.setVisible(false);
     if (on) {
         address_ = content.removeFromTop(kValueRow);
-        const int addressW = valueWidth(state_.address, valueFont(), address_.getWidth());
+        // Several addresses (a virtual adapter's too, say): a choice of them, else the one as a value.
+        const bool several = state_.addresses.size() > 1;
+        const int addressW = several ? std::min(std::max(kChoiceMin, addressChoice_.idealWidth()), address_.getWidth())
+                                     : valueWidth(state_.address, valueFont(), address_.getWidth());
         addressValue_ = address_.removeFromRight(addressW).withSizeKeepingCentre(addressW, kValueHeight);
+        addressChoice_.setBounds(addressValue_);
+        addressChoice_.setVisible(several);
         pin_ = content.removeFromTop(kValueRow);
         const int pinW = valueWidth(spacedPin(state_.pin), pinFont(), pin_.getWidth());
         pinValue_ = pin_.removeFromRight(pinW).withSizeKeepingCentre(pinW, kValueHeight);
@@ -322,7 +349,8 @@ void RemoteSetupPage::paint(juce::Graphics& g) {
         g.setColour(theme::mid);
         g.setFont(rowFont());
         g.drawText("Address", address_, juce::Justification::centredLeft, true);
-        drawValue(g, addressValue_, shorten(state_.address, valueFont(), static_cast<float>(addressValue_.getWidth() - 2 * kValuePadX)), valueFont());
+        if (!addressChoice_.isVisible())
+            drawValue(g, addressValue_, shorten(state_.address, valueFont(), static_cast<float>(addressValue_.getWidth() - 2 * kValuePadX)), valueFont());
         g.setColour(theme::mid);
         g.setFont(rowFont());
         g.drawText("PIN", pin_, juce::Justification::centredLeft, true);
@@ -359,7 +387,7 @@ void RemoteSetupPage::paint(juce::Graphics& g) {
         if (area.isEmpty()) continue;
         const auto& row = state_.rows[i];
         if (row.waiting) {
-            g.setColour(theme::ember.withAlpha(0.08f));
+            g.setColour(theme::caution.withAlpha(0.08f));        // needs a look: caution (ember means next)
             g.fillRect(area);
         }
         g.setColour(theme::rowLine);
