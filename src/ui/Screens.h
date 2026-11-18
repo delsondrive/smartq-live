@@ -42,8 +42,8 @@ juce::StringArray screenNames();
 // The named screen at that size; an invalid Image for an unknown name, or when the demo band couldn't be made.
 juce::Image renderScreen(const juce::String& name, int width = 1280, int height = 760);
 
-// One PNG per name, "<name>.png" in the folder (made if needed). Each is written to "<name>.png.part" and then moved into
-// place, so a half-written picture never has the real name.
-juce::Result renderScreens(const juce::File& folder);
+// One PNG per name at that size, "<name>.png" in the folder (made if needed). Each is written to "<name>.png.part"
+// and then moved into place, so a half-written picture never has the real name.
+juce::Result renderScreens(const juce::File& folder, int width = 1280, int height = 760);
 
 }  // namespace sqlive::ui

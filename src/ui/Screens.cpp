@@ -494,10 +494,10 @@ juce::Image renderScreen(const juce::String& name, int width, int height) {
     return render(name, width, height);
 }
 
-juce::Result renderScreens(const juce::File& folder) {
+juce::Result renderScreens(const juce::File& folder, int width, int height) {
     if (!folder.createDirectory()) return juce::Result::fail("Couldn't make the folder " + folder.getFullPathName() + ".");
     for (const auto& name : screenNames()) {
-        const auto image = renderScreen(name);
+        const auto image = renderScreen(name, width, height);
         if (!image.isValid()) return juce::Result::fail("The screen \"" + name + "\" couldn't be drawn.");
         const auto target = folder.getChildFile(name + ".png");
         const auto part = folder.getChildFile(name + ".png.part");

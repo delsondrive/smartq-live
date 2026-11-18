@@ -47,3 +47,13 @@ TEST_CASE("the floor tells a blank screen, and an unknown screen draws nothing",
     CHECK(fractionNotBackground(blank) < kDrawnFloor);            // about 0.005
     CHECK_FALSE(ui::renderScreen("no-such-screen").isValid());
 }
+
+TEST_CASE("the screens can be written at a larger size", "[screens]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    sqlive::test::ScopedLook look;
+    sqlive::test::TempDir t;
+    REQUIRE(ui::renderScreens(t.dir(), 1920, 1080).wasOk());
+    const auto image = juce::ImageFileFormat::loadFrom(t.dir().getChildFile("main-view.png"));
+    CHECK(image.getWidth() == 1920);  CHECK(image.getHeight() == 1080);
+    CHECK(fractionNotBackground(image) > kDrawnFloor);
+}

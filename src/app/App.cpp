@@ -28,12 +28,19 @@ juce::File folderAfter(const juce::StringArray& commandLine, const juce::String&
     return juce::File::getCurrentWorkingDirectory().getChildFile(commandLine[at + 1].unquoted());
 }
 
-// --screenshots <folder>: every screen as a PNG in that folder (ui::renderScreens), then the folder printed, or why it
-// failed. No folder given: "screens" in the working folder. The user's settings and band folders are never written.
-// A failure makes the app's exit code 1.
-void makeScreenshots(juce::File folder) {
+// --screenshots <folder> [--size <width>x<height>]: every screen as a PNG in that folder (ui::renderScreens), then the
+// folder printed, or why it failed. No folder given: "screens" in the working folder. No size, or one below the window's
+// smallest (760 x 600): 1280 x 760. The user's settings and band folders are never written. A failure makes the app's
+// exit code 1.
+void makeScreenshots(juce::File folder, const juce::String& size) {
     if (folder == juce::File()) folder = juce::File::getCurrentWorkingDirectory().getChildFile("screens");
-    const auto result = ui::renderScreens(folder);
+    int width = size.upToFirstOccurrenceOf("x", false, true).getIntValue();
+    int height = size.fromFirstOccurrenceOf("x", false, true).getIntValue();
+    if (width < 760 || height < 600 || width > 7680 || height > 4320) {
+        width = 1280;
+        height = 760;
+    }
+    const auto result = ui::renderScreens(folder, width, height);
     std::cout << (result.wasOk() ? folder.getFullPathName() : result.getErrorMessage()) << std::endl;
     if (result.failed())
         if (auto* app = juce::JUCEApplicationBase::getInstance()) app->setApplicationReturnValue(1);   // a script can tell
@@ -149,7 +156,9 @@ public:
 App::App(juce::File settingsFile, const juce::StringArray& commandLine)
     : settings_(settingsFileFor(commandLine, std::move(settingsFile))) {
     if (commandLine.contains("--screenshots")) {
-        makeScreenshots(folderAfter(commandLine, "--screenshots"));
+        const int sizeAt = commandLine.indexOf("--size");
+        makeScreenshots(folderAfter(commandLine, "--screenshots"),
+                        sizeAt >= 0 && sizeAt + 1 < commandLine.size() ? commandLine[sizeAt + 1] : juce::String());
         return;                                                   // wantsWindow() is false: the app quits
     }
     if (commandLine.contains(kRemoteDemo)) {
