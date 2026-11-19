@@ -1,0 +1,257 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixer meters mockup</title>
+<!-- Three frames at 1920 x 1080, one per #hash: #page (Mixer, This song), #output (Mixer, Headphones), #editor (Song
+     editor with the mixer under the tracks). No hash: all three, one under the other. -->
+<style>
+:root{
+  --bg1:#0e0c11;--bg2:#17131b;--glow:#241b2c;--panel:#121016;--field:rgba(255,255,255,.07);
+  --hair:rgba(255,255,255,.11);--text:#f5f2f6;--mid:#c9c2cf;--dim:#9a90a2;
+  --ember:#f29a78;--mint:#6ff0c8;--danger:#ff6f7d;--caution:#ffb547;
+  --s-intro:#8491ff;--s-verse:#6ea8ff;--s-chorus:#ffc163;--s-outro:#a79fb0;
+  --p-keys:#ff9a68;--p-synth:#e070ff;--p-gtr:#a8dc68;--p-bass:#3fd39a;--p-bvs:#5ed8a2;--p-perc:#e9d568;--p-str:#b8c0cc;
+  --click:#f29a78;--cues:#9a90a2;--d1:#4fcabd;--d2:#ff7d93;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#08070a;color:var(--text);font:14px/1.4 "Segoe UI",system-ui,sans-serif}
+.frame{width:1920px;height:1080px;position:relative;overflow:hidden;display:flex;flex-direction:column;
+  background:radial-gradient(1600px 600px at 50% -10%,var(--glow),transparent),linear-gradient(var(--bg1),var(--bg2))}
+body.one .frame{display:none} body.one .frame.shown{display:flex}
+.top{display:flex;align-items:center;gap:22px;padding:0 16px;height:62px;border-bottom:1px solid var(--hair);background:rgba(0,0,0,.25);flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.5px}
+.logo i{width:26px;height:26px;border-radius:50%;border:3px solid var(--mint);display:inline-block}
+.logo small{color:var(--ember);font-weight:600;font-size:12px}
+.tabs{display:flex;gap:4px}
+.tabs span{padding:6px 12px;border-radius:8px;color:var(--dim);font-weight:600;font-size:14px}
+.tabs span.on{background:var(--field);color:var(--text);box-shadow:inset 0 -2px 0 var(--mint)}
+.grow{flex:1}
+.pill{padding:3px 10px;border-radius:20px;font-size:12px;border:1px solid rgba(111,240,200,.35);color:var(--mint);background:rgba(111,240,200,.1)}
+.btn{display:inline-block;padding:6px 12px;border-radius:8px;background:var(--field);border:1px solid var(--hair);color:var(--mid);font-size:13px;font-weight:600;white-space:nowrap}
+.modesw{display:flex;border:1px solid var(--hair);border-radius:8px;overflow:hidden;font-size:12px;font-weight:600}
+.modesw span{padding:7px 12px;color:var(--dim)} .modesw span.on{background:var(--mint);color:#0e0c11}
+.hdr{display:flex;align-items:center;gap:14px;padding:10px 16px;font-size:13px;color:var(--mid)}
+.seg{display:flex;background:var(--field);border-radius:8px;padding:3px}
+.seg span{padding:4px 12px;border-radius:6px;color:var(--dim);font-weight:600}
+.seg span.on{background:rgba(255,255,255,.1);color:var(--text)}
+.dd{display:inline-flex;align-items:center;gap:8px;background:var(--field);border:1px solid var(--hair);border-radius:6px;padding:4px 10px;color:var(--text);min-width:160px;justify-content:space-between}
+.dd::after{content:"â–¾";color:var(--dim);font-size:10px}
+.body{flex:1;display:flex;gap:14px;padding:0 16px 14px;min-height:0}
+.card{background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:12px 14px}
+h4{margin:0 0 8px;font-size:11px;letter-spacing:.8px;color:var(--dim);font-weight:700}
+.side{width:300px;display:flex;flex-direction:column;gap:10px;flex-shrink:0}
+.side p{margin:0;color:var(--mid);font-size:13px}
+.note{color:var(--dim)!important;font-size:12px!important}
+.new{outline:2px dashed var(--mint);outline-offset:3px;position:relative}
+.newtag{position:absolute;right:-4px;top:-12px;background:var(--mint);color:#0e0c11;font-size:10px;font-weight:800;letter-spacing:.6px;padding:1px 6px;border-radius:4px}
+
+/* the mixer */
+.mixer{flex:1;display:flex;background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:14px 10px 12px;min-width:0;position:relative}
+.scale{width:34px;position:relative;flex-shrink:0;margin:50px 0 46px}
+.scale span{position:absolute;right:4px;transform:translateY(50%);font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+.strip{flex:1;display:flex;flex-direction:column;align-items:center;min-width:70px;position:relative;border-radius:8px;padding:0 0 4px}
+.strip.sel{background:rgba(111,240,200,.06);box-shadow:inset 0 0 0 1px rgba(111,240,200,.45)}
+.strip .nm{font-size:12px;font-weight:600;color:var(--mid);white-space:nowrap;height:18px}
+.strip .nm i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--dim);margin-left:4px;vertical-align:middle;opacity:.7}
+.strip .v{font-size:11px;color:var(--dim);height:16px;font-variant-numeric:tabular-nums}
+.clip{width:10px;height:6px;border-radius:2px;background:rgba(255,255,255,.1);margin:4px 0 4px}
+.clip.lit{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+.track{flex:1;width:14px;border-radius:4px;background:rgba(255,255,255,.07);position:relative}
+.track .tick{position:absolute;left:-5px;right:-5px;height:1px;background:rgba(255,255,255,.08)}
+.track .lvl{position:absolute;left:0;right:0;bottom:0;border-radius:4px}
+.track .hold{position:absolute;left:0;right:0;height:2px;border-radius:1px}
+.track .cap{position:absolute;left:-11px;width:36px;height:14px;border-radius:4px;background:#e9e4ec;box-shadow:0 2px 6px rgba(0,0,0,.6);transform:translateY(50%)}
+.strip .m{margin-top:10px;font-size:10px;width:20px;height:16px;border-radius:3px;display:grid;place-items:center;background:var(--field);color:var(--dim);font-weight:700}
+.strip .m.on{background:var(--danger);color:#160f10}
+.strip .m.none{visibility:hidden}
+.strip .ft{font-size:11px;color:var(--dim);height:16px;margin-top:6px;white-space:nowrap}
+.div{width:1px;background:var(--hair);margin:0 8px}
+.total{display:flex;align-items:center;gap:10px;margin-top:8px}
+.hbar{flex:1;height:10px;border-radius:4px;background:rgba(255,255,255,.07);position:relative;overflow:hidden}
+.hbar b{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:linear-gradient(90deg,var(--mint) 70%,var(--caution) 88%,var(--danger))}
+.hbar i{position:absolute;top:0;bottom:0;width:2px;background:var(--text)}
+
+/* song editor */
+.songs{width:200px;border-right:1px solid var(--hair);padding:12px 10px;flex-shrink:0}
+.songs .it{padding:7px 9px;border-radius:7px;color:var(--mid);font-size:13px}
+.songs .it.on{border:1px solid var(--mint);color:var(--text)}
+.center{flex:1;display:flex;flex-direction:column;min-width:0}
+.ehdr{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--hair)}
+.ehdr b{font-size:19px;margin-right:6px}
+.chip{background:var(--field);border:1px solid var(--hair);border-radius:7px;padding:3px 9px;color:var(--mid);font-size:13px}
+.tl{flex:1;position:relative;min-height:0;display:flex;flex-direction:column}
+.lrow{display:flex;height:26px;border-bottom:1px solid rgba(255,255,255,.05);flex-shrink:0}
+.lrow.tall{height:44px}
+.lh{width:150px;flex-shrink:0;border-right:1px solid var(--hair);padding:0 8px;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text)}
+.lh small{margin-left:auto;font-weight:400;color:var(--dim)}
+.lh i{width:8px;height:8px;border-radius:50%}
+.lh.sel{background:rgba(111,240,200,.1);box-shadow:inset 3px 0 0 var(--mint)}
+.lc{flex:1;position:relative;overflow:hidden}
+.sec{position:absolute;top:4px;bottom:4px;border-radius:4px;color:#0e0c11;font-size:12px;font-weight:600;padding:0 7px;line-height:18px}
+.wv{position:absolute;left:4%;top:5px;width:96%;height:calc(100% - 10px)}
+.lanes{flex:1;overflow:hidden;position:relative}
+.vscroll{position:absolute;right:2px;top:4px;width:6px;height:46%;border-radius:3px;background:rgba(255,255,255,.18)}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;left:calc(150px + 37%)}
+.split{height:16px;flex-shrink:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;position:relative;cursor:ns-resize}
+.split .grip{width:44px;height:4px;border-radius:2px;background:rgba(255,255,255,.25)}
+.split .fold{position:absolute;right:10px;top:-1px;font-size:11px;font-weight:700;color:var(--mid);background:var(--field);border:1px solid var(--hair);border-radius:5px;padding:0 8px;line-height:16px}
+.split .lbl{position:absolute;left:12px;font-size:10px;letter-spacing:.8px;font-weight:700;color:var(--dim)}
+.dock{height:400px;flex-shrink:0;display:flex;padding:8px 10px 6px}
+.dock .mixer{border-radius:8px}
+.insp{width:270px;border-left:1px solid var(--hair);padding:12px 10px;flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+.foot{height:32px;border-top:1px solid var(--hair);display:flex;align-items:center;gap:14px;padding:0 12px;font-size:12px;color:var(--dim)}
+kbd{background:var(--field);border:1px solid var(--hair);border-bottom-width:2px;border-radius:4px;padding:0 5px;font:600 11px "Segoe UI";color:var(--text)}
+.callout{position:absolute;background:var(--mint);color:#0e0c11;font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;max-width:330px;box-shadow:0 6px 24px rgba(0,0,0,.6);z-index:5}
+.callout::before{content:attr(data-n);display:inline-block;background:#0e0c11;color:var(--mint);border-radius:50%;width:18px;height:18px;text-align:center;line-height:18px;font-size:11px;margin-right:6px}
+</style>
+</head>
+<body>
+
+<!-- ============ Frame 1: Mixer page, This song ============ -->
+<section class="frame" id="page">
+  <div class="top"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="tabs"><span>Setlists</span><span>Song editor</span><span class="on">Mixer</span><span>Setup</span></div>
+    <span class="grow"></span><span class="pill">Audio Â· Focusrite</span><span class="btn">â†¶ Undo</span><span class="btn">Snapshots</span>
+    <div class="modesw"><span class="on">EDIT</span><span>SHOW</span></div></div>
+  <div class="hdr">Levels for <div class="seg"><span class="on">This song</span><span>Headphones</span><span>FOH</span></div><span class="dd">First Light</span>
+    <span class="grow"></span><span style="color:var(--mint)">â–¶ Playing Â· bar 10.1</span></div>
+  <div class="body">
+    <div class="mixer" data-strips="song"></div>
+    <div class="side">
+      <div class="card"><h4>THIS SONG</h4><p>How loud each part is in this song, for everyone.</p></div>
+      <div class="card"><h4>WHAT EACH OUTPUT GETS Â· LOUDEST MOMENT</h4>
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span>Headphones Â· 1/2</span><span class="note">âˆ’4 dB</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px"><span>FOH Â· 3/4</span><span class="note">âˆ’7 dB</span></div></div>
+      <div class="card"><p class="note">Worked out from the whole song without playing it, so a problem shows up here and in the pre-show check, not on stage.</p></div>
+    </div>
+  </div>
+  <div class="callout" data-n="1" style="left:560px;top:230px">Each fader's track is now a live meter in the part's colour: what the part puts out, after its fader, mute and automation. A thin line holds the recent peak.</div>
+  <div class="callout" data-n="2" style="left:1610px;top:430px">The light over each meter (Perc, here) turns red for 2 s after a clip.</div>
+  <div class="callout" data-n="3" style="left:150px;top:860px">Same marks as the fader: a part peaking at âˆ’12 fills to the fader's âˆ’12.</div>
+</section>
+
+<!-- ============ Frame 2: Mixer page, an output ============ -->
+<section class="frame" id="output">
+  <div class="top"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="tabs"><span>Setlists</span><span>Song editor</span><span class="on">Mixer</span><span>Setup</span></div>
+    <span class="grow"></span><span class="pill">Audio Â· Focusrite</span><span class="btn">â†¶ Undo</span><span class="btn">Snapshots</span>
+    <div class="modesw"><span class="on">EDIT</span><span>SHOW</span></div></div>
+  <div class="hdr">Levels for <div class="seg"><span>This song</span><span class="on">Headphones</span><span>FOH</span></div>
+    <span class="grow"></span><span style="color:var(--mint)">â–¶ Playing Â· First Light Â· bar 10.1</span></div>
+  <div class="body">
+    <div class="mixer" data-strips="output"></div>
+    <div class="side">
+      <div class="card"><h4>HEADPHONES Â· <span style="color:var(--mint)">In-ears</span> Â· OUT 1/2</h4>
+        <p>How much of each role this output gets, in every song.</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;color:var(--mid)">Overall level <span class="chip" style="color:var(--text)">0.0 dB</span></div>
+        <div class="new" style="margin-top:16px;padding:8px 0 2px"><span class="newtag">NEW</span>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--mid)"><span>Playing now</span><span style="color:var(--text);font-variant-numeric:tabular-nums">âˆ’6.8 dB</span></div>
+          <div class="total"><div class="hbar"><b style="width:71%"></b><i style="left:80%"></i></div><div class="clip" style="margin:0"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:3px"><span>âˆ’60</span><span>âˆ’30</span><span>âˆ’12</span><span>0</span></div>
+        </div>
+      </div>
+      <div class="card"><p class="note">The meters over the faders show each role after this output's level for it: what the drummer's in-ears actually get from it.</p></div>
+    </div>
+  </div>
+  <div class="callout" data-n="4" style="left:1610px;top:420px">The output's total, like a DAW's master meter, beside its overall level.</div>
+  <div class="callout" data-n="5" style="left:420px;top:880px">Here a meter shows how much of that role reaches the headphones.</div>
+</section>
+
+<!-- ============ Frame 3: Song editor with the mixer under the tracks ============ -->
+<section class="frame" id="editor">
+  <div class="top"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="tabs"><span>Setlists</span><span class="on">Song editor</span><span>Mixer</span><span>Setup</span></div>
+    <span class="grow"></span><span class="pill">Audio Â· Focusrite</span><span class="btn">â†¶ Undo</span><span class="btn">Snapshots</span>
+    <div class="modesw"><span class="on">EDIT</span><span>SHOW</span></div></div>
+  <div style="flex:1;display:flex;min-height:0">
+    <div class="songs"><h4>ALL SONGS</h4><div class="it on">First Light</div><div class="it">Low Tide</div><div class="it">Run</div></div>
+    <div class="center">
+      <div class="ehdr"><b>First Light</b><span class="chip">100 BPM</span><span class="chip">4/4</span><span class="chip">Count-in 1 bar</span>
+        <span class="grow"></span><span class="chip">Select</span><span class="chip">Draw</span><span class="chip">Automation</span><span class="chip" style="color:var(--text)">â–¶ Play</span></div>
+      <div class="tl">
+        <div class="lrow"><div class="lh" style="color:var(--dim);font-size:11px">BARS</div><div class="lc" id="ruler"></div></div>
+        <div class="lrow"><div class="lh">Sections</div><div class="lc">
+          <span class="sec" style="left:6%;width:24%;background:var(--s-intro)">Intro</span><span class="sec" style="left:30.2%;width:24.8%;background:var(--s-verse)">Verse 1</span>
+          <span class="sec" style="left:55.2%;width:24.8%;background:var(--s-chorus)">Chorus</span><span class="sec" style="left:80.2%;width:19.8%;background:var(--s-outro)">Outro</span></div></div>
+        <div class="lanes">
+          <div class="lrow"><div class="lh"><i style="background:var(--d1)"></i>Guitar 1 <small>MIDI</small></div><div class="lc"></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-keys)"></i>Keys</div><div class="lc"><canvas class="wv" data-c="--p-keys"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-synth)"></i>Synth</div><div class="lc"><canvas class="wv" data-c="--p-synth"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-gtr)"></i>Guitar</div><div class="lc"><canvas class="wv" data-c="--p-gtr"></canvas></div></div>
+          <div class="lrow tall"><div class="lh sel"><i style="background:var(--p-bass)"></i>Bass</div><div class="lc" style="background:rgba(111,240,200,.04)"><canvas class="wv" data-c="--p-bass"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-bvs)"></i>BVs</div><div class="lc"><canvas class="wv" data-c="--p-bvs"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-perc)"></i>Perc</div><div class="lc"><canvas class="wv" data-c="--p-perc"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-str)"></i>Strings</div><div class="lc"><canvas class="wv" data-c="--p-str"></canvas></div></div>
+          <div class="vscroll"></div>
+        </div>
+        <div class="playhead"></div>
+      </div>
+      <div class="split"><span class="lbl">MIXER Â· THIS SONG</span><span class="grip"></span><span class="fold">â–¾ Hide</span></div>
+      <div class="dock"><div class="mixer" data-strips="song" data-sel="Bass"></div></div>
+      <div class="foot">Bar <b style="color:var(--mint)">10.1</b> 0:21 <kbd>Space</kbd> play from the cursor <kbd>Del</kbd> delete <span class="grow"></span><span style="color:var(--mint)">Saved âœ“</span></div>
+    </div>
+    <div class="insp">
+      <div class="card"><h4>SELECTED Â· BASS</h4>
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--mid);margin:6px 0">Level <span class="chip" style="color:var(--text)">0.0 dB</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--mid);margin:6px 0">Role <span class="chip" style="color:var(--text)">Bass</span></div></div>
+    </div>
+  </div>
+  <div class="callout" data-n="6" style="left:1100px;top:470px">The tracks scroll up and down above the mixer, under the pinned ruler.</div>
+  <div class="callout" data-n="7" style="left:380px;top:545px">Drag this line to make the mixer taller or shorter; â–¾ Hide folds it away. Remembered per computer.</div>
+  <div class="callout" data-n="8" style="left:960px;top:300px">Click a track or a strip: both light up, and the other scrolls to it.</div>
+</section>
+
+<script>
+// The fader's travel: the bottom 15% covers -60 to -30 dB, the next 60% -30 to 0 dB, the top 25% 0 to +6 dB.
+const frac = db => db <= -30 ? (Math.max(db, -60) + 60) / 30 * .15 : db <= 0 ? .15 + (db + 30) / 30 * .6 : .75 + Math.min(db, 6) / 6 * .25;
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+// name, colour var, fader dB, meter dB now, peak hold dB, muted, clip lit, in-ears only, group
+const SONG = [["Click","--click",0,-8,-6,0,0,1,0],["Cues","--cues",-9,-60,-60,0,0,1,0],
+  ["Keys","--p-keys",-3,-11,-8,0,0,0,1],["Synth","--p-synth",-6,-19,-15,0,0,0,1],["Guitar","--p-gtr",-2,-9,-5,0,0,0,1],
+  ["Bass","--p-bass",0,-7,-4,0,0,0,1],["BVs","--p-bvs",-4,-60,-60,1,0,0,1],["Perc","--p-perc",2,-1,0.6,0,1,0,1],["Strings","--p-str",-8,-24,-20,0,0,0,1]];
+const OUT = [["Click","--click",0,-8,-6,0,0,1,0],["Cues","--cues",-3,-60,-60,0,0,1,0],
+  ["Keys","--p-keys",-6,-17,-14,0,0,0,1],["Synth","--p-synth",-12,-31,-27,0,0,0,1],["Guitar","--p-gtr",-4,-13,-9,0,0,0,1],
+  ["Bass","--p-bass",0,-8,-5,0,0,0,1],["BVs","--p-bvs",null,-60,-60,0,0,0,1],["Perc","--p-perc",-6,-9,-7,0,0,0,1],["Strings","--p-str",-12,-36,-30,0,0,0,1]];
+const fmt = db => db === null ? "off" : (db > 0 ? "+" : "") + db.toFixed(1);
+for (const mixer of document.querySelectorAll(".mixer[data-strips]")) {
+  const rows = mixer.dataset.strips === "song" ? SONG : OUT, sel = mixer.dataset.sel;
+  const scale = document.createElement("div"); scale.className = "scale";
+  for (const m of [6,0,-6,-12,-24,-30,-60]) scale.innerHTML += `<span style="bottom:${frac(m)*100}%">${m > 0 ? "+" + m : m}</span>`;
+  mixer.appendChild(scale);
+  rows.forEach((r, i) => {
+    const [name, col, fader, now, hold, muted, clip, ears, group] = r;
+    if (i > 0 && rows[i - 1][8] !== group) mixer.insertAdjacentHTML("beforeend", '<div class="div"></div>');
+    const c = css(col);
+    const ticks = [6,0,-6,-12,-24,-30].map(m => `<span class="tick" style="bottom:${frac(m)*100}%"></span>`).join("");
+    const lvl = muted ? "" : `<span class="lvl" data-db="${now}" style="height:${frac(now)*100}%;background:linear-gradient(0deg,${c}cc,${c})"></span>`;
+    const hl = muted || hold <= -60 ? "" : `<span class="hold" style="bottom:${frac(hold)*100}%;background:${c}"></span>`;
+    const cap = fader === null ? "" : `<span class="cap" style="bottom:${frac(fader)*100}%"></span>`;
+    const foot = name === "Click" ? "Wood block" : fader === null ? "not sent" : "";
+    mixer.insertAdjacentHTML("beforeend", `<div class="strip${name === sel ? " sel" : ""}"><div class="nm">${name}${ears ? "<i></i>" : ""}</div>
+      <div class="v">${fmt(fader)}</div><div class="clip${clip ? " lit" : ""}"></div><div class="track">${ticks}${lvl}${hl}${cap}</div>
+      <div class="m${muted ? " on" : ""}${group === 0 ? " none" : ""}">M</div><div class="ft">${foot}</div></div>`);
+  });
+}
+// Waveforms and the ruler.
+for (const cv of document.querySelectorAll("canvas.wv")) {
+  const w = cv.width = cv.clientWidth || 1200, h = cv.height = cv.clientHeight || 34, g = cv.getContext("2d");
+  g.fillStyle = css(cv.dataset.c); let seed = cv.dataset.c.length * 7919;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let x = 0; x < w; x += 2) { const a = (0.35 + 0.65 * rnd()) * h / 2; g.fillRect(x, h / 2 - a, 1.4, a * 2); }
+}
+const ruler = document.getElementById("ruler");
+for (let b = 1; b <= 16; b++) ruler.insertAdjacentHTML("beforeend", `<span style="position:absolute;left:${6 + (b - 1) * 94 / 16}%;top:5px;font-size:11px;color:var(--dim)">${b}</span>`);
+// One frame per #hash, for the screenshots.
+if (location.hash) { document.body.classList.add("one"); document.querySelector(location.hash)?.classList.add("shown"); }
+// Moving meters when opened in a browser (not in the screenshots).
+if (!navigator.webdriver && !/Headless/.test(navigator.userAgent)) setInterval(() => {
+  for (const l of document.querySelectorAll(".lvl")) {
+    const base = +l.dataset.db; if (base <= -60) continue;
+    l.style.height = frac(base - Math.random() * 9) * 100 + "%";
+  }
+}, 80);
+</script>
+</body>
+</html>
