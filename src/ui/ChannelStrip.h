@@ -36,11 +36,17 @@ namespace sqlive::ui {
 // gesture as LevelFader did: a press starts it with the value as it is (0 for a linked pan), each move that changes the
 // value reports it, the release ends it; a double-click or wheel notch is a gesture of its own (start and end together).
 // So a press and release without a move reports no value of its own, and changes nothing. M, S and the link button act
-// on the press: onMute(!muted), onSolo(!soloed), onLink(!linked). Any press calls onSelect first. Nothing here takes the
-// keyboard.
+// on the press: onMute(!muted), onSolo(!soloed), onLink(!linked). Any press calls onSelect first.
+//
+// Typing (the mixer decides whether it may, in Edit mode only): a press on the level box asks for a typed level,
+// onTypeRequest(Field::Level), at once; a click (a press and release without a move) on the pan bar's words asks for a
+// typed pan, onTypeRequest(Field::Pan), once the double-click time has passed without a second press, so a double-click
+// there still centres the pan. flash() shows that box (the level box, or the pan bar) danger red once, for a third of a
+// second, when what was typed couldn't be read. The strip itself never takes the keyboard: the mixer does.
 class ChannelStrip : public juce::Component {
 public:
     enum class Size { Full, Compact };
+    enum class Field { Level, Pan };                              // what a typed value sets
     static constexpr float kMinDb = -60.0f, kMaxDb = 6.0f;
     // The travel: the fraction of the way up for a level, and the level at a fraction (limited to the range).
     static float dbAtFraction(float fromBottom01);
@@ -79,10 +85,15 @@ public:
     std::function<void(bool muted)> onMute;
     std::function<void(bool soloed)> onSolo;
     std::function<void()> onPeakReset, onSelect;
+    std::function<void(Field)> onTypeRequest;
+
+    void flash(Field);                                            // that box danger red once
+    std::optional<Field> flashing() const { return flash_; }
 
     // Where each part is, in the strip's coordinates; empty when the strip has none.
     juce::Rectangle<int> panArea() const;                         // the pan bar
     juce::Rectangle<int> panBoxArea() const { return panArea(); } // where a typed pan goes
+    juce::Rectangle<int> panTextArea() const;                     // the pan bar's words: a click there types a pan
     juce::Rectangle<int> linkArea() const;
     juce::Rectangle<int> muteArea() const;
     juce::Rectangle<int> soloArea() const;
@@ -129,6 +140,9 @@ private:
 
     Drag drag_ = Drag::None;
     float dragFraction_ = 0.0f, dragPan_ = 0.0f, lastMouse_ = 0.0f, wheelAccumulated_ = 0.0f;
+    bool panPressOnWords_ = false, panMoved_ = false;              // this pan press: on the words? moved since?
+    int typeTicket_ = 0, flashTicket_ = 0;                        // the latest pending pan type request, and flash
+    std::optional<Field> flash_;
 };
 
 }  // namespace sqlive::ui

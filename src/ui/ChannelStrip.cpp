@@ -31,6 +31,7 @@ constexpr float kCapWidth = 30.0f, kCapHeight = 46.0f, kDimmed = 0.55f;
 constexpr float kWheelStepDb = 0.5f, kFineDrag = 0.25f, kSmoothWheelNotch = 0.1f, kPanRange = 200.0f;
 constexpr float kFallDb = 1.5f;
 constexpr double kHoldMs = 1500.0, kClipMs = 2000.0;
+constexpr int kFlashMs = 330, kWordsRoom = 10, kMinWordsWidth = 24;
 
 // The travel's three stretches: (fraction at the start, dB at the start), up to the next.
 constexpr float kKneeLowFraction = 0.15f, kKneeLowDb = -30.0f, kKneeHighFraction = 0.75f, kKneeHighDb = 0.0f;
@@ -135,6 +136,17 @@ void ChannelStrip::resetPeak() {
     repaint(boxRow_);
 }
 
+void ChannelStrip::flash(Field field) {
+    flash_ = field;
+    const int ticket = ++flashTicket_;
+    repaint();
+    juce::Timer::callAfterDelay(kFlashMs, [safe = juce::Component::SafePointer<ChannelStrip>(this), ticket] {
+        if (safe == nullptr || safe->flashTicket_ != ticket) return;
+        safe->flash_.reset();
+        safe->repaint();
+    });
+}
+
 juce::String ChannelStrip::levelText() const { return strip_.db ? parts::withTrueMinus(formatStripDb(*strip_.db)) : juce::String("off"); }
 
 juce::String ChannelStrip::peakText() const { return peak_ ? parts::withTrueMinus(formatStripDb(*peak_)) : kMinusInfinity; }
@@ -169,6 +181,14 @@ juce::Rectangle<int> ChannelStrip::panArea() const {
     if (!hasPanBar()) return {};
     const int left = panRow_.getCentreX() - kPanWidth / 2;
     return {left, panRow_.getY(), showsLink() ? kPanLinkedWidth : kPanWidth, kPanHeight};
+}
+
+// The words are drawn centred on the bar (StripParts' paintPanBar); a few pixels of room either side of them.
+juce::Rectangle<int> ChannelStrip::panTextArea() const {
+    const auto bar = panArea();
+    if (bar.isEmpty()) return {};
+    const int words = widthInPixels(theme::font(theme::sizeCaption, true), panText()) + kWordsRoom;
+    return bar.withSizeKeepingCentre(juce::jlimit(std::min(kMinWordsWidth, bar.getWidth()), bar.getWidth(), words), bar.getHeight());
 }
 
 juce::Rectangle<int> ChannelStrip::linkArea() const {
@@ -233,6 +253,7 @@ void ChannelStrip::paint(juce::Graphics& g) {
         parts::paintPanBar(g, panArea().toFloat(), strip_.colour, strip_.linked ? std::nullopt : strip_.pan, strip_.panChangedTonight);
         if (dimmed) g.endTransparencyLayer();
         if (showsLink()) parts::paintLinkButton(g, linkArea().toFloat(), strip_.linked);
+        if (flash_ == Field::Pan) parts::paintNumberBox(g, panArea().toFloat(), panText(), theme::text, true);   // couldn't be read
     }
 
     if (strip_.canMute) {
@@ -243,7 +264,8 @@ void ChannelStrip::paint(juce::Graphics& g) {
         parts::paintButton(g, soloArea().toFloat(), "S", strip_.soloed ? parts::ButtonLook::On : parts::ButtonLook::Off, theme::caution);
 
     if (!boxRow_.isEmpty()) {
-        parts::paintNumberBox(g, levelBoxArea().toFloat(), levelText(), strip_.changedTonight ? theme::caution : theme::text, false);
+        parts::paintNumberBox(g, levelBoxArea().toFloat(), levelText(), strip_.changedTonight ? theme::caution : theme::text,
+                              flash_ == Field::Level);
         parts::paintNumberBox(g, peakBoxArea().toFloat(), peakText(), theme::dim, peak_ && *peak_ > 0.0f);
     }
 
@@ -270,6 +292,7 @@ void ChannelStrip::paint(juce::Graphics& g) {
 // ---- The mouse -------------------------------------------------------------------------------------------------------
 
 void ChannelStrip::mouseDown(const juce::MouseEvent& e) {
+    ++typeTicket_;                                                // a second press: no typed pan after all
     if (e.mods.isPopupMenu()) return;
     if (onSelect) onSelect();
     const auto at = e.getPosition();
@@ -279,6 +302,8 @@ void ChannelStrip::mouseDown(const juce::MouseEvent& e) {
         if (onMute) onMute(!strip_.muted);
     } else if (soloArea().contains(at)) {
         if (onSolo) onSolo(!strip_.soloed);
+    } else if (levelBoxArea().contains(at)) {
+        if (onTypeRequest) onTypeRequest(Field::Level);
     } else if (peakBoxArea().contains(at)) {
         resetPeak();
         if (onPeakReset) onPeakReset();
@@ -286,6 +311,8 @@ void ChannelStrip::mouseDown(const juce::MouseEvent& e) {
         drag_ = Drag::Pan;
         dragPan_ = strip_.linked ? 0.0f : static_cast<float>(*strip_.pan);
         lastMouse_ = e.position.x;
+        panPressOnWords_ = e.getNumberOfClicks() == 1 && panTextArea().contains(at);
+        panMoved_ = false;
         if (onPanDrag) onPanDrag(juce::roundToInt(dragPan_), true, false);
     } else if (faderArea().contains(at)) {
         drag_ = Drag::Fader;
@@ -312,6 +339,7 @@ void ChannelStrip::mouseDrag(const juce::MouseEvent& e) {
         lastMouse_ = e.position.x;
         const int pan = juce::roundToInt(dragPan_);
         if (strip_.linked ? pan == 0 : strip_.pan == pan) return;   // a linked bar unlinks only once it moves off the centre
+        panMoved_ = true;
         strip_.linked = false;
         strip_.pan = pan;
         repaint();
@@ -324,11 +352,20 @@ void ChannelStrip::mouseUp(const juce::MouseEvent&) {
     drag_ = Drag::None;
     if (ended == Drag::Fader && onLevelDrag) onLevelDrag(toTenth(currentDb()), false, true);
     if (ended == Drag::Pan && onPanDrag) onPanDrag(strip_.linked ? 0 : strip_.pan.value_or(0), false, true);
+    if (ended == Drag::Pan && panPressOnWords_ && !panMoved_) {
+        // A click on the words: a typed pan, unless a second press comes in time to make it a double-click (the centre).
+        const int ticket = ++typeTicket_;
+        juce::Timer::callAfterDelay(juce::MouseEvent::getDoubleClickTimeout(), [safe = juce::Component::SafePointer<ChannelStrip>(this), ticket] {
+            if (safe != nullptr && safe->typeTicket_ == ticket && safe->onTypeRequest) safe->onTypeRequest(Field::Pan);
+        });
+    }
+    panPressOnWords_ = false;
 }
 
 // The second press of a double-click has already started a gesture, which its release ends: the centre or 0 dB is a move
 // within it. Called on its own (no press), it is a gesture of its own.
 void ChannelStrip::mouseDoubleClick(const juce::MouseEvent& e) {
+    ++typeTicket_;
     if (e.mods.isPopupMenu()) return;
     const auto at = e.getPosition();
     if (panArea().contains(at)) {

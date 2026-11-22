@@ -11,6 +11,7 @@
 #include "app/Session.h"
 #include "ui/ChannelStrip.h"
 #include "ui/MixerState.h"
+#include "ui/StripValueEditor.h"
 
 namespace sqlive::ui {
 
@@ -22,8 +23,33 @@ namespace sqlive::ui {
 // A fader or pan drag is one Session::setLevel or setPan gesture (one undo step in Edit mode, tonight's in Show mode: the
 // session decides); a press or release without a move changes nothing. Dragging a linked pan unlinks it in the same
 // gesture. "M" mutes a part in the song (Session::setMute) or stops or starts sending a role to the output (nullopt, or
-// 0 dB); "S" solos a part (Session::setSolo); the link button unlinks a role at the centre, or links it again. Nothing
-// here ever takes the keyboard, so Show mode's keys reach the window.
+// 0 dB); "S" solos a part (Session::setSolo); the link button unlinks a role at the centre, or links it again.
+//
+// The keyboard (the spec's "The keyboard", Edit mode only). A press on a strip selects it (its mint outline and glow) and
+// gives the mixer the keyboard, remembering where the keys went before; selectedStrip() is it, -1 none. The selected
+// strip then takes:
+//  - ↑ / ↓: its level ±0.5 dB, ±0.1 with Shift, within -60…+6, to a tenth; from "off" (not sent) ↑ sends it at -60, ↓
+//    does nothing;
+//  - ← / →: its pan ±5, ±1 with Shift, within L 100…R 100 (nothing on a strip without a pan bar). On a linked output strip
+//    the first press gives it its own pan, unlinking it, in the same gesture as the run;
+//  - Tab / Shift+Tab: the next / the previous strip, wrapping round;
+//  - M: what its M does; S: what its S does (only where it has one);
+//  - Enter types its level, Shift+Enter its pan (a StripValueEditor over the level box or the pan bar, starting from what
+//    the box says); a press on the level box, or a click on the pan's words, does the same. Enter sets what was typed (one
+//    undo step), so does the keyboard going elsewhere; Esc leaves the value as it was. What model::parseDb or parsePan
+//    can't read leaves it too, and the box flashes danger red once; "off" (-inf, −∞) is read only on an output view,
+//    where it stops sending the role. Words not changed from what the box said change nothing (a linked pan starts at
+//    "C" and stays linked);
+//  - Esc (not typing): no strip selected, and the keys go back where they went before.
+// A run of arrow presses on one strip is one gesture, so one undo step: it ends when another strip is selected, another
+// key or the mouse is used, the keyboard goes elsewhere, or a second passes without an arrow (clockMs). Every other key
+// (Space, Ctrl+Z, Ctrl+Y) goes on to the components around it. onStripSelected tells of every change of selection made
+// here (a press, Tab, Esc, entering Show mode, the strips made again without the selected one); selectStrip(), the
+// tracks' way in, tells nothing back.
+//
+// Show mode: the mixer never takes the keyboard. Nothing is selected (not even by selectStrip), keyPressed() answers
+// false to every key, nothing in it wants the keyboard, and no typing opens, so every key reaches the window and its
+// ShowController. Entering Show mode drops the selection and any typing (what was typed isn't set).
 //
 // It refreshes on Session::changes() while it and its parents are visible, and on show(). It keeps one MeterReader and,
 // while shown, gives every strip a frame of its meter 30 times a second (tickMeters). The first frame after it was
@@ -48,6 +74,16 @@ public:
     void toggleMute(int stripIndex);                              // what a strip's "M" does; nothing for a strip without one
     void tickMeters(double nowMs);                                // one frame of every strip's meter (the timer's); for tests
 
+    // The keyboard (see above).
+    void selectStrip(int index);                                  // -1 or out of range: none; tells nothing back
+    int selectedStrip() const { return selected_; }
+    std::function<void(int index)> onStripSelected;               // a change of selection made here; -1: none
+    bool takesKeys() const;                                       // Edit mode, and a strip selected; never in Show mode
+    StripValueEditor* typing();                                   // the field being typed into; nullptr when none
+    std::function<double()> clockMs = [] { return juce::Time::getMillisecondCounterHiRes(); };   // for the runs of arrows
+
+    bool keyPressed(const juce::KeyPress&) override;
+    void focusLost(FocusChangeType) override;
     void paint(juce::Graphics&) override;
     void resized() override;
     void visibilityChanged() override;
@@ -68,6 +104,23 @@ private:
     void resetPeaksIfASongStarted();
     app::MeterReader::Peak read(const MixerState::Meter&);
 
+    bool editMode() const;
+    void pressed(int stripIndex);                                 // a press on a strip: selects it, in Edit mode
+    void choose(int index);                                       // selects it and tells (Tab)
+    void setSelection(int index);
+    void takeKeys();
+    void giveKeysBack();
+    void dropKeys();                                              // nothing selected, no typing (Show mode)
+    juce::String runGesture(int stripIndex);                      // this arrow press's gesture: the run's, or a new one
+    void endRun() { runStrip_ = -1; }
+    void stepLevel(int stripIndex, float stepDb);
+    void stepPan(int stripIndex, int step);
+    void startTyping(int stripIndex, ChannelStrip::Field);
+    void finishTyping(bool keep);
+    void setTyped(int stripIndex, ChannelStrip::Field, const juce::String& text);
+    juce::Rectangle<int> typingBox(ChannelStrip&, ChannelStrip::Field) const;
+    void scrollTo(int stripIndex);
+
     app::Session& session_;
     app::MeterReader meters_;
     juce::String songId_, outputId_;
@@ -81,6 +134,16 @@ private:
     juce::Viewport viewport_;
     std::unique_ptr<Row> row_;
     std::vector<std::unique_ptr<ChannelStrip>> strips_;
+
+    int selected_ = -1;
+    app::LevelTarget selectedTarget_{};                           // the selected strip's, to find it when strips are made again
+    juce::Component::SafePointer<juce::Component> keysBefore_;    // where the keys went before a strip was selected
+    int runStrip_ = -1;                                           // the strip of the run of arrows going on; -1 none
+    double runLastMs_ = 0.0;
+    juce::String runGesture_;
+    StripValueEditor editor_;
+    int typingStrip_ = -1;                                        // the strip being typed on; -1 none
+    juce::String typingFrom_;                                     // the words it started from
 };
 
 }  // namespace sqlive::ui

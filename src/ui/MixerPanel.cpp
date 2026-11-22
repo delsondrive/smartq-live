@@ -1,7 +1,10 @@
 #include "ui/MixerPanel.h"
 
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
+#include "model/Words.h"
 #include "ui/Helpers.h"
 #include "ui/Theme.h"
 
@@ -15,6 +18,9 @@ namespace {
 // the main view's .console with 28 px along the top for its caption.
 constexpr int kPad = 10, kCompactTop = 28, kStripGap = 6, kDividerWidth = 10, kDividerLineX = 4, kDividerInset = 8;
 constexpr int kFramesPerSecond = 30;
+constexpr double kRunGapMs = 1000.0;                              // a run of arrows ends after a second without one
+constexpr float kArrowDb = 0.5f, kFineArrowDb = 0.1f;
+constexpr int kArrowPan = 5, kFineArrowPan = 1;
 
 }  // namespace
 
@@ -42,13 +48,16 @@ MixerPanel::MixerPanel(app::Session& session)
     viewport_.setViewedComponent(row_.get(), false);
     viewport_.setScrollBarsShown(false, true, false, true);
     addAndMakeVisible(viewport_);
-    keepOffKeyboard(*this);
+    keepOffKeyboard(*this);                                       // until a strip is selected, in Edit mode
+    editor_.onDone = [this](bool keep) { finishTyping(keep); };
     songSerial_ = session_.now().playingSerial;
     session_.changes().addChangeListener(this);
     startTimerHz(kFramesPerSecond);
 }
 
 MixerPanel::~MixerPanel() {
+    editor_.onDone = nullptr;                                     // nothing typed is set while it goes
+    editor_.stop();
     stopTimer();
     session_.changes().removeChangeListener(this);
 }
@@ -95,12 +104,17 @@ void MixerPanel::wire(ChannelStrip& strip, int index) {
     strip.onMute = [this, index](bool) { toggleMute(index); };
     strip.onSolo = [this, index](bool on) { setSoloed(index, on); };
     strip.onLink = [this, index](bool linked) { setLinked(index, linked); };
+    strip.onSelect = [this, index] { pressed(index); };
+    strip.onTypeRequest = [this, index](ChannelStrip::Field field) {
+        if (editMode() && selected_ == index) startTyping(index, field);
+    };
 }
 
 // A press starts a gesture and a release ends it; neither is a level of its own (a fader that isn't sent reports -60
 // there, which isn't "off"). Each move, and a double-click or wheel notch (a gesture of its own), is, except one that
 // leaves a fader that isn't sent at the bottom: a pixel's wobble, or a notch down, doesn't start sending it at -60.
 void MixerPanel::faderMoved(int stripIndex, float db, bool gestureStart, bool gestureEnd) {
+    endRun();                                                     // the mouse ends a run of arrows
     const auto* strip = stateOf(stripIndex);
     if (strip == nullptr) return;
     if (gestureStart) gesture_ = juce::Uuid().toString();
@@ -116,6 +130,7 @@ void MixerPanel::faderMoved(int stripIndex, float db, bool gestureStart, bool ge
 // As the fader: the press and the release are no pan of their own. A move on a linked role's bar gives it its own pan,
 // unlinking it, in the same gesture (the session makes it one undo step, or tonight's own pan in a show).
 void MixerPanel::panMoved(int stripIndex, int pan, bool gestureStart, bool gestureEnd) {
+    endRun();
     const auto* strip = stateOf(stripIndex);
     if (strip == nullptr || !strip->pan) return;
     if (gestureStart) gesture_ = juce::Uuid().toString();
@@ -139,7 +154,10 @@ void MixerPanel::setSoloed(int stripIndex, bool soloed) {
     refresh(true);
 }
 
-void MixerPanel::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(); }
+void MixerPanel::changeListenerCallback(juce::ChangeBroadcaster*) {
+    if (!editMode()) dropKeys();                                  // hidden or not: Show mode never has the keys
+    refresh();
+}
 
 void MixerPanel::visibilityChanged() {
     if (!isVisible()) stale_ = true;
@@ -215,6 +233,7 @@ void MixerPanel::refresh(bool force) {
     if (newMeters) stale_ = true;
     state_ = std::move(next);
     if (!sameStrips) {
+        finishTyping(false);                                      // its strip goes
         // Made again only when the strips themselves change, never during a drag of one of them.
         strips_.clear();
         for (std::size_t i = 0; i < state_.strips.size(); ++i) {
@@ -227,6 +246,16 @@ void MixerPanel::refresh(bool force) {
     const auto size = compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full;
     for (std::size_t i = 0; i < strips_.size(); ++i) strips_[i]->set(state_.strips[i], size);
     if (!sameStrips) layoutRow();
+    if (!sameStrips && selected_ >= 0) {
+        // The selected strip, if it is still there; otherwise none.
+        const auto found = std::find_if(state_.strips.begin(), state_.strips.end(), [&](const MixerState::Strip& s) { return s.target == selectedTarget_; });
+        const int index = found != state_.strips.end() ? static_cast<int>(found - state_.strips.begin()) : -1;
+        setSelection(index);
+        if (index < 0) {
+            giveKeysBack();
+            if (onStripSelected) onStripSelected(-1);
+        }
+    }
     if (stateChanged && onStateChanged) onStateChanged();
 }
 
@@ -236,7 +265,12 @@ void MixerPanel::resized() {
     auto area = getLocalBounds().reduced(kPad);
     if (compact_) area.setTop(std::min(area.getBottom(), getLocalBounds().getY() + kCompactTop));
     viewport_.setBounds(area);
-    keepOffKeyboard(viewport_);                                   // the scroll bars, made again when the look changes
+    // The viewport and its scroll bars (made again when the look changes) never take the keyboard; the strips are kept
+    // off it as they are made, and the typing field, while it is open, takes it.
+    viewport_.setWantsKeyboardFocus(false);
+    viewport_.setMouseClickGrabsKeyboardFocus(false);
+    keepOffKeyboard(viewport_.getHorizontalScrollBar());
+    keepOffKeyboard(viewport_.getVerticalScrollBar());
     layoutRow();
 }
 
@@ -266,7 +300,232 @@ void MixerPanel::layoutRow() {
         strips_[static_cast<std::size_t>(i)]->setBounds(x, 0, width, rowHeight);
         x += width;
     }
+    if (auto* strip = stripAt(typingStrip_)) editor_.place(typingBox(*strip, editor_.field()));
     row_->repaint();
+}
+
+// ---- The keyboard ----------------------------------------------------------------------------------------------------
+
+bool MixerPanel::editMode() const { return session_.mode() == app::Mode::Edit; }
+
+bool MixerPanel::takesKeys() const { return editMode() && selected_ >= 0; }
+
+StripValueEditor* MixerPanel::typing() { return typingStrip_ >= 0 ? &editor_ : nullptr; }
+
+void MixerPanel::selectStrip(int index) {
+    endRun();
+    setSelection(editMode() ? index : -1);
+    if (selected_ < 0) giveKeysBack();
+}
+
+// Marks the strip (and none other) and keeps the panel's wish for the keyboard to match. Always applied, so strips made
+// again are marked too.
+void MixerPanel::setSelection(int index) {
+    if (!juce::isPositiveAndBelow(index, static_cast<int>(strips_.size()))) index = -1;
+    if (index != selected_) endRun();
+    if (typingStrip_ >= 0 && typingStrip_ != index) finishTyping(true);   // as a click elsewhere would
+    selected_ = index;
+    if (index >= 0) selectedTarget_ = state_.strips[static_cast<std::size_t>(index)].target;
+    for (std::size_t i = 0; i < strips_.size(); ++i) strips_[i]->setSelected(static_cast<int>(i) == selected_);
+    setWantsKeyboardFocus(takesKeys());
+    if (index >= 0) scrollTo(index);
+}
+
+void MixerPanel::pressed(int stripIndex) {
+    if (!editMode()) return;                                      // Show mode: the mouse works, the keys stay the show's
+    if (typingStrip_ >= 0) finishTyping(true);                    // a press outside the field sets what was typed
+    endRun();
+    const bool changed = stripIndex != selected_;
+    setSelection(stripIndex);
+    takeKeys();
+    if (changed && onStripSelected) onStripSelected(selected_);
+}
+
+void MixerPanel::choose(int index) {
+    const bool changed = index != selected_;
+    setSelection(index);
+    if (changed && onStripSelected) onStripSelected(selected_);
+}
+
+void MixerPanel::takeKeys() {
+    if (!takesKeys()) return;
+    if (!hasKeyboardFocus(true)) {
+        auto* before = juce::Component::getCurrentlyFocusedComponent();
+        keysBefore_ = before != nullptr && before != this && !isParentOf(before) ? before : nullptr;
+    }
+    if (isShowing()) grabKeyboardFocus();
+}
+
+void MixerPanel::giveKeysBack() {
+    setWantsKeyboardFocus(takesKeys());
+    if (!hasKeyboardFocus(true)) return;
+    auto* before = keysBefore_.getComponent();
+    keysBefore_ = nullptr;
+    if (before != nullptr && before->isShowing()) before->grabKeyboardFocus();
+    else giveAwayKeyboardFocus();
+}
+
+void MixerPanel::dropKeys() {
+    if (typingStrip_ >= 0) finishTyping(false);
+    endRun();
+    if (selected_ < 0) {
+        setWantsKeyboardFocus(false);
+        return;
+    }
+    setSelection(-1);
+    giveKeysBack();
+    if (onStripSelected) onStripSelected(-1);
+}
+
+void MixerPanel::focusLost(FocusChangeType) { endRun(); }
+
+bool MixerPanel::keyPressed(const juce::KeyPress& key) {
+    if (!takesKeys()) return false;
+    const auto mods = key.getModifiers();
+    const int code = key.getKeyCode();
+    const bool shift = mods.isShiftDown();
+    if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown()) {   // the app's (Ctrl+Z, Ctrl+Y), never the mixer's
+        endRun();
+        return false;
+    }
+    if (code == juce::KeyPress::upKey || code == juce::KeyPress::downKey) {
+        stepLevel(selected_, (code == juce::KeyPress::upKey ? 1.0f : -1.0f) * (shift ? kFineArrowDb : kArrowDb));
+        return true;
+    }
+    if (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey) {
+        stepPan(selected_, (code == juce::KeyPress::rightKey ? 1 : -1) * (shift ? kFineArrowPan : kArrowPan));
+        return true;
+    }
+    endRun();                                                     // any other key ends a run of arrows
+    const int count = static_cast<int>(strips_.size());
+    if (code == juce::KeyPress::tabKey) {
+        if (count > 0) choose((selected_ + (shift ? count - 1 : 1)) % count);
+        return true;
+    }
+    if (code == juce::KeyPress::escapeKey) {
+        setSelection(-1);
+        giveKeysBack();
+        if (onStripSelected) onStripSelected(-1);
+        return true;
+    }
+    if (code == juce::KeyPress::returnKey) {
+        startTyping(selected_, shift ? ChannelStrip::Field::Pan : ChannelStrip::Field::Level);
+        return true;
+    }
+    const auto letter = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(code));
+    if (letter == 'm') {
+        toggleMute(selected_);
+        return true;
+    }
+    if (letter == 's') {
+        if (const auto* strip = stateOf(selected_); strip != nullptr && strip->canSolo) setSoloed(selected_, !strip->soloed);
+        return true;
+    }
+    return false;                                                 // Space and the rest: the page's, the app's
+}
+
+juce::String MixerPanel::runGesture(int stripIndex) {
+    const double now = clockMs ? clockMs() : juce::Time::getMillisecondCounterHiRes();
+    if (runStrip_ != stripIndex || now - runLastMs_ > kRunGapMs || runGesture_.isEmpty()) runGesture_ = juce::Uuid().toString();
+    runStrip_ = stripIndex;
+    runLastMs_ = now;
+    return runGesture_;
+}
+
+// From the session, not the state shown: an undo may have changed it since the strips were last drawn.
+void MixerPanel::stepLevel(int stripIndex, float stepDb) {
+    const auto* strip = stateOf(stripIndex);
+    if (strip == nullptr) return;
+    const auto target = strip->target;
+    const auto gesture = runGesture(stripIndex);
+    const auto now = session_.level(target);
+    if (!now && stepDb < 0.0f) return;                            // not sent: down leaves it so
+    const float next = now ? toTenth(juce::jlimit(ChannelStrip::kMinDb, ChannelStrip::kMaxDb, *now + stepDb)) : ChannelStrip::kMinDb;
+    if (now && *now == next) return;
+    session_.setLevel(target, next, gesture);
+    refresh(true);
+}
+
+// A linked role (no pan of its own) starts at the centre, as the strip shows it; its first step unlinks it.
+void MixerPanel::stepPan(int stripIndex, int step) {
+    const auto* strip = stateOf(stripIndex);
+    if (strip == nullptr || !strip->pan) return;
+    const auto target = strip->target;
+    const auto gesture = runGesture(stripIndex);
+    const auto own = session_.pan(target);
+    const int now = own.value_or(0);
+    const int next = juce::jlimit(-100, 100, now + step);
+    if (own && next == now) return;
+    session_.setPan(target, next, gesture);
+    refresh(true);
+}
+
+juce::Rectangle<int> MixerPanel::typingBox(ChannelStrip& strip, ChannelStrip::Field field) const {
+    if (field == ChannelStrip::Field::Pan) return strip.panBoxArea();
+    if (const auto box = strip.levelBoxArea(); !box.isEmpty()) return box;
+    // A compact strip has no level box: over the top of its fader zone, a box's size.
+    const auto zone = strip.faderZoneArea();
+    return juce::Rectangle<int>(46, 20).withCentre({zone.getCentreX(), zone.getY() + 10});
+}
+
+void MixerPanel::startTyping(int stripIndex, ChannelStrip::Field field) {
+    auto* strip = stripAt(stripIndex);
+    const auto* state = stateOf(stripIndex);
+    if (!editMode() || strip == nullptr || state == nullptr) return;
+    if (field == ChannelStrip::Field::Pan && !state->pan) return;   // no pan bar here
+    if (typingStrip_ >= 0) finishTyping(true);
+    endRun();
+    typingStrip_ = stripIndex;
+    typingFrom_ = field == ChannelStrip::Field::Level ? strip->levelText() : model::formatPan(state->linked ? 0 : *state->pan);
+    editor_.start(*strip, field, typingBox(*strip, field), typingFrom_);
+}
+
+// Enter, Esc or the keyboard gone elsewhere. The keys come back to the mixer only from the field itself (Enter, Esc),
+// never from where a click took them.
+void MixerPanel::finishTyping(bool keep) {
+    if (typingStrip_ < 0) return;
+    const int index = std::exchange(typingStrip_, -1);
+    const auto field = editor_.field();
+    const auto text = editor_.text().trim();
+    const bool hadKeys = editor_.hasKeyboardFocus(true);
+    editor_.stop();
+    if (hadKeys && takesKeys() && isShowing()) grabKeyboardFocus();
+    if (keep && text != typingFrom_.trim()) setTyped(index, field, text);
+}
+
+void MixerPanel::setTyped(int stripIndex, ChannelStrip::Field field, const juce::String& text) {
+    const auto* strip = stateOf(stripIndex);
+    auto* view = stripAt(stripIndex);
+    if (strip == nullptr || view == nullptr || !editMode()) return;
+    const auto target = strip->target;
+    if (field == ChannelStrip::Field::Level) {
+        const auto db = model::parseDb(text);
+        const bool off = db && std::isinf(*db);
+        if (!db || (off && target.kind != app::LevelTarget::Kind::Mix)) {   // "off" is an output's "not sent" only
+            view->flash(field);
+            return;
+        }
+        session_.setLevel(target, off ? std::nullopt : std::optional<float>(*db), juce::Uuid().toString());
+    } else {
+        const auto pan = model::parsePan(text);
+        if (!pan) {
+            view->flash(field);
+            return;
+        }
+        session_.setPan(target, *pan, juce::Uuid().toString());
+    }
+    refresh(true);
+}
+
+void MixerPanel::scrollTo(int stripIndex) {
+    const auto* strip = stripAt(stripIndex);
+    if (strip == nullptr) return;
+    const auto bounds = strip->getBounds();
+    const int width = viewport_.getViewWidth();
+    int x = viewport_.getViewPositionX();
+    if (bounds.getX() < x) x = bounds.getX();
+    else if (bounds.getRight() > x + width) x = bounds.getRight() - width;
+    viewport_.setViewPosition(x, viewport_.getViewPositionY());
 }
 
 }  // namespace sqlive::ui
