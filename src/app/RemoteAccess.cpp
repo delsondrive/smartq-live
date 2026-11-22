@@ -13,6 +13,8 @@ constexpr int tokenBytes = 32;
 constexpr int idBytes = 8;
 constexpr int wrongPinsToLock = 5;
 constexpr double lockWindowSeconds = 60.0;
+constexpr int maxJoinsPerAddressPerWindow = 5;                          // successful joins from one address within the window
+constexpr int maxJoinsPerWindow = 20;                                   // and from all addresses together
 constexpr int maxAddressLength = 64;                                    // an IPv6 address is at most 45 characters
 constexpr int maxNameInput = 1000;                                      // characters looked at before cutting to 40
 
@@ -139,6 +141,13 @@ void RemoteAccess::forgetOldAttemptsLocked(double nowSeconds) {
         if (wrong.empty() && nowSeconds >= it->second.lockedUntil) it = attempts_.erase(it);
         else ++it;
     }
+    const auto old = [&](double t) { return t < nowSeconds - lockWindowSeconds; };
+    allJoins_.erase(std::remove_if(allJoins_.begin(), allJoins_.end(), old), allJoins_.end());
+    for (auto it = joins_.begin(); it != joins_.end();) {
+        it->second.erase(std::remove_if(it->second.begin(), it->second.end(), old), it->second.end());
+        if (it->second.empty()) it = joins_.erase(it);
+        else ++it;
+    }
 }
 
 RemoteAccess::JoinResult RemoteAccess::join(const juce::String& name, const juce::String& pin, const juce::String& address,
@@ -164,6 +173,11 @@ RemoteAccess::JoinResult RemoteAccess::join(const juce::String& name, const juce
 
         const auto phoneName = saneName(name);
         if (phoneName.isEmpty()) return {400, {}, "Give this phone a name."};
+        // Before anything is changed: a refused join must not touch the phone list or save the settings file.
+        const auto joinedBefore = joins_.find(from);
+        if ((joinedBefore != joins_.end() && static_cast<int>(joinedBefore->second.size()) >= maxJoinsPerAddressPerWindow) ||
+            static_cast<int>(allJoins_.size()) >= maxJoinsPerWindow)
+            return {429, {}, "Too many joins from this phone. Wait a minute."};
         if (static_cast<int>(memory_.phones.size()) >= maxPhones) {
             // Room is made by forgetting the oldest phone neither let in nor connected (one that lost its token, most
             // likely); a phone let in is never forgotten here.
@@ -180,6 +194,8 @@ RemoteAccess::JoinResult RemoteAccess::join(const juce::String& name, const juce
         do phone.id = randomHex(idBytes);
         while (indexOfLocked(phone.id) >= 0);
         result.token = randomHex(tokenBytes);
+        joins_[from].push_back(nowSeconds);
+        allJoins_.push_back(nowSeconds);
         memory_.phones.push_back(phone);
         memory_.tokenHashes.add(hashOf(result.token));
         result.status = 200;

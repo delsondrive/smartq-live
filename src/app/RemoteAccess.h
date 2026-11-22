@@ -36,7 +36,9 @@ public:
 
     // 200 with a token; 403 wrong PIN; 429 locked out, or 16 phones known and none of them both waiting and unconnected
     // (when one is, the oldest such is forgotten to make room); 400 no usable name. message says why, for the
-    // phone to show. Five wrong PINs from one address within 60 s lock it out for 60 s from the last one.
+    // phone to show. Five wrong PINs from one address within 60 s lock it out for 60 s from the last one. Even with the
+    // right PIN, a sixth join from one address within 60 s, or a twenty-first from all addresses together, is refused (429)
+    // and changes and saves nothing: a sliding window over the nowSeconds given, counting joins that were let through.
     struct JoinResult { int status = 400; juce::String token, message; };
     JoinResult join(const juce::String& name, const juce::String& pin, const juce::String& address, double nowSeconds);
 
@@ -71,6 +73,8 @@ private:
     mutable std::mutex mutex_;
     RemoteMemory memory_;                                               // under mutex_
     std::map<juce::String, Attempts> attempts_;                         // by address, under mutex_
+    std::map<juce::String, std::vector<double>> joins_;                 // when each address joined within the last minute
+    std::vector<double> allJoins_;                                      // the same, all addresses together (under mutex_)
 
     std::atomic<std::uint64_t> version_{0};
     std::atomic<bool> unsaved_{false};                                  // a change Settings doesn't have yet

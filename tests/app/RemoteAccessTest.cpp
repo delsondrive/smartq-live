@@ -46,7 +46,7 @@ TEST_CASE("wrong PINs lock an address out, and names are kept sane", "[remoteacc
     auto old = access.pin();  access.newPin();
     CHECK(access.join("Z", old, "10.0.0.9", 0.0).status == (old == access.pin() ? 200 : 403));
     for (int i = 0; i < 40; ++i)                                                      // a full list makes room: never a 429
-        CHECK(access.join("Flood " + juce::String(i), access.pin(), "10.0.1." + juce::String(i), 100.0).status == 200);
+        CHECK(access.join("Flood " + juce::String(i), access.pin(), "10.0.1." + juce::String(i), 100.0 + 4.0 * i).status == 200);
     const auto phones = access.phones();
     REQUIRE(phones.size() == 16);                                                     // the oldest waiting ones made room
     CHECK(phones.front().name == "Flood 24");  CHECK(phones.back().name == "Flood 39");
@@ -98,6 +98,38 @@ TEST_CASE("the lockout counts only wrong PINs within a minute, and a right PIN c
     auto locked = access.join("A", access.pin(), "10.0.0.5", 133.0);                  // 59 s after the fifth
     CHECK(locked.status == 429);  CHECK(locked.message.isNotEmpty());  CHECK(locked.token.isEmpty());
     CHECK(access.join("A", access.pin(), "10.0.0.5", 134.5).status == 200);          // 60 s after the fifth
+}
+
+TEST_CASE("one address can join at most 5 times a minute with the right PIN", "[remote][remoteaccess]") {
+    DemoSession d; app::RemoteAccess access(*d.settings, d.session->folder().root());
+    const auto file = d.dir.dir().getChildFile("settings.json");
+    for (int i = 0; i < 5; ++i) CHECK(access.join("Joined " + juce::String(i), access.pin(), "10.0.0.5", 10.0 * i).status == 200);
+    REQUIRE(file.loadFileAsString().contains("Joined 4"));                            // each join was saved
+    const auto before = file.loadFileAsString();
+    const auto version = access.version();
+    const auto refused = access.join("Sixth", access.pin(), "10.0.0.5", 50.0);
+    CHECK(refused.status == 429);  CHECK(refused.token.isEmpty());
+    CHECK(refused.message == "Too many joins from this phone. Wait a minute.");
+    CHECK(access.phones().size() == 5);
+    CHECK(access.version() == version);                                               // nothing changed...
+    CHECK(file.loadFileAsString() == before);                                         // ...and nothing was written
+    CHECK(access.join("Other", access.pin(), "10.0.0.6", 50.0).status == 200);       // another address is fine
+    CHECK(access.join("Sixth", access.pin(), "10.0.0.5", 59.9).status == 429);       // the one at 0 s is still in the window
+    CHECK(access.join("Sixth", access.pin(), "10.0.0.5", 60.5).status == 200);       // it has slid out: room for one
+    CHECK(access.join("Seventh", access.pin(), "10.0.0.5", 61.0).status == 429);     // 10, 20, 30, 40, 60.5 still count
+}
+
+TEST_CASE("all phones together can join at most 20 times a minute", "[remote][remoteaccess]") {
+    DemoSession d; app::RemoteAccess access(*d.settings, d.session->folder().root());
+    const auto file = d.dir.dir().getChildFile("settings.json");
+    for (int i = 0; i < 20; ++i)
+        CHECK(access.join("Phone " + juce::String(i), access.pin(), "10.0.4." + juce::String(i), double(i)).status == 200);
+    const auto before = file.loadFileAsString();
+    const auto refused = access.join("Twenty-first", access.pin(), "10.0.4.99", 30.0);
+    CHECK(refused.status == 429);  CHECK(refused.token.isEmpty());
+    CHECK(refused.message == "Too many joins from this phone. Wait a minute.");
+    CHECK(file.loadFileAsString() == before);
+    CHECK(access.join("Twenty-first", access.pin(), "10.0.4.99", 60.5).status == 200);   // the one at 0 s has slid out
 }
 
 TEST_CASE("what a phone sends is checked for size and shape", "[remoteaccess]") {

@@ -434,7 +434,12 @@ TEST_CASE("many phones following the show don't hold up a phone's action", "[rem
     REQUIRE(server.start(18120, "127.0.0.1").wasOk());
     const int port = server.port();
     std::vector<juce::String> tokens;
-    for (int i = 0; i < 12; ++i) tokens.push_back(joinedToken(port, access, "Phone " + juce::String(i + 1)));
+    // Twelve phones from twelve addresses (one address may join only five times a minute), joined straight on the access.
+    for (int i = 0; i < 12; ++i) {
+        const auto joined = access.join("Phone " + juce::String(i + 1), access.pin(), "10.0.7." + juce::String(i + 1), 0.0);
+        REQUIRE(joined.status == 200);
+        tokens.push_back(joined.token);
+    }
     for (const auto& phone : access.phones()) REQUIRE(access.decide(phone.id, PhoneAccess::FullControl, true));
     s.enterShow();
 
