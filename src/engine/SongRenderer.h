@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <span>
 #include <vector>
@@ -35,19 +36,32 @@ struct RenderParts {
 // each sample (unsmoothed: it has its own straight lines), and never through the envelope: the voice has fades of its own.
 // With no song set, render mixes only a cue it is given, at the preview gain. prepare allocates; nothing else does. The
 // song and the mix must outlive their use here.
+//
+// Pan: on a stereo bus each part is placed by balanceGains of the pan that applies there, the bus's own pan for the part's
+// role when the mix gives it one (MixSetup::panOwnAt), else the song's pan of the part; the click and the cues by their
+// role's own pan on the bus (centre without one). Each part's left and right gain on each bus, and each role's, glides on
+// the same one-pole as the levels (a drag doesn't click), snapping where the gains snap: at setSong for the parts, and at
+// a setMix that snaps. A mono bus ignores pan. A centre pan multiplies by exactly 1, so a song with every pan at centre
+// renders bit for bit as it did before pan existed.
+//
+// Solo: a set of parts; while it names any part the song has, every part not in it is silent (glides out, as a mute). The
+// click and the cue voice are never silenced by it.
 class SongRenderer {
 public:
     void prepare(double sampleRate, int maxBlockFrames);
-    void setSong(const PreparedSong*) noexcept;       // snaps every part gain to the song's
+    void setSong(const PreparedSong*) noexcept;       // snaps every part gain and pan to the song's; clears the solo
     void setMix(const MixSetup*) noexcept;            // snaps the first time or when the bus layout changed; otherwise glides
     void setPartGain(int part, float linear) noexcept;
     void setPartMute(int part, bool) noexcept;
+    void setPartPan(int part, int pan) noexcept;      // the song's pan of the part, -100 to 100 (limited); glides
     void setClickGain(float linear) noexcept;
     void setCueGain(float linear) noexcept;           // the band's cue level: snapped to the song's cueGain at setSong, glides after
     // The level of a cue rendered with no song set (Engine::previewCue). setSong(nullptr) sets it to the level the song's cue
     // last had, so a voice still fading out as a song ends carries on at that level.
     void setPreviewGain(float linear) noexcept;
-    void setSolo(int part) noexcept;                 // -1 = none; a soloed part silences the other parts, never the click
+    // The soloed parts (empty = none; parts the song doesn't have are left out, so a set of only those is none). Set before
+    // the song's first sample (right after setSong) it is heard from that sample; afterwards the parts glide.
+    void setSoloSet(const std::bitset<kMaxParts>&) noexcept;
     // true: ignore that part's automation (its level is its fader alone) until setSong; false: follow it again. A part the song
     // doesn't have is ignored.
     void setPartOverride(int part, bool) noexcept;
@@ -66,9 +80,17 @@ private:
         int role = -1;                      // -1 = not played
     };
 
+    struct Balance {                        // a pan's left and right gains on one bus, gliding
+        Smoothed left{1.0, 1.0}, right{1.0, 1.0};
+    };
+
     void step(Smoothed&) const noexcept;
     void updatePartTargets() noexcept;
-    bool partSilenced(int part) const noexcept { return part_mute_[part] != 0 || (solo_ >= 0 && solo_ != part); }
+    bool partSilenced(int part) const noexcept {
+        return part_mute_[part] != 0 || (solo_any_ && !solo_[static_cast<std::size_t>(part)]);
+    }
+    void updatePartBalance(int part, bool snap) noexcept;   // its balance on each bus, from its pan and the buses' own pans
+    void stepBalances() noexcept;                           // every part's and role's balance, one sample on
     void followAutomation(SamplePos at, bool snap) noexcept;
     void countAutomated() noexcept;
     void renderPiece(SamplePos songTime, int frames, int offset, const float* envelope, RenderParts) noexcept;
@@ -85,6 +107,13 @@ private:
     std::vector<unsigned char> part_mute_;  // kMaxParts
     std::vector<PartView> part_view_;       // kMaxParts
     std::vector<Smoothed> cells_;           // kMaxRoles × kMaxBuses, row-major by role: the mix level × the bus trim
+    std::vector<int> part_pan_;             // kMaxParts: the song's pan of each part
+    std::vector<Balance> part_bal_;         // kMaxParts × kMaxBuses, row-major by part: the balance each part is mixed at
+    std::vector<Balance> cell_bal_;         // kMaxRoles × kMaxBuses: each role's own pan (centre without one), for the click
+                                            // and the cues
+    std::vector<int> own_pan_;              // kMaxRoles × kMaxBuses: the mix's own pan of each role on each bus
+    std::vector<unsigned char> own_;        // kMaxRoles × kMaxBuses: 1 where that own pan applies
+    bool bal_moving_ = false;               // some balance hasn't reached its target
     Smoothed click_gain_;
     Smoothed cue_gain_;                     // the band's cue level
     float preview_gain_ = 1.0f;             // the cue's level with no song set
@@ -104,7 +133,8 @@ private:
 
     const PreparedSong* song_ = nullptr;
     int part_count_ = 0;
-    int solo_ = -1;
+    std::bitset<kMaxParts> solo_;           // the soloed parts, only of those the song has
+    bool solo_any_ = false;
     std::size_t count_in_first_ = 0;        // song->ticks[count_in_first_, count_in_end_) are the count-in's, which sound
     std::size_t count_in_end_ = 0;          // even with the click off
     std::size_t playable_first_ = 0;        // the first of song->ticks at or after its start: those before are a count-off's

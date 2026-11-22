@@ -113,6 +113,7 @@ engine::PreparedSong buildPreparedSong(const SongDoc& song, const BandDoc& band,
         const int role = roleIndex(band, part.roleId);
         if (found == audioByPartId.end() || found->second == nullptr || role < 0) continue;
         parts.push_back({found->second, role, dbToGain(part.gainDb), part.mute, part.id.toStdString()});
+        parts.back().pan = clampPan(part.pan);
         if (const auto points = song.automation.find(part.id); points != song.automation.end())
             parts.back().automation = automationInSamples(points->second, tempo, sampleRate);
     }

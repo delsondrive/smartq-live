@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -132,7 +133,7 @@ TEST_CASE("a changed mix level glides too, and solo silences the other parts", "
     r.render(0, 4800, out.ptrs.data(), 1, nullptr);
     CHECK(out.data[0][0] > 1.9f);                      // two parts at 1, not yet moved
     CHECK(out.data[0][4799] == Catch::Approx(1.0f).margin(0.001f));
-    r.setSolo(1);
+    r.setSoloSet(std::bitset<kMaxParts>{}.set(1));
     Out solo(1, 4800); r.render(4800, 4800, solo.ptrs.data(), 1, nullptr);
     CHECK(solo.data[0][4799] == Catch::Approx(0.5f).margin(0.001f));
 }
@@ -173,7 +174,7 @@ TEST_CASE("glides give the same samples whatever the block size", "[renderer]") 
         for (int at = 0; at < 36000; at += block) {               // every change falls on a multiple of 128
             if (at == 4992) r.setPartGain(0, 0.2f);
             if (at == 9984) r.setMix(&second);
-            if (at == 14976) r.setSolo(0);
+            if (at == 14976) r.setSoloSet(std::bitset<kMaxParts>{}.set(0));
             if (at == 23936) r.setClickGain(0.5f);                 // just before the tick at 24000
             if (at == 25984) r.setPartMute(0, true);
             float* p[3] = {out.data[0].data() + at, out.data[1].data() + at, out.data[2].data() + at};

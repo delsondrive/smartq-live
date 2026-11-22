@@ -118,6 +118,7 @@ void Session::playSong(const juce::String& songId, double fromSeconds, const juc
     const auto serial = engine_.cue(prepared->song);
     if (serial == 0) return;                                     // the queue is full: nothing was cued
     noteMidi(serial, prepared);
+    if (solos_.count(songId) > 0) sendSolo(serial, *prepared);   // heard from its first sample
     const auto& song = *prepared->song;
     // A place within a millisecond of the song's start is its start: the editor's cursor at the top, rounded from
     // seconds, can land a sample after it. From its start, the engine sends each device bar 1's state before the count-in.
@@ -303,6 +304,7 @@ void Session::refreshTransport(bool force) {
     // and is dropped; but that needs the playing song to end, the cue to follow on and its first message to come due,
     // all in the few microseconds until the next line: effectively never.
     noteMidi(serial, wanted.prepared);
+    if (solos_.count(wanted.prepared->doc.id) > 0) sendSolo(serial, *wanted.prepared);   // heard from its first sample
     cue_sent_this_tick_ = true;
     wanted.serial = serial;
     cue_ = wanted;

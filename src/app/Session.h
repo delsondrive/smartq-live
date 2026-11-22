@@ -206,6 +206,13 @@ public:
     // Either way it is heard at once.
     void setPan(const LevelTarget&, std::optional<int> pan, const juce::String& gestureId);
     bool panChangedTonight(const LevelTarget&) const;
+    // Solo (SessionSolo.cpp): Edit mode only, ignored in Show mode. A solo belongs to the song it was set on: a set of that
+    // song's parts, kept here and never saved, cleared on entering Show mode and when the band closes (with the session).
+    // While a song with solos plays, its parts not soloed are silent; the click and the cue voice never are. It is heard
+    // whenever that song plays, from its first sample (sent with its cue), and at once when changed while it plays.
+    void setSolo(const juce::String& songId, const juce::String& partId, bool);
+    bool soloed(const juce::String& songId, const juce::String& partId) const;
+    juce::StringArray soloedParts(const juce::String& songId) const;   // in the song's order; only parts it still has
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                              // how many levels were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,
@@ -324,7 +331,7 @@ private:
     void refreshPrepared();
     void refreshWanted();
     void refreshMix(bool force);
-    void refreshPlayingLevels();                                 // the playing song's levels, as heard, to the engine
+    void refreshPlayingLevels();                                 // the playing song's levels and pans, as heard, to the engine
     // The follow-on and the cue. A cue goes at most once per tick (a fader dragged on the next song changes it on every
     // move), unless forced, as a Start needs it now. What the engine's full queue drops is sent again on the next tick.
     void refreshTransport(bool force = false);
@@ -348,6 +355,10 @@ private:
     void rememberShow();                                         // in Show mode: the show memory, when it differs
     void writeShowMemory();                                      // the show memory as it is now; the file is saved by the flush
     void tonightChanged();
+    // The song's solo set, by part index in what the engine plays, to the engine for the song with this serial (playing or
+    // cued). Empty in Show mode. And to every song the engine plays or has cued of songId.
+    void sendSolo(std::uint64_t serial, const Prepared&);
+    void sendSolos(const juce::String& songId);
     // "Keys on Headphones" for a Mix target, from the band's role and the chosen rig's output; "" when either is gone.
     juce::String roleOnOutputWords(const LevelTarget&) const;
     void snapshotOnOpening();                                   // Edit mode: the automatic "Opened the folder" snapshot
@@ -410,6 +421,7 @@ private:
     model::RigDoc mix_rig_;
     int mix_channels_ = 0;
 
+    std::map<juce::String, juce::StringArray> solos_;           // by song id: its soloed part ids (setSolo); never saved
     Tonight tonight_;
     std::uint64_t tonight_revision_ = 0;                         // tonightRevision()
     // The playing song's levels as last sent to the engine, for the song with this serial.

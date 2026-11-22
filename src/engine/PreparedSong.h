@@ -48,6 +48,7 @@ struct PreparedPart {
     bool mute = false;
     std::string partId;               // the part document this came from, so the control thread can find it again
     std::vector<AutoPoint> automation;   // this part's level over song time, on top of its fader; empty = none
+    int pan = 0;                      // the song's pan of the part, -100 (left) to 100 (right), for every output that follows it
 };
 
 struct ClickSetup {

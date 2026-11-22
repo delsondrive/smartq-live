@@ -268,6 +268,7 @@ void Session::enterShow() {
     stopVoice(false);                                            // and waited for: Show mode never writes the band folder
     mode_ = Mode::Show;
     cues_.setShowRunning(true);                                  // nor looks at the cue clips again: the show keeps its own
+    for (const auto& [songId, parts] : std::exchange(solos_, {})) sendSolos(songId);   // a show has no solo (SessionSolo.cpp)
     writeShowMemory();
     flushNow();                                                  // what is waiting is written now, not left for the show
     refresh();
@@ -756,8 +757,10 @@ void Session::refreshPlayingLevels() {
             engine_.setPartGain(playing_.serial, index->second, model::dbToGain(part.gainDb));
         }
         if (part.mute != sent->mute) engine_.setPartMute(playing_.serial, index->second, part.mute);
+        if (part.pan != sent->pan) engine_.setPartPan(playing_.serial, index->second, part.pan);   // an output's own pans go with the mix
         sent->gainDb = part.gainDb;
         sent->mute = part.mute;
+        sent->pan = part.pan;
     }
     const auto band = bandAsHeard();
     const float clickDb = band.clickDb + heard.click.offsetDb;

@@ -24,13 +24,20 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     part_view_.assign(kMaxParts, {});
     part_auto_.assign(kMaxParts, {});
     cells_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, {});
+    part_pan_.assign(kMaxParts, 0);
+    part_bal_.assign(static_cast<std::size_t>(kMaxParts) * kMaxBuses, {});
+    cell_bal_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, {});
+    own_pan_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, 0);
+    own_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, 0);
+    bal_moving_ = false;
     click_gain_ = {};
     cue_gain_ = {1.0, 1.0};
     preview_gain_ = 1.0f;
     last_cue_level_ = 1.0f;
     song_ = nullptr;
     part_count_ = 0;
-    solo_ = -1;
+    solo_.reset();
+    solo_any_ = false;
     count_in_first_ = count_in_end_ = 0;
     parts_moving_ = false;
     automated_ = 0;
@@ -51,12 +58,14 @@ void SongRenderer::step(Smoothed& s) const noexcept {
 void SongRenderer::setSong(const PreparedSong* song) noexcept {
     if (part_gain_.empty()) return;   // not prepared
     song_ = song;
-    solo_ = -1;
+    solo_.reset();
+    solo_any_ = false;
     part_count_ = song != nullptr ? std::min(static_cast<int>(song->parts.size()), kMaxParts) : 0;
     for (int p = 0; p < part_count_; ++p) {
         const PreparedPart& part = song->parts[static_cast<std::size_t>(p)];
         part_level_[p] = part.gain;
         part_mute_[p] = part.mute ? 1 : 0;
+        part_pan_[p] = std::clamp(part.pan, -100, 100);
         part_auto_[p] = {};
         part_auto_[p].points = part.automation;
         PartView& v = part_view_[p];
@@ -73,6 +82,7 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
     }
     updatePartTargets();
     for (int p = 0; p < part_count_; ++p) part_gain_[p].value = part_gain_[p].target;
+    for (int p = 0; p < part_count_; ++p) updatePartBalance(p, true);   // placed at once, as the gains are
     parts_moving_ = false;
     countAutomated();
     snap_pending_ = true;   // automated parts start at their level at the first sample, not gliding to it
@@ -132,6 +142,61 @@ void SongRenderer::setMix(const MixSetup* mix) noexcept {
     click_role_ = mix->clickRole;
     cues_role_ = mix->cuesRole;
     has_mix_ = true;
+
+    // Each role's own pan on each bus, and the balance the click and the cues take from it (centre without one); then each
+    // part's, which follows it where there is one. They snap or glide as the levels do.
+    for (int r = 0; r < kMaxRoles; ++r) {
+        for (int b = 0; b < busCount; ++b) {
+            const std::size_t c = static_cast<std::size_t>(r) * kMaxBuses + b;
+            own_[c] = mix->panOwnAt(r, b) ? 1 : 0;
+            own_pan_[c] = std::clamp(mix->panAt(r, b), -100, 100);
+            const auto g = bus_stereo_[b] && own_[c] != 0 ? balanceGains(own_pan_[c]) : std::pair<float, float>{1.0f, 1.0f};
+            Balance& bal = cell_bal_[c];
+            bal.left.target = g.first;
+            bal.right.target = g.second;
+            if (!sameLayout) {
+                bal.left.value = bal.left.target;
+                bal.right.value = bal.right.target;
+            }
+        }
+    }
+    for (int p = 0; p < part_count_; ++p) updatePartBalance(p, !sameLayout);
+    bal_moving_ = sameLayout;
+}
+
+// The pan that applies to the part on each stereo bus: the bus's own pan for the part's role, if it has one, else the
+// song's pan of the part. A mono bus, and a part that isn't played, stay at (1, 1).
+void SongRenderer::updatePartBalance(int part, bool snap) noexcept {
+    const int role = part_view_[part].role;
+    Balance* row = &part_bal_[static_cast<std::size_t>(part) * kMaxBuses];
+    for (int b = 0; b < bus_count_; ++b) {
+        std::pair<float, float> g{1.0f, 1.0f};
+        if (bus_stereo_[b] && role >= 0) {
+            const std::size_t c = static_cast<std::size_t>(role) * kMaxBuses + b;
+            g = balanceGains(own_[c] != 0 ? own_pan_[c] : part_pan_[part]);
+        }
+        row[b].left.target = g.first;
+        row[b].right.target = g.second;
+        if (snap) {
+            row[b].left.value = row[b].left.target;
+            row[b].right.value = row[b].right.target;
+        }
+    }
+    if (!snap) bal_moving_ = true;
+}
+
+void SongRenderer::stepBalances() noexcept {
+    bool moving = false;
+    const auto stepRow = [&](Balance* row) {
+        for (int b = 0; b < bus_count_; ++b) {
+            step(row[b].left);
+            step(row[b].right);
+            moving = moving || row[b].left.value != row[b].left.target || row[b].right.value != row[b].right.target;
+        }
+    };
+    for (int p = 0; p < part_count_; ++p) stepRow(&part_bal_[static_cast<std::size_t>(p) * kMaxBuses]);
+    for (int r = 0; r < role_rows_; ++r) stepRow(&cell_bal_[static_cast<std::size_t>(r) * kMaxBuses]);
+    bal_moving_ = moving;
 }
 
 void SongRenderer::updatePartTargets() noexcept {
@@ -208,9 +273,21 @@ void SongRenderer::setClickGain(float linear) noexcept { click_gain_.target = li
 void SongRenderer::setCueGain(float linear) noexcept { cue_gain_.target = linear; }
 void SongRenderer::setPreviewGain(float linear) noexcept { preview_gain_ = linear; }
 
-void SongRenderer::setSolo(int part) noexcept {
-    solo_ = part >= 0 && part < part_count_ ? part : -1;   // a part the song doesn't have is no solo
+void SongRenderer::setSoloSet(const std::bitset<kMaxParts>& parts) noexcept {
+    solo_ = parts;
+    for (int p = part_count_; p < kMaxParts; ++p) solo_.reset(static_cast<std::size_t>(p));   // parts the song doesn't have
+    solo_any_ = solo_.any();
     updatePartTargets();
+    // Before the song's first sample (the engine sends a song's solo as it starts it): heard from that sample, not gliding
+    // in. A part that follows automation is put on its target by that sample's followAutomation anyway.
+    if (snap_pending_)
+        for (int p = 0; p < part_count_; ++p) part_gain_[p].value = part_gain_[p].target;
+}
+
+void SongRenderer::setPartPan(int part, int pan) noexcept {
+    if (part < 0 || part >= part_count_) return;
+    part_pan_[part] = std::clamp(pan, -100, 100);
+    updatePartBalance(part, false);
 }
 
 void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
@@ -279,6 +356,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
         // Every smoothed value advances once per sample, before it is used, whatever the block (unless this call reads them
         // as they stand).
         if (what.advance && cells_moving_) stepCells();
+        if (what.advance && bal_moving_) stepBalances();
         if (what.advance && automated_ > 0) followAutomation(songTime + i, snap_pending_);
         if (what.advance) snap_pending_ = false;
         if (what.advance && (parts_moving_ || automated_ > 0)) {
@@ -310,13 +388,14 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             const float right = v.right != nullptr ? v.right[s] : left;
             const float mono = v.right != nullptr ? (left + right) * 0.5f : left;
             const Smoothed* row = &cells_[static_cast<std::size_t>(v.role) * kMaxBuses];
+            const Balance* bal = &part_bal_[static_cast<std::size_t>(p) * kMaxBuses];
             for (int b = 0; b < bus_count_; ++b) {
                 const float cell = static_cast<float>(row[b].value);
                 if (cell == 0.0f) continue;
                 const float g = gain * cell * env;
-                if (bus_stereo_[b]) {
-                    if (bus_left_[b] != nullptr) bus_left_[b][at] += left * g;
-                    if (bus_right_[b] != nullptr) bus_right_[b][at] += right * g;
+                if (bus_stereo_[b]) {   // at centre each side is g * 1: exactly g
+                    if (bus_left_[b] != nullptr) bus_left_[b][at] += left * (g * static_cast<float>(bal[b].left.value));
+                    if (bus_right_[b] != nullptr) bus_right_[b][at] += right * (g * static_cast<float>(bal[b].right.value));
                 } else if (bus_left_[b] != nullptr) {
                     bus_left_[b][at] += mono * g;
                 }
@@ -327,12 +406,13 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             const float click = click_[i] * static_cast<float>(click_gain_.value);
             if (click != 0.0f) {
                 const Smoothed* row = &cells_[static_cast<std::size_t>(click_role_) * kMaxBuses];
+                const Balance* bal = &cell_bal_[static_cast<std::size_t>(click_role_) * kMaxBuses];
                 for (int b = 0; b < bus_count_; ++b) {
                     const float cell = static_cast<float>(row[b].value);
                     if (cell == 0.0f) continue;
                     const float v = click * (cell * clickEnv);
-                    if (bus_left_[b] != nullptr) bus_left_[b][at] += v;
-                    if (bus_right_[b] != nullptr) bus_right_[b][at] += v;
+                    if (bus_left_[b] != nullptr) bus_left_[b][at] += v * static_cast<float>(bal[b].left.value);
+                    if (bus_right_[b] != nullptr) bus_right_[b][at] += v * static_cast<float>(bal[b].right.value);
                 }
             }
         }
@@ -353,6 +433,7 @@ void SongRenderer::renderCueAlone(int frames, int offset, const float* cue) noex
     const bool routed = cue != nullptr && cues_role_ >= 0 && cues_role_ < role_rows_;
     for (int i = 0; i < frames; ++i) {
         if (cells_moving_) stepCells();
+        if (bal_moving_) stepBalances();
         const int at = offset + i;
         if (routed && cue[at] != 0.0f) mixCue(cue[at] * preview_gain_, at);
     }
@@ -372,12 +453,13 @@ void SongRenderer::stepCells() noexcept {
 
 void SongRenderer::mixCue(float value, int at) noexcept {
     const Smoothed* row = &cells_[static_cast<std::size_t>(cues_role_) * kMaxBuses];
+    const Balance* bal = &cell_bal_[static_cast<std::size_t>(cues_role_) * kMaxBuses];
     for (int b = 0; b < bus_count_; ++b) {
         const float cell = static_cast<float>(row[b].value);
         if (cell == 0.0f) continue;
         const float v = value * cell;
-        if (bus_left_[b] != nullptr) bus_left_[b][at] += v;
-        if (bus_right_[b] != nullptr) bus_right_[b][at] += v;
+        if (bus_left_[b] != nullptr) bus_left_[b][at] += v * static_cast<float>(bal[b].left.value);
+        if (bus_right_[b] != nullptr) bus_right_[b][at] += v * static_cast<float>(bal[b].right.value);
     }
 }
 

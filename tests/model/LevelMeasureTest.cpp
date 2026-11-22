@@ -101,3 +101,22 @@ TEST_CASE("a clip is never described as by less than 0.1 dB", "[levels-measure]"
     CHECK(describeClip({"pa", 0.02f, 12, true}, "PA", "Run") == "PA clips in Run at bar 12, by 0.1 dB.");
     CHECK(describeClip({"pa", 2.0f, 1, true}, "PA", "Run") == "PA clips in Run at bar 1, by 2.0 dB.");
 }
+
+// ---- Pan (the mixer console) ----
+
+TEST_CASE("the level check measures a hard-panned part on the channel it hits", "[levels-measure][levels][pan]") {
+    BandDoc band; band.roles = {{"keys", "Keys", RoleKind::Part, {}}, {"bvs", "BVs", RoleKind::Part, {}}};
+    RigDoc rig; rig.outputs = {{"pa", "PA", 1, true, OutputLabel::Foh, 0.0f, {{"keys", 0.0f}, {"bvs", 0.0f}}},
+                               {"ears", "Drummer", 3, false, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}, {"bvs", 0.0f}}},
+                               {"phones", "Phones", 4, true, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}, {"bvs", 0.0f}}}};
+    rig.outputs[2].pan = {{"keys", 100}};                                    // keys placed hard right on the phones only
+    auto audio = std::make_shared<engine::PartAudio>(); audio->left.assign(48000, 0.4f);
+    auto prepared = engine::prepareSong("s", engine::TempoMap{}, 0, 0, {{audio, 0}, {audio, 1}}, engine::ClickSetup{.enabled = false}, 48000.0);
+    prepared.parts[0].pan = -100;                                            // keys hard left, BVs hard right
+    prepared.parts[1].pan = 100;
+    auto levels = measureSong(std::make_shared<const engine::PreparedSong>(std::move(prepared)), band, rig, 48000.0, [](double) { return true; });
+    REQUIRE(levels.complete);  REQUIRE(levels.outputs.size() == 3);
+    CHECK(levels.outputs[0].peakDb == Catch::Approx(20.0f * std::log10(0.4f)).margin(0.01f));   // each on its own side
+    CHECK(levels.outputs[1].peakDb == Catch::Approx(20.0f * std::log10(0.8f)).margin(0.01f));   // mono: pan ignored
+    CHECK(levels.outputs[2].peakDb == Catch::Approx(20.0f * std::log10(0.8f)).margin(0.01f));   // both on the right
+}

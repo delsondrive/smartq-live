@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -219,4 +220,98 @@ TEST_CASE("a chosen step, a loop and a choice back to the start on a late device
         CAPTURE(block);
         CHECK(run(block) == expected);
     }
+}
+
+// ---- Pan and solo with the transport (the mixer console) ----
+
+TEST_CASE("solo through a jump, a loop and a crossfade", "[combinations][solo]") {
+    // a: a ramp (part 0) and a constant 0.5 (part 1), sections of one bar played 0, 2, 3; part 0 soloed before its start.
+    // b, crossfaded into: 0.25 (part 0) and 0.125 (part 1), part 1 soloed while it is cued.
+    auto makeA = [] {
+        auto song = rampSong("a", 4, {1, 1, 1, 1}, {0, 2, 3});
+        song.parts.push_back({constantAudio(4 * 96000, 0.5f, NAN), 0});
+        return song;
+    };
+    auto makeB = [] {
+        return prepareSong("b", TempoMap{}, 0, 0, {{constantAudio(2 * 96000, 0.25f, NAN), 0}, {constantAudio(2 * 96000, 0.125f, NAN), 0}},
+                           ClickSetup{.enabled = false}, 48000.0);
+    };
+    std::bitset<kMaxParts> first, second;
+    first.set(0);
+    second.set(1);
+    auto run = [&](int block) {
+        Engine e; e.prepare(48000.0, 4096); e.setMix(splitMix());
+        const auto a = e.cue(share(makeA()));
+        e.setSoloSet(a, first);
+        e.start();  e.setFollowOn({FollowKind::Crossfade, 0.5});
+        std::uint64_t b = 0;
+        return renderOffline(e, 2, 4 * 96000 + 10000, block, {
+            {10, [&](Engine& en) { b = en.cue(share(makeB())); }},
+            {20, [&](Engine& en) { en.setSoloSet(b, second); }},
+            {100000, [&](Engine& en) { en.setLoop(a, true); }},          // section 2 repeats at stream 192000
+            {200000, [&](Engine& en) { en.setLoop(a, false); }}});       // then section 3, crossfading at 360000
+    };
+    const auto out = run(512);
+    for (int block : {1, 64}) CHECK(run(block) == out);
+    CHECK(out[0][1000] == 1000.0f);                                       // part 0 alone from the first sample
+    CHECK(out[0][96000 + 1000] == float(192000 + 1000));                  // after the jump
+    CHECK(out[0][192000 + 1000] == float(192000 + 1000));                 // the loop's repeat
+    CHECK(out[0][288000 + 1000] == float(288000 + 1000));
+    CHECK(out[0][372000] == Catch::Approx(0.5 * 372000 + 0.5 * 0.125).margin(0.05));   // each with its own solo, half faded
+    CHECK(out[0][384000 + 5000] == Catch::Approx(0.125f));                // b, part 1 alone
+}
+
+TEST_CASE("solo through a seamless follow-on: the next song's own set from its first sample", "[combinations][solo]") {
+    auto twoParts = [](const char* id, float x, float y) {
+        return share(prepareSong(id, TempoMap{}, 0, 0, {{constantAudio(96000, x, NAN), 0}, {constantAudio(96000, y, NAN), 0}},
+                                 ClickSetup{.enabled = false}, 48000.0));
+    };
+    std::bitset<kMaxParts> partOne;
+    partOne.set(1);
+    auto run = [&](int block) {
+        Engine e; e.prepare(48000.0, 4096); e.setMix(splitMix());
+        const auto a = e.cue(twoParts("a", 0.25f, 0.5f));
+        e.setSoloSet(a, partOne);
+        e.start();  e.setFollowOn({FollowKind::Seamless, 0.0});
+        return renderOffline(e, 2, 96000 + 5000, block, {{10, [&](Engine& en) { en.cue(twoParts("b", 0.125f, 0.0625f)); }}});
+    };
+    const auto out = run(512);
+    for (int block : {1, 64}) CHECK(run(block) == out);
+    CHECK(out[0][0] == 0.5f);
+    CHECK(out[0][96000 - 1] == 0.5f);
+    CHECK(out[0][96000] == 0.125f + 0.0625f);                             // b has no solo: both its parts at once
+}
+
+TEST_CASE("pan through a crossfade", "[combinations][pan]") {
+    // a hard left, b hard right: each side hears one song through the whole fade, at any block size. Then role 0's own
+    // pan on the output, sent during the fade, moves both songs to the centre together.
+    auto run = [](int block, bool ownPan) {
+        Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+        auto a = testSong("a", 96000, 1.0f);
+        a.parts[0].pan = -100;
+        auto b = testSong("b", 96000, 0.5f);
+        b.parts[0].pan = 100;
+        e.cue(share(std::move(a)));  e.start();  e.setFollowOn({FollowKind::Crossfade, 0.5});   // from 72000 to 96000
+        std::vector<TimedAction> actions{{10, [b](Engine& en) { en.cue(share(b)); }}};
+        if (ownPan) {
+            auto centre = std::make_shared<MixSetup>(*stereoMix());
+            centre->pan = {0, 0};
+            centre->panOwn = {1, 0};
+            actions.push_back({86016, [centre](Engine& en) { en.setMix(centre); }});
+        }
+        return renderOffline(e, 2, 96000 + 20000, block, actions);
+    };
+    const auto out = run(512, false);
+    const auto moved = run(512, true);
+    for (int block : {1, 64}) {
+        CHECK(run(block, false) == out);
+        CHECK(run(block, true) == moved);
+    }
+    CHECK(out[0][84000] == Catch::Approx(0.5).margin(1e-4));             // a, half faded
+    CHECK(std::abs(out[1][84000] - 0.25f) < 1e-4f);                       // b, half faded in
+    CHECK(out[0][60000] == 1.0f);  CHECK(out[1][60000] == 0.0f);
+    CHECK(out[0][100000] == 0.0f);  CHECK(out[1][100000] == 0.5f);
+    const double aFade = (96000.0 - 95000.0) / 24000.0, bFade = (95000.0 - 72000.0) / 24000.0;
+    CHECK(moved[0][95000] == Catch::Approx(aFade + 0.5 * bFade).margin(1e-3));   // both at the centre now
+    CHECK(moved[1][95000] == Catch::Approx(aFade + 0.5 * bFade).margin(1e-3));
 }

@@ -93,3 +93,17 @@ TEST_CASE("an output's bus is found as the mix builds it", "[routing]") {
     CHECK(busIndexOf(rig, "far", 8) == -1);                         // beyond the device
     CHECK(busIndexOf(rig, "nope", 0) == -1);
 }
+TEST_CASE("the mix set-up carries each output's own pans; a role without one follows the song", "[routing][pan]") {
+    auto band = band3();
+    RigDoc rig;
+    rig.outputs = {{"pa", "PA", 1, true, OutputLabel::Foh, 0.0f, {{"keys", 0.0f}}},
+                   {"ears", "Drummer", 3, true, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}, {"click", 0.0f}}}};
+    rig.outputs[1].pan = {{"keys", -40}, {"click", 250}, {"ghost", 10}};    // the click's is limited; an unknown role is skipped
+    auto mix = buildMixSetup(band, rig, 8);
+    REQUIRE(mix->buses.size() == 2);
+    REQUIRE(mix->pan.size() == mix->gain.size());  REQUIRE(mix->panOwn.size() == mix->gain.size());
+    CHECK_FALSE(mix->panOwnAt(2, 0));  CHECK(mix->panAt(2, 0) == 0);          // keys on the PA: follows the song
+    CHECK(mix->panOwnAt(2, 1));  CHECK(mix->panAt(2, 1) == -40);
+    CHECK(mix->panOwnAt(0, 1));  CHECK(mix->panAt(0, 1) == 100);
+    CHECK_FALSE(mix->panOwnAt(1, 1));                                         // the cues: none of their own
+}

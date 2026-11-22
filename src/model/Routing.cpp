@@ -141,6 +141,8 @@ std::shared_ptr<const engine::MixSetup> buildMixSetup(const BandDoc& band, const
 
     const size_t n = used.size();
     mix->gain.assign(static_cast<size_t>(mix->roleCount) * n, 0.0f);
+    mix->pan.assign(mix->gain.size(), 0);
+    mix->panOwn.assign(mix->gain.size(), 0);
     for (size_t b = 0; b < n; ++b) {
         const auto& o = *used[b];
         const bool nearPa = touchesPa(o);
@@ -151,6 +153,14 @@ std::shared_ptr<const engine::MixSetup> buildMixSetup(const BandDoc& band, const
             const auto kind = band.roles[static_cast<size_t>(ri)].kind;
             if (!mayRoute(kind, o.label) || (nearPa && !mayRoute(kind, OutputLabel::Foh))) continue;
             mix->gain[static_cast<size_t>(ri) * n + b] = dbToGain(db);
+        }
+        // A role's own pan here, used in every song instead of the song's pan of its parts; a role absent follows the song.
+        for (auto& [roleId, pan] : o.pan) {
+            const int ri = roleIndex(band, roleId);
+            if (ri < 0 || ri >= mix->roleCount) continue;
+            const auto i = static_cast<size_t>(ri) * n + b;
+            mix->pan[i] = clampPan(pan);
+            mix->panOwn[i] = 1;
         }
     }
     return mix;

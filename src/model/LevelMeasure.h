@@ -19,11 +19,12 @@ struct OutputPeak { juce::String outputId; float peakDb = -100.0f; int bar = 1; 
 struct SongLevels { juce::String songId; std::vector<OutputPeak> outputs; bool complete = false; };
 
 // Plays the song's whole arrangement (repeats included) through a private engine at sampleRate, mixed as the band and rig
-// say (buildMixSetup), and finds each output's loudest moment. An output not wholly within the engine's
-// kMaxDeviceChannels reads as silence. keepGoing is called every 64 blocks with how far it has got (0 to 1); false stops
-// it there, and the result is not complete; an empty one keeps going. A song made at another rate than sampleRate isn't
-// played: not complete. Any thread but the audio one: it allocates, and takes as long as the song divided by the
-// machine's speed.
+// say (buildMixSetup), each part placed by the pan that applies on each output (its own pan for the role there, else the
+// song's pan of the part; a mono output ignores pan), so a hard-panned part is measured on the channel it hits; and finds
+// each output's loudest moment. An output not wholly within the engine's kMaxDeviceChannels reads as silence. keepGoing
+// is called every 64 blocks with how far it has got (0 to 1); false stops it there, and the result is not complete; an
+// empty one keeps going. A song made at another rate than sampleRate isn't played: not complete. Any thread but the audio
+// one: it allocates, and takes as long as the song divided by the machine's speed.
 SongLevels measureSong(std::shared_ptr<const engine::PreparedSong>, const BandDoc&, const RigDoc&, double sampleRate,
                        const std::function<bool(double progress)>& keepGoing);
 
