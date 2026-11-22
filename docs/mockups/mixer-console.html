@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixer console mockup</title>
+<!-- Frames at 1920 x 1080, one per #hash: #song (Mixer, This song), #output (Mixer, Headphones), #editor (Song editor
+     with the mixer under the tracks), #show (main view in Show mode), #states (one strip in each state, at 2x).
+     No hash: every frame, one under the other. The meters move when opened in a browser. -->
+<style>
+:root{
+  --bg1:#0e0c11;--bg2:#17131b;--glow:#241b2c;--panel:#121016;--field:rgba(255,255,255,.07);
+  --hair:rgba(255,255,255,.11);--text:#f5f2f6;--mid:#c9c2cf;--dim:#9a90a2;
+  --ember:#f29a78;--mint:#6ff0c8;--danger:#ff6f7d;--caution:#ffb547;
+  --s-intro:#8491ff;--s-verse:#6ea8ff;--s-chorus:#ffc163;--s-outro:#a79fb0;
+  --p-keys:#ff9a68;--p-synth:#e070ff;--p-gtr:#a8dc68;--p-bass:#3fd39a;--p-bvs:#5ed8a2;--p-perc:#e9d568;--p-str:#b8c0cc;
+  --click:#f29a78;--cues:#a79fb0;--d1:#4fcabd;--d2:#ff7d93;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#08070a;color:var(--text);font:14px/1.4 "Segoe UI",system-ui,sans-serif}
+.frame{width:1920px;height:1080px;position:relative;overflow:hidden;display:flex;flex-direction:column;
+  background:radial-gradient(1600px 600px at 50% -10%,var(--glow),transparent),linear-gradient(var(--bg1),var(--bg2))}
+body.one .frame{display:none} body.one .frame.shown{display:flex}
+/* top bar */
+.top{display:flex;align-items:center;gap:22px;padding:0 0 0 16px;height:62px;border-bottom:1px solid var(--hair);background:rgba(0,0,0,.25);flex-shrink:0}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.5px;font-size:14px}
+.logo i{width:24px;height:24px;border-radius:50%;border:3px solid var(--mint);display:inline-block}
+.logo small{color:var(--ember);font-weight:600;font-size:12px}
+.tabs{display:flex;gap:4px}
+.tabs span{padding:6px 12px;border-radius:8px;color:var(--dim);font-weight:600;font-size:14px}
+.tabs span.on{background:var(--field);color:var(--text);box-shadow:inset 0 -2px 0 var(--mint)}
+.grow{flex:1}
+.pill{padding:3px 10px;border-radius:20px;font-size:12px;border:1px solid rgba(111,240,200,.35);color:var(--mint);background:rgba(111,240,200,.1);white-space:nowrap}
+.btn{display:inline-block;padding:6px 12px;border-radius:8px;background:var(--field);border:1px solid var(--hair);color:var(--mid);font-size:13px;font-weight:600;white-space:nowrap}
+.modesw{display:flex;border:1px solid var(--hair);border-radius:8px;overflow:hidden;font-size:12px;font-weight:600}
+.modesw span{padding:7px 12px;color:var(--dim)} .modesw span.on{background:var(--mint);color:#0e0c11} .modesw.show span.on{background:var(--ember);color:#160f10}
+.winb{display:flex;align-self:stretch;margin-left:-6px}
+.winb span{width:46px;display:grid;place-items:center;color:var(--mid)}
+.winb svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1}
+.hdr{display:flex;align-items:center;gap:14px;padding:10px 16px;font-size:13px;color:var(--mid)}
+.seg{display:flex;background:var(--field);border-radius:8px;padding:3px}
+.seg span{padding:4px 12px;border-radius:6px;color:var(--dim);font-weight:600}
+.seg span.on{background:rgba(255,255,255,.1);color:var(--text)}
+.dd{display:inline-flex;align-items:center;gap:8px;background:var(--field);border:1px solid var(--hair);border-radius:6px;padding:4px 10px;color:var(--text);min-width:160px;justify-content:space-between}
+.dd::after{content:"▾";color:var(--dim);font-size:10px}
+.body{flex:1;display:flex;gap:14px;padding:0 16px 14px;min-height:0}
+.card{background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:12px 14px}
+h4{margin:0 0 8px;font-size:11px;letter-spacing:.8px;color:var(--dim);font-weight:700}
+.side{width:300px;display:flex;flex-direction:column;gap:10px;flex-shrink:0}
+.side p{margin:0;color:var(--mid);font-size:13px}
+.note{color:var(--dim)!important;font-size:12px!important}
+kbd{background:var(--field);border:1px solid var(--hair);border-bottom-width:2px;border-radius:4px;padding:0 5px;font:600 11px "Segoe UI";color:var(--text);white-space:nowrap}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:7px 10px;font-size:12px;color:var(--mid);align-items:center}
+.keys span:nth-child(odd){white-space:nowrap}
+
+/* ===== the console ===== */
+.console{flex:1;background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:10px;display:flex;gap:6px;min-width:0;overflow:hidden;align-items:stretch}
+.gap{width:10px;flex-shrink:0;position:relative} .gap::after{content:"";position:absolute;left:4px;top:8px;bottom:8px;width:1px;background:var(--hair)}
+.strip{width:112px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;border-radius:7px;position:relative;
+  background:linear-gradient(180deg,#1c1821,#151219 60%,#131017);border:1px solid rgba(255,255,255,.08);padding:9px 7px 7px;gap:7px}
+.strip::before{content:"";position:absolute;left:-1px;right:-1px;top:-1px;height:4px;border-radius:7px 7px 0 0;background:var(--c)}
+.strip.sel{border-color:var(--mint);box-shadow:0 0 0 1px var(--mint),0 0 18px rgba(111,240,200,.18)}
+.strip.dimmed .fz,.strip.dimmed .pan{opacity:.55}
+/* pan */
+.panrow{display:flex;gap:4px;align-items:center;width:100%;justify-content:center}
+.pan{position:relative;width:96px;height:18px;border-radius:4px;background:#0b0a0e;box-shadow:inset 0 1px 2px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.07);overflow:hidden}
+.panrow.linked .pan{width:74px}
+.pan b{position:absolute;top:3px;bottom:3px;background:var(--c);opacity:.28;border-radius:2px}
+.pan em{position:absolute;bottom:1px;height:3px;width:9px;margin-left:-4px;background:var(--c);border-radius:2px;box-shadow:0 0 4px var(--c)}
+.pan i{position:absolute;left:50%;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.25)}
+.pan span{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;text-shadow:0 1px 2px #000}
+.pan.follow{border:1px dashed rgba(255,255,255,.22);background:transparent}
+.pan.follow span{color:var(--dim);font-weight:500}
+.link{width:18px;height:18px;border-radius:4px;display:grid;place-items:center;background:var(--field);border:1px solid var(--hair);color:var(--dim)}
+.link.on{color:var(--mint);border-color:rgba(111,240,200,.45);background:rgba(111,240,200,.1)}
+.link svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.6}
+/* buttons */
+.ms{display:flex;gap:5px}
+.ms b{width:30px;height:20px;border-radius:4px;display:grid;place-items:center;font-size:11px;font-weight:800;background:var(--field);border:1px solid var(--hair);color:var(--dim)}
+.ms b.m.on{background:var(--danger);border-color:var(--danger);color:#160f10}
+.ms b.m.bysolo{border-color:var(--danger);color:var(--danger);background:transparent}
+.ms b.s.on{background:var(--caution);border-color:var(--caution);color:#160f10}
+.ms b.none{visibility:hidden}
+/* number boxes */
+.nums{display:flex;gap:4px;width:100%;justify-content:center}
+.num{width:46px;height:20px;border-radius:4px;background:#0b0a0e;box-shadow:inset 0 1px 2px rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.07);
+  font-size:11px;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:center;color:var(--text)}
+.num.peak{color:var(--dim)}
+.num.peak.over{background:var(--danger);color:#160f10;font-weight:700;border-color:var(--danger)}
+.num.typing{border-color:var(--mint);box-shadow:0 0 0 2px rgba(111,240,200,.25);justify-content:flex-start;padding-left:6px}
+.num.typing::after{content:"";width:1px;height:12px;background:var(--mint);margin-left:1px}
+.num.tonight{color:var(--caution)}
+/* fader zone: track + cap | scale | meter */
+.fz{flex:1;width:100%;position:relative;min-height:120px}
+.groove{position:absolute;left:27px;width:4px;top:10px;bottom:10px;border-radius:2px;background:#060508;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.cap{position:absolute;left:14px;width:30px;height:46px;transform:translateY(50%);border-radius:4px;
+  background:
+    repeating-linear-gradient(180deg,transparent 0 3px,rgba(255,255,255,.10) 3px 4px) top/100% 13px no-repeat,
+    repeating-linear-gradient(180deg,transparent 0 3px,rgba(255,255,255,.10) 3px 4px) bottom/100% 13px no-repeat,
+    linear-gradient(180deg,#4b4452,#2d2733 42%,#1e1a23 58%,#2f2935);
+  border:1px solid rgba(255,255,255,.2);box-shadow:0 4px 10px rgba(0,0,0,.75),inset 0 1px 0 rgba(255,255,255,.18)}
+.cap::after{content:"";position:absolute;left:2px;right:2px;top:50%;height:2px;margin-top:-1px;background:#f1edf4;border-radius:1px;box-shadow:0 0 4px rgba(255,255,255,.5)}
+.cap.tonight{border-color:var(--caution)} .cap.tonight::after{background:var(--caution);box-shadow:0 0 6px var(--caution)}
+.cap.off{opacity:.35}
+.scale{position:absolute;left:46px;width:26px;top:10px;bottom:10px}
+.scale span{position:absolute;right:0;transform:translateY(50%);font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums;line-height:1}
+.scale span.u{color:var(--mid);font-weight:700}
+.scale i{position:absolute;right:-4px;width:3px;height:1px;background:rgba(255,255,255,.25)}
+.meter{position:absolute;left:78px;width:16px;top:10px;bottom:10px;display:flex;gap:2px}
+.meter .bar{flex:1;position:relative;border-radius:1px;background:#08070a;overflow:hidden}
+.meter .bar .fill{position:absolute;left:0;right:0;bottom:0;top:0}
+.meter .bar .mask{position:absolute;left:0;right:0;top:0;background:#0c0b0f}
+.meter .bar .hold{position:absolute;left:0;right:0;height:2px;background:#f1edf4;opacity:.85}
+.cliplt{position:absolute;left:78px;width:16px;height:5px;top:0;border-radius:1px;background:rgba(255,255,255,.08)}
+.cliplt.on{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+/* scribble strip */
+.scrib{width:100%;border-radius:5px;background:#09080b;box-shadow:inset 0 1px 3px rgba(0,0,0,.9);border:1px solid rgba(255,255,255,.06);padding:5px 6px 4px;text-align:center}
+.scrib .nm{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;justify-content:center;gap:5px}
+.scrib .nm i{width:7px;height:7px;border-radius:50%;background:var(--c);flex-shrink:0}
+.scrib .nm em{font-style:normal;color:var(--dim);font-size:10px}
+.scrib .ft{font-size:10.5px;color:var(--dim);min-height:15px;white-space:nowrap}
+.scrib .ft.warn{color:var(--caution)}
+.strip.sel .scrib{border-color:rgba(111,240,200,.5)}
+/* compact strip (main view) */
+.strip.compact{width:118px;padding-top:8px}
+/* stereo output meter in the side panel */
+.ometer{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.ometer .row{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim)}
+.ometer .h{flex:1;height:7px;border-radius:2px;background:#08070a;position:relative;overflow:hidden}
+.ometer .h b{position:absolute;left:0;top:0;bottom:0}
+
+/* song editor */
+.songs{width:200px;border-right:1px solid var(--hair);padding:12px 10px;flex-shrink:0}
+.songs .it{padding:7px 9px;border-radius:7px;color:var(--mid);font-size:13px}
+.songs .it.on{border:1px solid var(--mint);color:var(--text)}
+.center{flex:1;display:flex;flex-direction:column;min-width:0}
+.ehdr{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--hair)}
+.ehdr b{font-size:19px;margin-right:6px}
+.chip{background:var(--field);border:1px solid var(--hair);border-radius:7px;padding:3px 9px;color:var(--mid);font-size:13px;white-space:nowrap}
+.tl{flex:1;position:relative;min-height:0;display:flex;flex-direction:column}
+.lrow{display:flex;height:26px;border-bottom:1px solid rgba(255,255,255,.05);flex-shrink:0}
+.lrow.tall{height:40px}
+.lh{width:150px;flex-shrink:0;border-right:1px solid var(--hair);padding:0 8px;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text)}
+.lh small{margin-left:auto;font-weight:400;color:var(--dim)}
+.lh i{width:8px;height:8px;border-radius:50%}
+.lh.sel{background:rgba(111,240,200,.1);box-shadow:inset 3px 0 0 var(--mint)}
+.lc{flex:1;position:relative;overflow:hidden}
+.sec{position:absolute;top:4px;bottom:4px;border-radius:4px;color:#0e0c11;font-size:12px;font-weight:600;padding:0 7px;line-height:18px}
+.wv{position:absolute;left:4%;top:5px;width:96%;height:calc(100% - 10px)}
+.lanes{flex:1;overflow:hidden;position:relative}
+.vscroll{position:absolute;right:2px;top:4px;width:6px;height:52%;border-radius:3px;background:rgba(255,255,255,.18)}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;left:calc(150px + 37%)}
+.split{height:18px;flex-shrink:0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;position:relative}
+.split .grip{width:44px;height:4px;border-radius:2px;background:rgba(255,255,255,.25)}
+.split .fold{position:absolute;right:10px;top:0;font-size:11px;font-weight:700;color:var(--mid);background:var(--field);border:1px solid var(--hair);border-radius:5px;padding:0 8px;line-height:15px}
+.split .lbl{position:absolute;left:12px;font-size:10px;letter-spacing:.8px;font-weight:700;color:var(--dim)}
+.dock{height:440px;flex-shrink:0;display:flex;padding:8px 10px 6px}
+.dock .console{border-radius:8px;padding:8px}
+.insp{width:270px;border-left:1px solid var(--hair);padding:12px 10px;flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+.foot{height:32px;border-top:1px solid var(--hair);display:flex;align-items:center;gap:10px;padding:0 12px;font-size:12px;color:var(--dim);flex-shrink:0}
+/* main view (Show) */
+.clockb{display:flex;flex-direction:column;line-height:1}
+.clockb b{font-size:30px;font-weight:300}
+.clockb small{color:var(--dim);font-size:12px;margin-top:3px}
+.tbtn{width:44px;height:44px;border-radius:10px;background:var(--field);border:1px solid var(--hair);display:grid;place-items:center;color:var(--mid);font-size:15px}
+.tbtn.play{width:64px;height:52px;background:var(--mint);color:#0e0c11;border:none;box-shadow:0 0 24px rgba(111,240,200,.35);font-size:20px}
+.beats{display:flex;gap:5px}.beats i{width:12px;height:12px;border-radius:50%;background:var(--field);border:1px solid var(--hair)}.beats i.on{background:var(--mint);border-color:var(--mint);box-shadow:0 0 10px var(--mint)}
+.setstrip{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid var(--hair)}
+.songc{width:168px;border-radius:10px;background:var(--field);border:1px solid var(--hair);padding:8px 10px;position:relative;font-size:12px;color:var(--dim)}
+.songc b{display:block;color:var(--text);font-size:14px}
+.songc.now{border-color:var(--mint);box-shadow:inset 0 0 0 1px var(--mint)}
+.songc.next{border:1px dashed var(--ember)}
+.tag{position:absolute;right:8px;top:6px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px}
+.secs{display:flex;gap:3px;padding:12px 16px 6px}
+.secs div{height:34px;border-radius:7px;flex:1;color:#0e0c11;font-weight:600;font-size:13px;display:flex;align-items:center;padding:0 10px}
+.wave2{margin:0 16px;height:96px;border-radius:8px;background:rgba(0,0,0,.25);border:1px solid var(--hair);position:relative;overflow:hidden}
+.mixcap{position:absolute;left:12px;top:8px;font-size:10px;letter-spacing:.8px;font-weight:700;color:var(--dim)}
+
+/* states sheet */
+.sheet{flex:1;display:flex;flex-direction:column;padding:26px 40px}
+.sheet h2{margin:0 0 4px;font-size:22px;font-weight:500}
+.sheet p{margin:0 0 18px;color:var(--dim)}
+.zoom{transform:scale(1.48);transform-origin:top left;display:flex;gap:10px}
+.st{display:flex;flex-direction:column;align-items:center;gap:6px}
+.st .console{flex:none;height:440px;padding:6px;background:transparent;border:none}
+.st label{font-size:11px;color:var(--mid);text-align:center;width:118px;line-height:1.3}
+</style>
+</head>
+<body>
+
+<!-- ===== Frame: Mixer page, This song ===== -->
+<section class="frame" id="song">
+  <div class="top"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="tabs"><span>Setlists</span><span>Song editor</span><span class="on">Mixer</span><span>Setup</span></div>
+    <span class="grow"></span><span class="pill">Audio · Focusrite</span><span class="btn">↶ Undo</span><span class="btn">Snapshots</span>
+    <div class="modesw"><span class="on">EDIT</span><span>SHOW</span></div><div class="winb"></div></div>
+  <div class="hdr">Levels for <div class="seg"><span class="on">This song</span><span>Headphones</span><span>FOH</span></div><span class="dd">First Light</span>
+    <span class="grow"></span><span style="color:var(--mint)">▶ Playing · bar 10.1</span></div>
+  <div class="body">
+    <div class="console" data-set="song" data-h="tall"></div>
+    <div class="side">
+      <div class="card"><h4>THIS SONG</h4><p>How loud each part is in this song, and where it sits, for everyone.</p></div>
+      <div class="card"><h4>WHAT EACH OUTPUT GETS · LOUDEST MOMENT</h4>
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span>Headphones · 1/2</span><span class="note">−4 dB</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px"><span>FOH · 3/4</span><span class="note">−7 dB</span></div></div>
+      <div class="card"><h4>KEYS · SELECTED STRIP</h4><div class="keys">
+        <span><kbd>↑</kbd> <kbd>↓</kbd></span><span>level ±0.5 dB, <kbd>Shift</kbd> ±0.1</span>
+        <span><kbd>←</kbd> <kbd>→</kbd></span><span>pan ±5, <kbd>Shift</kbd> ±1</span>
+        <span><kbd>Tab</kbd></span><span>next strip</span>
+        <span><kbd>M</kbd> <kbd>S</kbd></span><span>mute, solo</span>
+        <span><kbd>Enter</kbd></span><span>type a level</span></div></div>
+      <div class="card"><p class="note">Worked out from the whole song without playing it, so a problem shows up here and in the pre-show check, not on stage.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Frame: Mixer page, an output ===== -->
+<section class="frame" id="output">
+  <div class="top"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="tabs"><span>Setlists</span><span>Song editor</span><span class="on">Mixer</span><span>Setup</span></div>
+    <span class="grow"></span><span class="pill">Audio · Focusrite</span><span class="btn">↶ Undo</span><span class="btn">Snapshots</span>
+    <div class="modesw"><span class="on">EDIT</span><span>SHOW</span></div><div class="winb"></div></div>
+  <div class="hdr">Levels for <div class="seg"><span>This song</span><span class="on">Headphones</span><span>FOH</span></div>
+    <span class="grow"></span><span style="color:var(--mint)">▶ Playing · First Light · bar 10.1</span></div>
+  <div class="body">
+    <div class="console" data-set="output" data-h="tall"></div>
+    <div class="side">
+      <div class="card"><h4>HEADPHONES · <span style="color:var(--mint)">IN-EARS</span> · OUT 1/2</h4>
+        <p>How much of each role this output gets, and where it sits, in every song.</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;color:var(--mid)">Overall level <span class="num" style="width:64px">0.0 dB</span></div>
+        <div style="margin-top:14px;font-size:12px;color:var(--mid);display:flex;justify-content:space-between"><span>Playing now</span><span style="color:var(--text);font-variant-numeric:tabular-nums">−6.8 dB</span></div>
+        <div class="ometer" id="ometer"></div>
+      </div>
+      <div class="card"><h4>PAN ON AN OUTPUT</h4><p class="note"><span style="color:var(--mint)">Linked</span>: the role sits where each song puts it. Unlink to place it in this output for every song.</p></div>
+      <div class="card"><p class="note">The meters show each role after this output's level and pan for it: what the in-ears actually get.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Frame: Song editor with the mixer under the tracks ===== -->
+<section class="frame" id="editor">
+  <div class="top"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="tabs"><span>Setlists</span><span class="on">Song editor</span><span>Mixer</span><span>Setup</span></div>
+    <span class="grow"></span><span class="pill">Audio · Focusrite</span><span class="btn">↶ Undo</span><span class="btn">Snapshots</span>
+    <div class="modesw"><span class="on">EDIT</span><span>SHOW</span></div><div class="winb"></div></div>
+  <div style="flex:1;display:flex;min-height:0">
+    <div class="songs"><h4>ALL SONGS</h4><div class="it on">First Light</div><div class="it">Low Tide</div><div class="it">Run</div></div>
+    <div class="center">
+      <div class="ehdr"><b>First Light</b><span class="chip">100 BPM</span><span class="chip">4/4</span><span class="chip">Count-in 1 bar</span>
+        <span class="grow"></span><span class="chip">Select</span><span class="chip">Draw</span><span class="chip">Automation</span><span class="chip" style="color:var(--text)">▶ Play</span></div>
+      <div class="tl">
+        <div class="lrow"><div class="lh" style="color:var(--dim);font-size:11px">BARS</div><div class="lc" id="ruler"></div></div>
+        <div class="lrow"><div class="lh">Sections</div><div class="lc">
+          <span class="sec" style="left:6%;width:24%;background:var(--s-intro)">Intro</span><span class="sec" style="left:30.2%;width:24.8%;background:var(--s-verse)">Verse 1</span>
+          <span class="sec" style="left:55.2%;width:24.8%;background:var(--s-chorus)">Chorus</span><span class="sec" style="left:80.2%;width:19.8%;background:var(--s-outro)">Outro</span></div></div>
+        <div class="lanes">
+          <div class="lrow"><div class="lh"><i style="background:var(--d1)"></i>Guitar 1 <small>MIDI</small></div><div class="lc"></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-keys)"></i>Keys</div><div class="lc"><canvas class="wv" data-c="--p-keys"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-synth)"></i>Synth</div><div class="lc"><canvas class="wv" data-c="--p-synth"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-gtr)"></i>Guitar</div><div class="lc"><canvas class="wv" data-c="--p-gtr"></canvas></div></div>
+          <div class="lrow tall"><div class="lh sel"><i style="background:var(--p-bass)"></i>Bass</div><div class="lc" style="background:rgba(111,240,200,.04)"><canvas class="wv" data-c="--p-bass"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-bvs)"></i>BVs</div><div class="lc"><canvas class="wv" data-c="--p-bvs"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-perc)"></i>Perc</div><div class="lc"><canvas class="wv" data-c="--p-perc"></canvas></div></div>
+          <div class="lrow tall"><div class="lh"><i style="background:var(--p-str)"></i>Strings</div><div class="lc"><canvas class="wv" data-c="--p-str"></canvas></div></div>
+          <div class="vscroll"></div>
+        </div>
+        <div class="playhead"></div>
+      </div>
+      <div class="split"><span class="lbl">MIXER · THIS SONG</span><span class="grip"></span><span class="fold">▾ Hide</span></div>
+      <div class="dock"><div class="console" data-set="editor" data-h="dock"></div></div>
+      <div class="foot">Bar <b style="color:var(--mint)">10.1</b> 0:21 <kbd>Space</kbd> play <kbd>↑</kbd><kbd>↓</kbd> level <kbd>←</kbd><kbd>→</kbd> pan <kbd>Tab</kbd> next strip <kbd>S</kbd> solo
+        <span class="grow"></span><span style="color:var(--caution)">Solo: Guitar</span><span style="color:var(--mint)">Saved ✓</span></div>
+    </div>
+    <div class="insp">
+      <div class="card"><h4>SELECTED · BASS</h4>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mid);margin:6px 0">Level <span class="num">0.0</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mid);margin:6px 0">Pan <span class="num">R 15</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--mid);margin:6px 0">Role <span class="chip" style="color:var(--text)">Bass</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Frame: main view, Show mode ===== -->
+<section class="frame" id="show">
+  <div class="top" style="gap:16px;padding-right:16px"><span class="logo"><i></i>SMART Q <small>LIVE</small></span>
+    <div class="clockb"><b>00:22</b><small>of 0:38 · bar 10.1</small></div>
+    <span class="chip"><b>100</b> BPM</span><span class="chip"><b>4/4</b></span><div class="beats"><i class="on"></i><i></i><i></i><i></i></div>
+    <span class="grow"></span><span class="tbtn">⏮</span><span class="tbtn play">▶</span><span class="tbtn">⏭</span><span class="grow"></span>
+    <span class="pill">Audio</span><span class="pill">MIDI 2</span><div class="modesw show"><span>EDIT</span><span class="on">SHOW</span></div></div>
+  <div class="setstrip">
+    <div class="songc now"><span class="tag" style="background:var(--mint);color:#0e0c11">NOW</span>1<b>First Light</b>0:48 · → crossfade</div>
+    <div class="songc next"><span class="tag" style="background:var(--ember);color:#160f10">NEXT</span>2<b>Low Tide</b>0:30 · <span style="color:var(--mint)">✓ Ready</span></div>
+    <div class="songc">3<b>Run</b>0:41 · end</div></div>
+  <div class="secs"><div style="background:var(--s-intro);opacity:.45">1 Intro</div><div style="background:var(--s-verse);opacity:.45">2 Verse 1</div>
+    <div style="background:var(--s-chorus);outline:2px solid #fff;outline-offset:1px">3 Chorus · 3 bars left</div><div style="background:var(--s-chorus)">4 Chorus</div><div style="background:var(--s-outro);outline:2px dashed var(--ember);outline-offset:1px">5 Outro</div></div>
+  <div class="wave2"><canvas class="wv" data-c="--mint" style="left:0;width:100%"></canvas></div>
+  <div style="padding:6px 16px 0;display:flex;flex-direction:column;gap:3px;font-size:11px">
+    <div style="height:22px;border-radius:5px;background:rgba(0,0,0,.2);border:1px solid var(--hair);position:relative;color:var(--mid)"><span style="position:absolute;left:6px;top:3px">Cues</span>
+      <span style="position:absolute;left:16%;top:2px;border:1px dashed var(--dim);border-radius:4px;padding:0 5px;color:var(--dim);font-size:10px">Verse</span>
+      <span style="position:absolute;left:46%;top:2px;background:#e9e4ec;color:#0e0c11;border-radius:4px;padding:0 5px;font-size:10px">"Watch me"</span>
+      <span style="position:absolute;left:74%;top:2px;border:1px dashed var(--dim);border-radius:4px;padding:0 5px;color:var(--dim);font-size:10px">Outro</span></div>
+    <div style="height:22px;border-radius:5px;background:rgba(0,0,0,.2);border:1px solid var(--hair);position:relative;color:var(--mid)"><span style="position:absolute;left:6px;top:3px">Guitar 1</span>
+      <span style="position:absolute;left:4%;top:2px;background:var(--d1);color:#0e0c11;border-radius:4px;padding:0 5px;font-size:10px;font-weight:700">Clean</span>
+      <span style="position:absolute;left:40%;top:2px;background:var(--d1);color:#0e0c11;border-radius:4px;padding:0 5px;font-size:10px;font-weight:700">Crunch</span></div>
+    <div style="height:22px;border-radius:5px;background:rgba(0,0,0,.2);border:1px solid var(--hair);position:relative;color:var(--mid)"><span style="position:absolute;left:6px;top:3px">Guitar 2</span>
+      <span style="position:absolute;left:4%;top:2px;background:var(--d2);color:#0e0c11;border-radius:4px;padding:0 5px;font-size:10px;font-weight:700">Rhythm</span>
+      <span style="position:absolute;left:60%;top:2px;background:var(--d2);color:#0e0c11;border-radius:4px;padding:0 5px;font-size:10px;font-weight:700">Ambient</span></div>
+  </div>
+  <div class="body" style="padding-top:12px">
+    <div class="console" data-set="show" data-h="compact" style="position:relative;padding-top:28px"><span class="mixcap">LEVELS ARE LIVE · <span style="color:var(--caution)">AMBER = CHANGED TONIGHT</span></span>
+      <span class="dd" style="position:absolute;right:10px;top:4px;min-width:110px;padding:1px 8px;font-size:12px">This song</span></div>
+    <div class="side">
+      <div class="card"><h4>NEXT SONG</h4><b style="font-size:18px">2 · Low Tide</b><p class="note"><span style="color:var(--mint)">✓ Ready</span> · after a 4 s crossfade</p></div>
+      <div class="card"><p class="note">In Show mode there is no S (solo) and the mixer never takes the keyboard: the arrows stay with the show. Faders, pan and M work with the mouse; changes are for tonight only.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Frame: the states of one strip, larger ===== -->
+<section class="frame" id="states">
+  <div class="sheet">
+    <h2>One strip, every state</h2>
+    <p>Drawn 1.5 times larger. Same strip everywhere: the Mixer page, the Song editor's panel, and (without the S, number boxes and pan link) the main view.</p>
+    <div class="zoom" id="states-row"></div>
+  </div>
+</section>
+
+<script>
+// The fader's travel, as the app's LevelFader: the bottom 15% covers -60 to -30 dB, the next 60% -30 to 0, the top 25% 0 to +6.
+const frac = db => db <= -30 ? (Math.max(db, -60) + 60) / 30 * .15 : db <= 0 ? .15 + (db + 30) / 30 * .6 : .75 + Math.min(db, 6) / 6 * .25;
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = db => db === null ? "off" : db === 0 ? "0.0" : (db > 0 ? "+" : "−") + Math.abs(db).toFixed(1);
+const fmtPan = p => p === 0 ? "C" : (p < 0 ? "L " : "R ") + Math.abs(p);
+const MARKS = [6, 3, 0, -3, -6, -10, -15, -20, -30, -40, -60];
+const LINK = '<svg viewBox="0 0 16 16"><path d="M6.5 9.5l3-3"/><path d="M7 4.5l1.2-1.2a2.6 2.6 0 0 1 3.7 3.7L10.7 8.2"/><path d="M9 11.5l-1.2 1.2a2.6 2.6 0 0 1-3.7-3.7L5.3 7.8"/></svg>';
+
+// One strip. o: name, c (colour var), level, L/R (meter dB), hold, pan (-100..100), follow (output: linked to song),
+// link (output view: show the link button), m, s, bysolo, clip, sel, typing (text), tonight, footer, warn, ears, noS, compact
+function strip(o) {
+  const c = css(o.c);
+  const panHtml = (() => {
+    let inner = '<i></i>';
+    if (o.follow) inner += '<span>Follow</span>';
+    else {
+      const p = o.pan || 0, w = Math.abs(p) / 100 * 50;
+      inner += `<b style="${p < 0 ? `right:50%;width:${w}%` : `left:50%;width:${w}%`}"></b><em style="left:${50 + p / 2}%"></em><span>${fmtPan(p)}</span>`;
+    }
+    const link = o.link ? `<span class="link${o.follow ? " on" : ""}">${LINK}</span>` : "";
+    return `<div class="panrow${o.link ? " linked" : ""}"><div class="pan${o.follow ? " follow" : ""}">${inner}</div>${link}</div>`;
+  })();
+  const ms = `<div class="ms"><b class="m${o.m ? " on" : o.bysolo ? " bysolo" : ""}${o.noM ? " none" : ""}">M</b>${o.noS ? "" : `<b class="s${o.s ? " on" : ""}">S</b>`}</div>`;
+  const nums = o.compact ? "" : `<div class="nums"><span class="num${o.typing ? " typing" : ""}${o.tonight ? " tonight" : ""}">${o.typing || fmt(o.level)}</span>` +
+    `<span class="num peak${o.peak > 0 ? " over" : ""}">${o.peak === undefined || o.peak <= -60 ? "−∞" : fmt(o.peak)}</span></div>`;
+  const scale = MARKS.map(m => `<span class="${m === 0 ? "u" : ""}" style="bottom:${frac(m) * 100}%">${m > 0 ? "+" + m : m === -60 ? "−∞" : m === 0 ? "0" : "−" + -m}</span>` +
+    `<i style="bottom:${frac(m) * 100}%"></i>`).join("");
+  const grad = `linear-gradient(to top,${c} 0%,${c} ${frac(-6) * 100}%,var(--caution) ${frac(-1) * 100}%,var(--danger) ${frac(0) * 100}%,var(--danger) 100%)`;
+  const bar = (db, hold) => {
+    const silent = o.m || o.bysolo || db === undefined || db <= -60;
+    const top = silent ? 100 : (1 - frac(db)) * 100;
+    return `<div class="bar"><div class="fill" style="background:${grad}"></div><div class="mask" data-db="${silent ? -60 : db}" style="height:${top}%"></div>` +
+      (silent || hold === undefined ? "" : `<div class="hold" style="bottom:${frac(hold) * 100}%"></div>`) + `</div>`;
+  };
+  const cap = `<div class="cap${o.tonight ? " tonight" : ""}${o.level === null ? " off" : ""}" style="bottom:calc(10px + ${frac(o.level === null ? -60 : o.level)} * (100% - 20px))"></div>`;
+  const fz = `<div class="fz"><div class="cliplt${o.clip ? " on" : ""}"></div><div class="groove"></div>${cap}<div class="scale">${scale}</div>` +
+    `<div class="meter">${bar(o.L, o.hold)}${bar(o.R, o.hold)}</div></div>`;
+  const scrib = `<div class="scrib"><div class="nm"><i></i>${o.name}${o.ears ? "<em>◉</em>" : ""}</div><div class="ft${o.warn ? " warn" : ""}">${o.footer || ""}</div></div>`;
+  return `<div class="strip${o.sel ? " sel" : ""}${o.compact ? " compact" : ""}${o.bysolo ? " dimmed" : ""}" style="--c:${c}">${o.hidePan ? "" : panHtml}${ms}${nums}${fz}${scrib}</div>`;
+}
+
+const SETS = {
+  song: [
+    {name: "Click", c: "--click", level: 0, L: -8, R: -8, hold: -6, peak: -5.8, pan: 0, noS: true, ears: true, footer: "Wood block"},
+    {name: "Cues", c: "--cues", level: -9, L: -60, R: -60, peak: -14.2, pan: 0, noS: true, ears: true},
+    "gap",
+    {name: "Keys", c: "--p-keys", level: -3, L: -11, R: -13, hold: -8, peak: -7.6, pan: -40, typing: "−4.5"},
+    {name: "Synth", c: "--p-synth", level: -6, L: -21, R: -17, hold: -14, peak: -13.9, pan: 30},
+    {name: "Guitar", c: "--p-gtr", level: -2, L: -10, R: -12, hold: -6, peak: -5.1, pan: -70},
+    {name: "Bass", c: "--p-bass", level: 0, L: -7, R: -7, hold: -4, peak: -3.6, pan: 15, sel: true},
+    {name: "BVs", c: "--p-bvs", level: -4, m: true, pan: 15, peak: -9.0},
+    {name: "Perc", c: "--p-perc", level: 2, L: -1, R: 0.8, hold: 0.8, peak: 1.4, pan: 55, clip: true},
+    {name: "Strings", c: "--p-str", level: -8, L: -26, R: -24, hold: -20, peak: -18.3, pan: -15},
+  ],
+  output: [
+    {name: "Click", c: "--click", level: 0, L: -9, R: -7, hold: -6, peak: -5.8, pan: 0, link: true, follow: true, noS: true, ears: true, footer: "Wood block"},
+    {name: "Cues", c: "--cues", level: -3, L: -60, R: -60, peak: -10.1, pan: 0, link: true, follow: true, noS: true, ears: true},
+    "gap",
+    {name: "Keys", c: "--p-keys", level: -6, L: -14, R: -26, hold: -12, peak: -11.2, pan: -60, link: true, follow: false, noS: true},
+    {name: "Synth", c: "--p-synth", level: -12, L: -30, R: -27, hold: -24, peak: -23.0, link: true, follow: true, noS: true},
+    {name: "Guitar", c: "--p-gtr", level: -4, L: -24, R: -12, hold: -9, peak: -8.4, pan: 40, link: true, follow: false, noS: true},
+    {name: "Bass", c: "--p-bass", level: 0, L: -8, R: -8, hold: -5, peak: -4.4, link: true, follow: true, noS: true},
+    {name: "BVs", c: "--p-bvs", level: null, link: true, follow: true, noS: true, footer: "not sent"},
+    {name: "Perc", c: "--p-perc", level: -6, L: -9, R: -8, hold: -7, peak: -6.1, link: true, follow: true, noS: true},
+    {name: "Strings", c: "--p-str", level: -12, L: -38, R: -36, hold: -30, peak: -29.5, link: true, follow: true, noS: true},
+  ],
+  editor: [
+    {name: "Click", c: "--click", level: 0, L: -8, R: -8, hold: -6, peak: -5.8, pan: 0, noS: true, ears: true},
+    {name: "Cues", c: "--cues", level: -9, L: -60, R: -60, peak: -14.2, pan: 0, noS: true, ears: true},
+    "gap",
+    {name: "Keys", c: "--p-keys", level: -3, pan: -40, bysolo: true, peak: -7.6},
+    {name: "Synth", c: "--p-synth", level: -6, pan: 30, bysolo: true, peak: -13.9},
+    {name: "Guitar", c: "--p-gtr", level: -2, L: -10, R: -12, hold: -6, peak: -5.1, pan: -70, s: true},
+    {name: "Bass", c: "--p-bass", level: 0, pan: 15, bysolo: true, peak: -3.6, sel: true},
+    {name: "BVs", c: "--p-bvs", level: -4, m: true, pan: 15, peak: -9.0},
+    {name: "Perc", c: "--p-perc", level: 2, pan: 55, bysolo: true, peak: 1.4},
+    {name: "Strings", c: "--p-str", level: -8, pan: -15, bysolo: true, peak: -18.3},
+  ],
+  show: [
+    {name: "Click", c: "--click", level: 2, L: -7, R: -7, hold: -5, pan: 0, noS: true, ears: true, compact: true, tonight: true, footer: "+2 dB tonight", warn: true},
+    {name: "Cues", c: "--cues", level: -9, L: -60, R: -60, pan: 0, noS: true, ears: true, compact: true},
+    "gap",
+    {name: "Keys", c: "--p-keys", level: -3, L: -11, R: -13, hold: -8, pan: -40, noS: true, compact: true},
+    {name: "Synth", c: "--p-synth", level: -6, L: -21, R: -17, hold: -14, pan: 30, noS: true, compact: true},
+    {name: "Guitar", c: "--p-gtr", level: -2, L: -10, R: -12, hold: -6, pan: -70, noS: true, compact: true},
+    {name: "Bass", c: "--p-bass", level: 0, L: -7, R: -7, hold: -4, pan: 0, noS: true, compact: true},
+    {name: "BVs", c: "--p-bvs", level: -4, m: true, pan: 15, noS: true, compact: true},
+    {name: "Perc", c: "--p-perc", level: 2, L: -3, R: -2, hold: -1, pan: 55, noS: true, compact: true},
+    {name: "Strings", c: "--p-str", level: -8, L: -26, R: -24, hold: -20, pan: -15, noS: true, compact: true},
+  ],
+};
+for (const el of document.querySelectorAll(".console[data-set]")) {
+  el.insertAdjacentHTML("beforeend", SETS[el.dataset.set].map(o => o === "gap" ? '<div class="gap"></div>' : strip(o)).join(""));
+}
+// The states sheet.
+const STATES = [
+  ["Playing", {name: "Keys", c: "--p-keys", level: -3, L: -11, R: -13, hold: -8, peak: -7.6, pan: -40}],
+  ["Selected (keys go here)", {name: "Bass", c: "--p-bass", level: 0, L: -7, R: -7, hold: -4, peak: -3.6, pan: 0, sel: true}],
+  ["Typing a level", {name: "Keys", c: "--p-keys", level: -3, L: -11, R: -13, hold: -8, peak: -7.6, pan: -40, sel: true, typing: "−4.5"}],
+  ["Clipped: light, red peak", {name: "Perc", c: "--p-perc", level: 2, L: -1, R: 0.8, hold: 0.8, peak: 1.4, pan: 55, clip: true}],
+  ["Muted", {name: "BVs", c: "--p-bvs", level: -4, m: true, pan: 15, peak: -9.0}],
+  ["Soloed", {name: "Guitar", c: "--p-gtr", level: -2, L: -10, R: -12, hold: -6, peak: -5.1, pan: -70, s: true}],
+  ["Silenced by a solo", {name: "Synth", c: "--p-synth", level: -6, pan: 30, bysolo: true, peak: -13.9}],
+  ["Output: follows the song", {name: "Bass", c: "--p-bass", level: 0, L: -8, R: -8, hold: -5, peak: -4.4, link: true, follow: true, noS: true}],
+  ["Output: own pan (unlinked)", {name: "Keys", c: "--p-keys", level: -6, L: -14, R: -26, hold: -12, peak: -11.2, pan: -60, link: true, noS: true}],
+];
+document.getElementById("states-row").innerHTML = STATES.map(([label, o]) =>
+  `<div class="st"><div class="console">${strip(o)}</div><label>${label}</label></div>`).join("");
+// The output's own stereo meter in the side panel.
+const om = document.getElementById("ometer");
+for (const [side, db] of [["L", -7.4], ["R", -6.8]])
+  om.insertAdjacentHTML("beforeend", `<div class="row">${side}<div class="h"><b style="width:${frac(db) * 100}%;background:linear-gradient(90deg,var(--mint) ${frac(-6) * 100 / frac(db)}%,var(--caution))"></b></div></div>`);
+om.insertAdjacentHTML("beforeend", `<div class="row" style="padding-left:14px;justify-content:space-between"><span>−60</span><span>−30</span><span>−12</span><span>0</span><span>+6</span></div>`);
+// Window buttons in Edit mode's top bar.
+const WB = '<span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></span>';
+for (const w of document.querySelectorAll(".winb")) w.innerHTML = WB;
+// Waveforms and the ruler.
+for (const cv of document.querySelectorAll("canvas.wv")) {
+  const w = cv.width = cv.clientWidth || 1200, h = cv.height = cv.clientHeight || 30, g = cv.getContext("2d");
+  g.fillStyle = css(cv.dataset.c); let seed = cv.dataset.c.length * 7919 + 3;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let x = 0; x < w; x += 2) { const a = (0.35 + 0.65 * rnd()) * h / 2; g.globalAlpha = cv.closest("#show") && x > w * .45 ? .35 : 1; g.fillRect(x, h / 2 - a, 1.4, a * 2); }
+}
+const ruler = document.getElementById("ruler");
+for (let b = 1; b <= 16; b++) ruler.insertAdjacentHTML("beforeend", `<span style="position:absolute;left:${6 + (b - 1) * 94 / 16}%;top:5px;font-size:11px;color:var(--dim)">${b}</span>`);
+// One frame per #hash, for the pictures.
+if (location.hash) { document.body.classList.add("one"); document.querySelector(location.hash)?.classList.add("shown"); }
+// Moving meters when opened in a browser (not in the pictures).
+if (!/Headless/.test(navigator.userAgent)) setInterval(() => {
+  for (const m of document.querySelectorAll(".mask")) {
+    const base = +m.dataset.db; if (base <= -60) continue;
+    m.style.height = (1 - frac(base - Math.random() * 8)) * 100 + "%";
+  }
+}, 80);
+</script>
+</body>
+</html>
