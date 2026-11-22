@@ -3,6 +3,7 @@
 #include "app/RemoteServer.h"
 #include "ui/Pages.h"
 #include "ui/Theme.h"
+#include "ui/WindowFrame.h"
 
 namespace sqlive::ui {
 
@@ -25,14 +26,33 @@ MainWindow::MainWindow(app::Session& session, app::AudioHost* host, app::RemoteA
     setResizable(true, false);
     setResizeLimits(1100, 680, 16384, 16384);
     setContentNonOwned(&shell_, false);
+
+    // Where Windows' frame sees the click on a window button (WindowFrame), these go unused; they are for the bar's own
+    // mouse, where there is no frame.
+    auto& bar = shell_.topBar();
+    bar.onMinimise = [this] { setMinimised(true); };
+    bar.onMaximiseToggle = [this] {
+        if (auto* peer = getPeer()) peer->setFullScreen(!peer->isFullScreen());   // a titled window's peer maximises
+    };
+    bar.onCloseWindow = [this] { closeButtonPressed(); };
+    // The window has its native window from here on. The frame is made before the window takes its size, so the size is
+    // the one without a caption strip.
+    frame_ = std::make_unique<WindowFrame>(*this, [this](juce::Point<int> screen) {
+        auto& topBar = shell_.topBar();
+        return topBar.isShowing() ? topBar.windowAreaAt(topBar.getLocalPoint(nullptr, screen)) : WindowArea::Client;
+    });
+    frame_->onButtonHighlight = [this](WindowArea hovered, bool pressed) { shell_.topBar().setWindowButtonHighlight(hovered, pressed); };
+    frame_->onAttachedChanged = [this] { followFrame(); };
     centreWithSize(1280, 800);
     setVisible(true);
+    followFrame();
 
     session_.changes().addChangeListener(this);
     followMode();                                                 // a band reopened during a show starts in Show mode
 }
 
 MainWindow::~MainWindow() {
+    frame_.reset();                                               // before anything it calls back into goes
     session_.changes().removeChangeListener(this);
     if (inShow_) {
         removeKeyListener(&controller_);
@@ -48,6 +68,18 @@ void MainWindow::setKioskAllowed(bool allowed) {
     if (wanted == kiosk_) return;
     kiosk_ = wanted;
     juce::Desktop::getInstance().setKioskModeComponent(kiosk_ ? this : nullptr, false);
+    followFrame();
+}
+
+void MainWindow::resized() {
+    juce::DocumentWindow::resized();
+    followFrame();                                                // maximised or restored
+}
+
+void MainWindow::followFrame() {
+    const bool framed = frame_ != nullptr && frame_->attached() && !kiosk_;
+    shell_.topBar().setFrameDrivesWindowButtons(framed);
+    shell_.setWindowControls(framed, framed && frame_->maximised());
 }
 
 bool mayCloseNow(const app::Session& session) { return !(session.mode() == Mode::Show && session.now().playing); }

@@ -15,6 +15,8 @@ The first runs the tests with that Catch2 filter; the second builds `build\Smart
 
 Stage 4 done: phone remote, a level check before the show, and snapshots that say what changed.
 
+On Windows the window has no separate title strip: the top bar is the title bar (drag its empty parts to move the window; minimise, maximise and close sit at its right end).
+
 ## Using it
 
 1. Start `Smart Q Live.exe`. Open your band folder, start a new one, or click **Try the demo band**.

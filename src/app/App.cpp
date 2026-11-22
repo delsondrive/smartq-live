@@ -14,6 +14,7 @@
 #include "ui/Screens.h"
 #include "ui/Theme.h"
 #include "ui/WelcomePage.h"
+#include "ui/WindowFrame.h"
 
 namespace sqlive::app {
 
@@ -137,7 +138,8 @@ private:
     double lastMs_ = 0.0, owed_ = 0.0;
 };
 
-// A plain window around one page (Welcome, or New computer); closing it asks the app.
+// A plain window around one page (Welcome, or New computer); closing it asks the app. Its native title strip is in the
+// app's colours (WindowFrame::paintNativeCaption).
 class App::StartWindow : public juce::DocumentWindow {
 public:
     StartWindow(std::unique_ptr<juce::Component> page, const juce::String& title, int width, int height)
@@ -147,6 +149,7 @@ public:
         setResizeLimits(760, 600, 16384, 16384);
         setContentOwned(page.release(), false);
         centreWithSize(width, height);
+        ui::WindowFrame::paintNativeCaption(*this);              // before it shows, so it never flashes light
         setVisible(true);
     }
     void closeButtonPressed() override { if (onClose) onClose(); }

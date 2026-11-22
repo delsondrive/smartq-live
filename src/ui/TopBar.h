@@ -91,6 +91,10 @@ public:
     // Which button is drawn hovered and whether it is pressed, for the window frame that sees the mouse over the buttons
     // (where Windows takes it from the bar). WindowArea::Client (or any non-button) = none. The bar's own mouse sets the same.
     void setWindowButtonHighlight(WindowArea hovered, bool pressed);
+    // While the window frame draws the buttons' highlight (on Windows, where it sees the mouse over them), the bar's own mouse
+    // leaves it alone: Windows takes the mouse from the bar as it goes onto a button, and that mouse exit, or a move over
+    // the bar after it, must not wipe the hover the frame has just drawn.
+    void setFrameDrivesWindowButtons(bool);
     // A click on a button: from the bar's own mouse (on mouse up inside the button the press began on, as Windows' caption
     // buttons do), and called by the frame when it sees the click itself.
     std::function<void()> onMinimise, onMaximiseToggle, onCloseWindow;
@@ -114,6 +118,7 @@ private:
     int modeSegmentAt(juce::Point<int>) const;
     WindowArea buttonAt(juce::Point<int>) const;                  // a window button, or Client
     void drawWindowButton(juce::Graphics&, WindowArea) const;
+    void mouseHighlight(WindowArea hovered, bool pressed);        // the bar's own mouse: setWindowButtonHighlight unless the frame draws it
 
     app::Session& session_;
     TopBarState state_;
@@ -130,6 +135,7 @@ private:
     int hoveredTab_ = -1;
     WindowArea hotButton_ = WindowArea::Client;                   // the window button drawn hovered; Client = none
     bool buttonPressed_ = false;                                  // ... and drawn pressed
+    bool frameDrivesButtons_ = false;                             // setFrameDrivesWindowButtons
     WindowArea mouseButton_ = WindowArea::Client;                 // the button the bar's own mouse went down on
     double mouseHoldStart_ = -1.0;                                // ms; -1 = the ▶ isn't held with the mouse
     bool mouseHoldDone_ = false;

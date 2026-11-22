@@ -4,7 +4,7 @@ This is for you, on the laptop you play shows from, with your real audio interfa
 
 Use the Release build (`build\SmartQLive_artefacts\Release\Smart Q Live.exe`). Use a real song of yours with real stems, not only the demo band. Use headphones or in-ears you trust.
 
-Every section here is needed. Stage 1 (sections 1 to 10), stage 2 (sections 11 to 17), stage 3 (sections 18 to 25) and stage 4 (sections 26 to 30) are each accepted when every line in their sections is ticked, or when what is left is written down.
+Every section here is needed. Stage 1 (sections 1 to 10), stage 2 (sections 11 to 17), stage 3 (sections 18 to 25) and stage 4 (sections 26 to 30, with the title bar in 31) are each accepted when every line in their sections is ticked, or when what is left is written down.
 
 Lines that need your ears are marked **(by ear)**. Lines that need a second computer are marked **(two computers)**. Stage 2 needs at least one MIDI pedalboard (or other MIDI gear that changes patch on a program change) on a USB MIDI port, and one MIDI footswitch. Stage 3 needs a real song of yours with markers for its sections in its MIDI file. Stage 4 needs a phone or two on the same Wi-Fi as the laptop (an iPhone with Safari and an Android phone with Chrome, if you have both).
 
@@ -366,6 +366,24 @@ Set a latching footswitch to momentary on the footswitch itself before you learn
 - [ ] **Out of range and back:** walk out of Wi-Fi range mid-song and back. The phone shows "Reconnecting…", then the right bar and the right song, and the laptop never paused or changed anything.
 - [ ] **Lock and unlock:** lock the phone and unlock it: the page comes back with the right song, without joining again.
 - [ ] **Turning it off:** switch the remote off on the laptop while a phone is connected. The phone dims and says "Reconnecting…"; the music does not change. Turn it on again and the phone comes back.
+
+## 31. The title bar (Windows)
+
+On Windows 11, then again on Windows 10 if one is to hand. The main window has no light title strip: the dark top bar is the title bar.
+
+- [ ] **Move and snap:** in Edit mode, drag an empty part of the top bar (after the tabs, or between Snapshots and EDIT/SHOW): the window moves. Drag it to the left or right screen edge, and to the top: it snaps to half the screen, and maximises. Shake it: other windows minimise (Aero shake, if turned on). Click the empty bar once without dragging, then move the mouse: the window stays put.
+- [ ] **Nothing else drags:** press on a tab, Undo, Snapshots, a pill, the logo and the EDIT/SHOW switch, and drag: the window never moves, and each still does its own thing on a click.
+- [ ] **Win+arrows:** Win+Up maximises, Win+Down restores and then minimises, Win+Left and Win+Right snap.
+- [ ] **Double-click:** double-click the empty bar: the window maximises; again: it restores. Double-clicking a tab or the switch never does.
+- [ ] **Snap layouts:** rest the mouse on the maximise button: Windows 11 shows its snap layouts; choose one and the window takes it. Win+Z shows them too.
+- [ ] **Buttons:** the three buttons light faintly under the mouse (close turns red), and the light stays while the mouse rests on a button and goes when it leaves. Press one, slide off and let go: nothing happens. Minimise, then restore from the taskbar. Maximise: the middle button turns to "restore"; restore.
+- [ ] **Resize:** drag every edge and corner, and the top edge (a thin band at the very top of a restored window). The window stops at 1100 x 680.
+- [ ] **Maximised:** maximise: the whole top bar shows, nothing cut off at the top or the sides, and the taskbar stays visible. Do it on a second screen too, if there is one.
+- [ ] **Close:** close with the X: the app closes. In Show mode with a song playing (kiosk turned off, so the buttons show), click the X and press Alt+F4: both say "Stop the song before closing Smart Q Live." and the app stays.
+- [ ] **Show mode:** go to Show mode: the window takes the whole screen and the bar has no window buttons; nothing in the bar moves the window. Leave Show mode: the window comes back where it was, at its size, with the merged bar and its buttons. Without kiosk (when it is turned off), Show mode keeps the buttons, and dragging or double-clicking the bar does nothing.
+- [ ] **Display scaling:** set the display to 125 %, then 150 % (Settings, Display, Scale), with the app open and again after restarting it: the buttons answer exactly where they are drawn, the caption drags from the empty bar, and the top edge still resizes. Drag the window between two screens with different scaling, if there are two.
+- [ ] **Taskbar and Alt+Tab:** the band's name is the window's title in both.
+- [ ] **Welcome window:** open the Welcome window (no band, or About, **Open another band folder…**): its title strip is dark (Windows 11: the app's near-black; Windows 10: dark grey).
 
 ## What to write down
 

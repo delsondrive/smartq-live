@@ -683,6 +683,12 @@ void TopBar::setWindowButtonHighlight(WindowArea hovered, bool pressed) {
     repaint();
 }
 
+void TopBar::setFrameDrivesWindowButtons(bool driven) { frameDrivesButtons_ = driven; }
+
+void TopBar::mouseHighlight(WindowArea hovered, bool pressed) {
+    if (!frameDrivesButtons_) setWindowButtonHighlight(hovered, pressed);
+}
+
 juce::Rectangle<int> TopBar::tabArea(Page page) const {
     const auto i = static_cast<std::size_t>(page);
     return i < tabs_.size() ? tabs_[i] : juce::Rectangle<int>();
@@ -705,7 +711,7 @@ void TopBar::mouseDown(const juce::MouseEvent& e) {
     // A window button acts on mouse up, on the button the press began on (as Windows' caption buttons do).
     mouseButton_ = buttonAt(p);
     if (mouseButton_ != WindowArea::Client) {
-        setWindowButtonHighlight(mouseButton_, true);
+        mouseHighlight(mouseButton_, true);
         return;
     }
     if (const int tab = tabAt(p); tab >= 0) {
@@ -726,7 +732,7 @@ void TopBar::mouseDown(const juce::MouseEvent& e) {
 
 void TopBar::mouseDrag(const juce::MouseEvent& e) {
     // Held on a button: pressed while the mouse is over it, plain once it leaves (it may come back).
-    if (mouseButton_ != WindowArea::Client) setWindowButtonHighlight(mouseButton_, buttonAt(e.getPosition()) == mouseButton_);
+    if (mouseButton_ != WindowArea::Client) mouseHighlight(mouseButton_, buttonAt(e.getPosition()) == mouseButton_);
 }
 
 void TopBar::mouseUp(const juce::MouseEvent& e) {
@@ -734,7 +740,7 @@ void TopBar::mouseUp(const juce::MouseEvent& e) {
     mouseButton_ = WindowArea::Client;
     if (pressedOn == WindowArea::Client) return;
     const auto p = e.getPosition();
-    setWindowButtonHighlight(buttonAt(p), false);
+    mouseHighlight(buttonAt(p), false);
     if (buttonAt(p) != pressedOn) return;
     const auto action = pressedOn == WindowArea::Minimise ? onMinimise : pressedOn == WindowArea::Maximise ? onMaximiseToggle : onCloseWindow;
     if (action) action();                                             // a copy: closing the window may delete the bar
@@ -742,7 +748,7 @@ void TopBar::mouseUp(const juce::MouseEvent& e) {
 
 void TopBar::mouseMove(const juce::MouseEvent& e) {
     const auto p = e.getPosition();
-    setWindowButtonHighlight(buttonAt(p), false);
+    mouseHighlight(buttonAt(p), false);
     const int tab = tabAt(p);
     if (tab != hoveredTab_) {
         hoveredTab_ = tab;
@@ -754,7 +760,7 @@ void TopBar::mouseMove(const juce::MouseEvent& e) {
 }
 
 void TopBar::mouseExit(const juce::MouseEvent&) {
-    if (mouseButton_ == WindowArea::Client) setWindowButtonHighlight(WindowArea::Client, false);
+    if (mouseButton_ == WindowArea::Client) mouseHighlight(WindowArea::Client, false);
     if (hoveredTab_ >= 0) {
         hoveredTab_ = -1;
         repaint();
