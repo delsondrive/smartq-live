@@ -123,6 +123,7 @@ const SongCache& Session::cache() const { return cache_; }
 Settings& Session::settings() { return settings_; }
 const Settings& Session::settings() const { return settings_; }
 engine::Engine& Session::engine() { return engine_; }
+MeterHub& Session::meters() { return meters_; }
 CueLibrary& Session::cues() { return cues_; }
 const CueLibrary& Session::cues() const { return cues_; }
 MidiEcho& Session::midiEcho() { return midi_echo_; }

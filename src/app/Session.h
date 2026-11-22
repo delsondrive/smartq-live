@@ -12,6 +12,7 @@
 
 #include "app/CueLibrary.h"
 #include "app/FolderWatch.h"
+#include "app/MeterReader.h"
 #include "app/MidiEcho.h"
 #include "app/OutsideChanges.h"
 #include "app/Settings.h"
@@ -103,6 +104,7 @@ public:
     SongCache& cache();                     const SongCache& cache() const;                 // const: state, progress, loaded, budgetBytes
     Settings& settings();                   const Settings& settings() const;               // const: computerName, showMemory
     engine::Engine& engine();
+    MeterHub& meters();                                         // the engine's live meters: each view makes its own MeterReader on it
     const model::LoadReport& loadReport() const;
     // The band's snapshots. One named "Opened the folder" is made, automatically, when the band opens in Edit mode; when it
     // opens straight into a show, at the first leaveShow instead, as Show mode never writes the band folder. The command
@@ -379,6 +381,7 @@ private:
     model::SnapshotStore snapshots_{folder_};
     bool snapshot_owed_ = false;                                 // opened straight into a show: made when it ends
     engine::Engine engine_;
+    MeterHub meters_{engine_};                                   // after the engine, so gone before it; the views' readers go first
     juce::ChangeBroadcaster changes_;
 
     Mode mode_ = Mode::Edit;

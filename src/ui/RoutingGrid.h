@@ -63,8 +63,8 @@ RoutingState makeRoutingState(const app::Session&, const app::AudioHost*);
 // a faint "·" when it could be, and a short dash with model::whyNot as its tooltip when it can't. A click sends a role
 // at 0 dB or stops sending it; a vertical drag changes the level, 0.5 dB for every 2 px, one undo step a drag; a
 // double-click asks for a number. The last row, "Overall level", is each output's trim, dragged the same way, with a live
-// meter and clip light (OutputMeter, from Engine::takeBusPeak) beside it for an output that has a bus. A role's
-// name has a right-click menu: Rename, Colour (not for the click, always ember), Remove.
+// meter and clip light (OutputMeter, through the grid's own MeterReader: the larger of the bus's two sides) beside it for an
+// output that has a bus. A role's name has a right-click menu: Rename, Colour (not for the click, always ember), Remove.
 //
 // Every change is a command, in Edit mode only; in Show mode nothing here changes anything, and nothing takes the
 // keyboard. A refusal, or what a command says it did, shows under the grid for 4 s. It refreshes on Session::changes()
@@ -146,6 +146,7 @@ private:
     Link linkAt(juce::Point<int>) const;
 
     app::Session& session_;
+    app::MeterReader meter_reader_{session_.meters()};          // the OutputMeters' peaks; before them, so it goes after them
     RoutingState state_;
     bool fresh_ = false;
     juce::String message_;

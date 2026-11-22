@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "app/LevelChecker.h"
+#include "app/MeterReader.h"
 #include "app/PartFiles.h"
 #include "app/PreShowCheck.h"
 #include "tests/support/DemoSession.h"
@@ -441,13 +442,14 @@ TEST_CASE("a song open in the mixer outside the setlist is measured too, and not
 
 TEST_CASE("the engine keeps each bus's peak until it is asked for it", "[levelcheck]") {
     DemoSession d; auto& s = *d.session;
+    MeterReader reader(s.meters());
     s.perform(Action::Start);
     s.advanceWithoutDevice(48000 * 4);
     CHECK(s.engine().busCount() == 1);
-    CHECK(s.engine().takeBusPeak(0) > 0.01f);
-    CHECK(s.engine().takeBusPeak(0) == 0.0f);                       // taken: it starts again from nothing
-    CHECK(s.engine().takeBusPeak(99) == 0.0f);
-    CHECK(s.engine().takeBusPeak(-1) == 0.0f);
+    CHECK(reader.bus(0).left > 0.01f);
+    CHECK(reader.bus(0).left == 0.0f);                              // taken: it starts again from nothing
+    CHECK(reader.bus(99).left == 0.0f);
+    CHECK(reader.bus(-1).left == 0.0f);
 }
 
 TEST_CASE("an output's live meter falls 1.5 dB a frame and its clip light stays 2 s", "[levelcheck]") {

@@ -4,8 +4,10 @@
 #include <bitset>
 #include <cstddef>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "engine/Meters.h"
 #include "engine/MixSetup.h"
 #include "engine/PreparedSong.h"
 #include "engine/Types.h"
@@ -46,10 +48,16 @@ struct RenderParts {
 //
 // Solo: a set of parts; while it names any part the song has, every part not in it is silent (glides out, as a mute). The
 // click and the cue voice are never silenced by it.
+//
+// Meters (Meters.h): given a BlockMeters, render raises it sample by sample as it mixes, reading what it mixes and never
+// writing the output: each part's peak (its gain, the envelope and the balance of its song pan, which for the meter is
+// taken as it is set, not gliding), the click's and the cues', and, on the buses the BlockMeters watches, each role's sum
+// through the bus's cell, own pan or the parts' song pans. So the output is the same with or without meters.
 class SongRenderer {
 public:
     void prepare(double sampleRate, int maxBlockFrames);
-    void setSong(const PreparedSong*) noexcept;       // snaps every part gain and pan to the song's; clears the solo
+    // Snaps every part gain and pan to the song's; clears the solo, and the part meters when it measures them.
+    void setSong(const PreparedSong*) noexcept;
     void setMix(const MixSetup*) noexcept;            // snaps the first time or when the bus layout changed; otherwise glides
     void setPartGain(int part, float linear) noexcept;
     void setPartMute(int part, bool) noexcept;
@@ -65,6 +73,9 @@ public:
     // true: ignore that part's automation (its level is its fader alone) until setSong; false: follow it again. A part the song
     // doesn't have is ignored.
     void setPartOverride(int part, bool) noexcept;
+    // Where render raises its peaks (null: nowhere; kept through prepare). parts: whether this renderer's parts are measured
+    // (the playing song's are; a song fading out on the engine's second renderer adds only to the click, cues and roles).
+    void setMeters(BlockMeters*, bool parts = true) noexcept;
     // Adds into out; envelope may be null.
     void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
                 RenderParts = {}) noexcept;
@@ -98,6 +109,17 @@ private:
     void stepCells() noexcept;                                                 // every mix cell, one sample on
     void mixCue(float value, int at) noexcept;                                 // into every bus the cue role reaches
     std::size_t firstTickAt(SamplePos) const noexcept;   // the first of song_->ticks at or after it; song_ must be set
+
+    // One sample of a role, for its meters on the watched buses: its parts and centred signals before the pan (left,
+    // right), after their song pans (panLeft, panRight), and as a mono bus takes them (mono). Each scaled by the part's gain
+    // and the envelope; the bus's cell (level × trim) and own pan come at closeMeterSample.
+    struct RoleSum {
+        float left = 0.0f, right = 0.0f, panLeft = 0.0f, panRight = 0.0f, mono = 0.0f;
+    };
+    void listMeterRoles() noexcept;   // the roles of the song's parts, the click and the cues, each once
+    void meterPart(int part, int role, float left, float right, float mono, float gain) noexcept;
+    void meterCentred(int role, float value, float& peak) noexcept;   // the click or a cue sample
+    void closeMeterSample() noexcept;   // each listed role's sample onto its meter on each watched bus, then cleared
 
     double coefficient_ = 0.0;
     int max_block_ = 0;
@@ -155,6 +177,14 @@ private:
     // The channels of each bus for the current render call; null where the device has no such channel.
     std::array<float*, kMaxBuses> bus_left_{};
     std::array<float*, kMaxBuses> bus_right_{};
+
+    BlockMeters* meters_ = nullptr;
+    bool meter_parts_ = true;
+    std::uint32_t meter_buses_ = 0;                        // the current render call's watched buses, of those the mix has
+    std::vector<std::pair<float, float>> song_bal_;        // kMaxParts: each part's song pan as gains, for its meter
+    std::vector<RoleSum> role_sums_;                       // kMaxRoles
+    std::array<int, kMaxRoles> meter_roles_{};             // the first meter_role_count_ are the roles listMeterRoles found
+    int meter_role_count_ = 0;
 };
 
 } // namespace sqlive::engine

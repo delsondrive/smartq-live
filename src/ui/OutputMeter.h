@@ -8,9 +8,10 @@ namespace sqlive::ui {
 
 // The spec's "peak meter with a clip light" for one output, as it plays now: a thin upright bar from -60 dB at the bottom
 // to 0 dB at the top, with a light above it. Every frame (its own 30 Hz timer) it takes the bus's peak since the last
-// frame (Engine::takeBusPeak, through `takePeak`: the only reader of that bus); the bar jumps up to a louder peak and
-// otherwise falls 1.5 dB a frame. The light turns danger red for 2 s after a peak above 1.0 (over full scale). Hidden, it
-// still takes the peaks, so what it shows when it comes back is fresh, but it draws nothing. Takes no mouse or keys.
+// frame (through `takePeak`: its view's app::MeterReader, so other views' meters never take its peaks); the bar jumps up
+// to a louder peak and otherwise falls 1.5 dB a frame. The light turns danger red for 2 s after a peak above 1.0 (over
+// full scale). Hidden, it still takes the peaks, so what it shows when it comes back is fresh, but it draws nothing.
+// Takes no mouse or keys.
 class OutputMeter : public juce::Component, private juce::Timer {
 public:
     explicit OutputMeter(std::function<float()> takePeak);

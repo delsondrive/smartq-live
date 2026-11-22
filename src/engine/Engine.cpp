@@ -16,7 +16,7 @@ constexpr double kStopFadeSeconds = 0.050;
 
 } // namespace
 
-Engine::Engine() : commands_(kCommandCapacity), garbage_(kGarbageCapacity), events_(kEventCapacity) {}
+Engine::Engine() : commands_(kCommandCapacity), garbage_(kGarbageCapacity), events_(kEventCapacity) { aimMeters(); }
 
 void Engine::prepare(double sampleRate, int maxBlockFrames) {
     sample_rate_.store(sampleRate, std::memory_order_relaxed);
@@ -213,7 +213,7 @@ void Engine::process(float* const* out, int numChannels, int frames) noexcept {
             retire(object);
         },
         kRetiresPerRender - retired_);
-    notePeaks(out, channelCount, frames);
+    publishMeters(out, channelCount, frames);
     publishStatus();
 }
 

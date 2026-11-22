@@ -11,6 +11,7 @@
 #include "engine/Arrangement.h"
 #include "engine/CuePlayer.h"
 #include "engine/CueSchedule.h"
+#include "engine/Meters.h"
 #include "engine/Midi.h"
 #include "engine/MidiOut.h"
 #include "engine/MixSetup.h"
@@ -196,10 +197,14 @@ public:
     EngineStatus status() const noexcept; // any thread; all fields from one publish (a block's end)
     double sampleRate() const noexcept;
 
-    // Any thread, one reader (an output's live meter; two readers would share the peaks between them): the largest sample
-    // magnitude on the bus's device channels since it was last asked, which it then resets to 0. 0 for a bus the mix
-    // doesn't have. Each process raises it at its end, after rendering (EnginePeaks.cpp).
-    float takeBusPeak(int bus) noexcept;
+    // The live meters (Meters.h; EnginePeaks.cpp). Any thread, one taker (app::MeterHub, which hands the peaks on to any
+    // number of readers; a second taker would share them with it): a meter's largest left and right magnitude since it was
+    // last taken, which then starts again from 0. A slot out of range, or a bus the mix doesn't have, gives {}. Each
+    // process raises them at its end, after rendering.
+    MeterPeak takePeak(int slot) noexcept;
+    // Any thread: someone wants the role meters of this bus (meter::roleOnBus). They are measured from the next block on,
+    // until it hasn't been asked for half a second to a second. Allocates nothing, never waits.
+    void watchBus(int bus) noexcept;
     int busCount() const noexcept;        // any thread: the mix's buses, as of the last process (at most kMaxBuses)
 
 private:
@@ -273,7 +278,9 @@ private:
     void retire(SongSlot&) noexcept;
     void flushHeld() noexcept;
     void publishStatus() noexcept;
-    void notePeaks(float* const* out, int channelCount, int frames) noexcept;   // raises each bus's peak (EnginePeaks.cpp)
+    // The block's meters onto the published ones, each bus's from out; then the next block's watched buses (EnginePeaks.cpp).
+    void publishMeters(float* const* out, int channelCount, int frames) noexcept;
+    void aimMeters() noexcept;            // the playing song's renderer meters its parts, the other doesn't
 
     // Shared between the threads.
     SpscQueue<Command> commands_;
@@ -294,9 +301,9 @@ private:
     std::atomic<int> status_pending_step_{-1};
     std::atomic<bool> status_looping_{false};
     std::atomic<bool> status_count_off_{false};
-    // Each bus's peak since takeBusPeak last took it: raised by the audio thread with a compare-exchange, taken with exchange.
-    std::array<std::atomic<float>, kMaxBuses> bus_peaks_{};
+    PeakBoard peaks_;                         // every meter's peak since takePeak last took it
     std::atomic<int> bus_count_{0};
+    std::atomic<std::uint32_t> watch_asked_{0};   // the buses watchBus asked for since the audio thread last looked
 
     // Control thread only.
     std::uint64_t next_serial_ = 1;
@@ -342,6 +349,9 @@ private:
     std::vector<float> cue_buffer_;          // max_block_: the voice's mono audio for one render
     CueSchedule cue_schedule_;               // what the playing step says, and when
     Transition transition_;                  // a crossfade's moment, goToNext's end, and the song fading out
+    std::unique_ptr<BlockMeters> block_meters_ = std::make_unique<BlockMeters>();   // what this block's renders measured
+    std::uint32_t watch_kept_ = 0;           // the buses asked for in the last window, watched through this one
+    std::int64_t watch_frames_ = 0;          // samples of this window so far (half a second)
 };
 
 } // namespace sqlive::engine

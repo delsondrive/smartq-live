@@ -42,6 +42,7 @@ void Engine::beginDueCrossfade(std::int64_t streamTime) noexcept {
 void Engine::beginTransition(std::int64_t streamTime, std::int64_t length, bool fadeIn) noexcept {
     SongRenderer& old = *renderer_;
     renderer_ = &spareRenderer();
+    aimMeters();
     transition_.begin(std::move(playing_), old, song_time_, length, fadeIn);
     playing_ = {};   // its hold was moved out, so this frees nothing
     midi_.end(streamTime, cued_.song);

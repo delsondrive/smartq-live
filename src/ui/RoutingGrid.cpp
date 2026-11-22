@@ -484,7 +484,10 @@ void RoutingGrid::placeMeters() {
                 meters_.push_back(nullptr);
                 continue;
             }
-            meters_.push_back(std::make_unique<OutputMeter>([this, bus] { return session_.engine().takeBusPeak(bus); }));
+            meters_.push_back(std::make_unique<OutputMeter>([this, bus] {
+                const auto peak = meter_reader_.bus(bus);
+                return std::max(peak.left, peak.right);
+            }));
             body_->addAndMakeVisible(*meters_.back());
         }
     }

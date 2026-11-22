@@ -1,6 +1,7 @@
 #include "engine/SongRenderer.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <span>
 
@@ -29,6 +30,10 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     cell_bal_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, {});
     own_pan_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, 0);
     own_.assign(static_cast<std::size_t>(kMaxRoles) * kMaxBuses, 0);
+    song_bal_.assign(kMaxParts, {1.0f, 1.0f});
+    role_sums_.assign(kMaxRoles, {});
+    meter_role_count_ = 0;
+    meter_buses_ = 0;
     bal_moving_ = false;
     click_gain_ = {};
     cue_gain_ = {1.0, 1.0};
@@ -66,6 +71,7 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
         part_level_[p] = part.gain;
         part_mute_[p] = part.mute ? 1 : 0;
         part_pan_[p] = std::clamp(part.pan, -100, 100);
+        song_bal_[p] = balanceGains(part_pan_[p]);
         part_auto_[p] = {};
         part_auto_[p].points = part.automation;
         PartView& v = part_view_[p];
@@ -101,6 +107,11 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
         count_in_end_ = firstTickAt(0);
         playable_first_ = firstTickAt(song->start);
     }
+    listMeterRoles();
+    if (meters_ != nullptr && meter_parts_) {   // the part meters are this song's from now on, not the last one's
+        meters_->partLeft.fill(0.0f);
+        meters_->partRight.fill(0.0f);
+    }
 }
 
 std::size_t SongRenderer::firstTickAt(SamplePos at) const noexcept {
@@ -116,6 +127,7 @@ void SongRenderer::setMix(const MixSetup* mix) noexcept {
         bus_count_ = 0;
         click_role_ = -1;
         cues_role_ = -1;
+        listMeterRoles();
         return;
     }
     const int busCount = std::min(static_cast<int>(mix->buses.size()), kMaxBuses);
@@ -162,6 +174,7 @@ void SongRenderer::setMix(const MixSetup* mix) noexcept {
     }
     for (int p = 0; p < part_count_; ++p) updatePartBalance(p, !sameLayout);
     bal_moving_ = sameLayout;
+    listMeterRoles();
 }
 
 // The pan that applies to the part on each stereo bus: the bus's own pan for the part's role, if it has one, else the
@@ -287,6 +300,7 @@ void SongRenderer::setSoloSet(const std::bitset<kMaxParts>& parts) noexcept {
 void SongRenderer::setPartPan(int part, int pan) noexcept {
     if (part < 0 || part >= part_count_) return;
     part_pan_[part] = std::clamp(pan, -100, 100);
+    song_bal_[part] = balanceGains(part_pan_[part]);
     updatePartBalance(part, false);
 }
 
@@ -298,6 +312,8 @@ void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int
         bus_left_[b] = first >= 0 && first < numChannels ? out[first] : nullptr;
         bus_right_[b] = bus_stereo_[b] && first + 1 >= 0 && first + 1 < numChannels ? out[first + 1] : nullptr;
     }
+    const std::uint32_t buses = bus_count_ >= 32 ? ~0u : (1u << bus_count_) - 1u;
+    meter_buses_ = meters_ != nullptr ? meters_->watchedBuses & buses : 0u;
     for (int offset = 0; offset < frames; offset += max_block_)
         renderPiece(songTime + offset, std::min(max_block_, frames - offset), offset, envelope, what);
 }
@@ -387,6 +403,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             const float left = v.left[s];
             const float right = v.right != nullptr ? v.right[s] : left;
             const float mono = v.right != nullptr ? (left + right) * 0.5f : left;
+            if (meters_ != nullptr) meterPart(p, v.role, left, right, mono, gain * env);
             const Smoothed* row = &cells_[static_cast<std::size_t>(v.role) * kMaxBuses];
             const Balance* bal = &part_bal_[static_cast<std::size_t>(p) * kMaxBuses];
             for (int b = 0; b < bus_count_; ++b) {
@@ -405,6 +422,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
         if (clickRouted) {
             const float click = click_[i] * static_cast<float>(click_gain_.value);
             if (click != 0.0f) {
+                if (meters_ != nullptr) meterCentred(click_role_, click * clickEnv, meters_->click);
                 const Smoothed* row = &cells_[static_cast<std::size_t>(click_role_) * kMaxBuses];
                 const Balance* bal = &cell_bal_[static_cast<std::size_t>(click_role_) * kMaxBuses];
                 for (int b = 0; b < bus_count_; ++b) {
@@ -426,6 +444,7 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
                 mixCue(cue * level, at);
             }
         }
+        if (meter_buses_ != 0) closeMeterSample();
     }
 }
 
@@ -436,6 +455,7 @@ void SongRenderer::renderCueAlone(int frames, int offset, const float* cue) noex
         if (bal_moving_) stepBalances();
         const int at = offset + i;
         if (routed && cue[at] != 0.0f) mixCue(cue[at] * preview_gain_, at);
+        if (meter_buses_ != 0) closeMeterSample();
     }
 }
 
@@ -452,6 +472,7 @@ void SongRenderer::stepCells() noexcept {
 }
 
 void SongRenderer::mixCue(float value, int at) noexcept {
+    if (meters_ != nullptr) meterCentred(cues_role_, value, meters_->cues);
     const Smoothed* row = &cells_[static_cast<std::size_t>(cues_role_) * kMaxBuses];
     const Balance* bal = &cell_bal_[static_cast<std::size_t>(cues_role_) * kMaxBuses];
     for (int b = 0; b < bus_count_; ++b) {
@@ -460,6 +481,90 @@ void SongRenderer::mixCue(float value, int at) noexcept {
         const float v = value * cell;
         if (bus_left_[b] != nullptr) bus_left_[b][at] += v * static_cast<float>(bal[b].left.value);
         if (bus_right_[b] != nullptr) bus_right_[b][at] += v * static_cast<float>(bal[b].right.value);
+    }
+}
+
+// ---- Meters (Meters.h) -------------------------------------------------------------------------------------------------
+
+void SongRenderer::setMeters(BlockMeters* meters, bool parts) noexcept {
+    meters_ = meters;
+    meter_parts_ = parts;
+}
+
+void SongRenderer::listMeterRoles() noexcept {
+    std::bitset<kMaxRoles> seen;
+    meter_role_count_ = 0;
+    const auto add = [&](int role) {
+        if (role < 0 || role >= kMaxRoles || seen[static_cast<std::size_t>(role)]) return;
+        seen.set(static_cast<std::size_t>(role));
+        meter_roles_[static_cast<std::size_t>(meter_role_count_++)] = role;
+        role_sums_[static_cast<std::size_t>(role)] = {};
+    };
+    for (int p = 0; p < part_count_; ++p) add(part_view_[p].role);
+    if (has_mix_) {
+        add(click_role_);
+        add(cues_role_);
+    }
+}
+
+// gain: the part's gain times the envelope at this sample.
+void SongRenderer::meterPart(int part, int role, float left, float right, float mono, float gain) noexcept {
+    const auto [balLeft, balRight] = song_bal_[static_cast<std::size_t>(part)];
+    const float l = left * (gain * balLeft), r = right * (gain * balRight);
+    if (meter_parts_) {
+        float& peakLeft = meters_->partLeft[static_cast<std::size_t>(part)];
+        float& peakRight = meters_->partRight[static_cast<std::size_t>(part)];
+        peakLeft = std::max(peakLeft, std::abs(l));
+        peakRight = std::max(peakRight, std::abs(r));
+    }
+    if (meter_buses_ == 0) return;
+    RoleSum& sum = role_sums_[static_cast<std::size_t>(role)];
+    sum.left += left * gain;
+    sum.right += right * gain;
+    sum.panLeft += l;
+    sum.panRight += r;
+    sum.mono += mono * gain;
+}
+
+// The click or the cues have no song pan: the same on both sides, and as a mono bus takes them.
+void SongRenderer::meterCentred(int role, float value, float& peak) noexcept {
+    peak = std::max(peak, std::abs(value));
+    if (meter_buses_ == 0 || role < 0 || role >= kMaxRoles) return;
+    RoleSum& sum = role_sums_[static_cast<std::size_t>(role)];
+    sum.left += value;
+    sum.right += value;
+    sum.panLeft += value;
+    sum.panRight += value;
+    sum.mono += value;
+}
+
+// What each role puts into each watched bus this sample, as the mix loops above put it there: on a mono bus its mono
+// sum; on a stereo one with the output's own pan for the role, its sum before the pan through that pan; otherwise its sum
+// after each part's song pan. Through the bus's cell (the mix level × the trim), as it stands this sample.
+void SongRenderer::closeMeterSample() noexcept {
+    BlockMeters& m = *meters_;
+    for (int k = 0; k < meter_role_count_; ++k) {
+        const auto role = static_cast<std::size_t>(meter_roles_[static_cast<std::size_t>(k)]);
+        RoleSum& sum = role_sums_[role];
+        for (std::uint32_t bits = meter_buses_; bits != 0; bits &= bits - 1u) {
+            const int b = std::countr_zero(bits);
+            const std::size_t c = role * kMaxBuses + static_cast<std::size_t>(b);
+            const float cell = static_cast<float>(cells_[c].value);
+            if (cell == 0.0f) continue;
+            float l, r;
+            if (!bus_stereo_[b]) {
+                l = r = std::abs(sum.mono * cell);
+            } else if (own_[c] != 0) {
+                l = std::abs(sum.left * (cell * static_cast<float>(cell_bal_[c].left.value)));
+                r = std::abs(sum.right * (cell * static_cast<float>(cell_bal_[c].right.value)));
+            } else {
+                l = std::abs(sum.panLeft * cell);
+                r = std::abs(sum.panRight * cell);
+            }
+            m.roleLeft[c] = std::max(m.roleLeft[c], l);
+            m.roleRight[c] = std::max(m.roleRight[c], r);
+        }
+        sum = {};
     }
 }
 
