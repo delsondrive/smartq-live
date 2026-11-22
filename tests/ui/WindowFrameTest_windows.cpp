@@ -57,7 +57,7 @@ struct OpenWindow {
 
 }  // namespace
 
-TEST_CASE("the main window answers Windows' hit tests from its top bar", "[frame]") {
+TEST_CASE("the main window answers Windows' hit tests from its top bar", "[frame][.window]") {
     OpenWindow w;
     REQUIRE(w.window.getPeer() != nullptr);
     REQUIRE_FALSE(IsZoomed(w.hwnd()));
@@ -88,7 +88,7 @@ TEST_CASE("the main window answers Windows' hit tests from its top bar", "[frame
     CHECK(w.hitAt(bar.windowButtonArea(WindowArea::Close).getCentre()) == HTCLOSE);
 }
 
-TEST_CASE("the main window's client area starts at the window's top", "[frame]") {
+TEST_CASE("the main window's client area starts at the window's top", "[frame][.window]") {
     OpenWindow w;
     RECT frame{};
     GetWindowRect(w.hwnd(), &frame);
@@ -107,7 +107,7 @@ TEST_CASE("the main window's client area starts at the window's top", "[frame]")
     CHECK_FALSE(w.bar().state().maximised);
 }
 
-TEST_CASE("Show mode's kiosk leaves the window to Windows, and leaving it brings the merged bar back", "[frame]") {
+TEST_CASE("Show mode's kiosk leaves the window to Windows, and leaving it brings the merged bar back", "[frame][.window]") {
     OpenWindow w;
     auto& bar = w.bar();
     const auto close = bar.windowButtonArea(WindowArea::Close).getCentre();
@@ -131,7 +131,7 @@ TEST_CASE("Show mode's kiosk leaves the window to Windows, and leaving it brings
     CHECK(w.hitAt(bar.windowButtonArea(WindowArea::Close).getCentre()) == HTCLOSE);
 }
 
-TEST_CASE("the window buttons act on Windows' own clicks: on release, on the button pressed, once", "[frame]") {
+TEST_CASE("the window buttons act on Windows' own clicks: on release, on the button pressed, once", "[frame][.window]") {
     OpenWindow w;
     int closed = 0;
     w.window.onClose = [&] { ++closed; };
@@ -165,7 +165,7 @@ TEST_CASE("the window buttons act on Windows' own clicks: on release, on the but
     CHECK(IsWindow(w.hwnd()));
 }
 
-TEST_CASE("a dialog over the top bar never drags the window", "[frame]") {
+TEST_CASE("a dialog over the top bar never drags the window", "[frame][.window]") {
     OpenWindow w;
     w.window.centreWithSize(1100, 680);                           // the narrowest window: a tall dialog reaches into the bar
     for (int i = 0; i < 20; ++i)
