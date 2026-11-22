@@ -109,6 +109,7 @@ public:
         server_ = std::make_unique<app::RemoteServer>(*session_, *access_, [] { return juce::String("{}"); });   // never started
         shell_ = std::make_unique<AppShell>(*session_, host_.get());
         shell_->setShowController(controller_.get());
+        shell_->setWindowControls(true, false);                   // as a window with a title bar shows them: not maximised
         plugInPages(*shell_, *session_, host_.get(), controller_.get(), input_.get(), access_.get(), server_.get());
         settle();
     }

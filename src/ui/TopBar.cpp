@@ -23,6 +23,7 @@ namespace {
 // The mockup's .top: 10 px above and below, 16 px either side, 14 px between its parts.
 constexpr int kPadX = 16, kGap = 14;
 constexpr float kLogoHeight = 26.0f;
+constexpr int kWindowButtonWidth = 46;                                // Windows' own caption buttons are this wide, the bar's full height
 constexpr double kHoldMs = app::ShowController::holdSeconds * 1000.0;
 
 const juce::Colour kOnEmber{0xff160f10};                             // the mockup's text on an ember fill
@@ -90,6 +91,7 @@ bool TopBarState::operator==(const TopBarState& o) const {
             || pills[i].shortText != o.pills[i].shortText || pills[i].tooltip != o.pills[i].tooltip)
             return false;
     return mode == o.mode && page == o.page && stageView == o.stageView && clock == o.clock && clockSub == o.clockSub
+           && windowButtons == o.windowButtons && maximised == o.maximised
            && chips == o.chips && beatsInBar == o.beatsInBar && beatNow == o.beatNow && playing == o.playing
            && canUndo == o.canUndo && undoTip == o.undoTip && holdProgress == o.holdProgress;
 }
@@ -381,6 +383,10 @@ void TopBar::apply() {
     const double mouseHold = mouseHoldStart_ >= 0.0 ? (juce::Time::getMillisecondCounterHiRes() - mouseHoldStart_) / kHoldMs : 0.0;
     play_->setRing(state_.playing, std::max(state_.holdProgress, std::min(1.0, mouseHold)));
 
+    if (!state_.windowButtons) {                                      // no buttons, nothing hovered or held on them
+        hotButton_ = mouseButton_ = WindowArea::Client;
+        buttonPressed_ = false;
+    }
     layout();
     repaint();
 }
@@ -408,10 +414,11 @@ void TopBar::layout() {
                                  static_cast<int>(kLogoHeight));
     int left = logo_.getRight() + kGap;
 
-    // The EDIT/SHOW switch, on the right.
+    // The EDIT/SHOW switch, on the right: before the window buttons, which take the bar's far right edge to edge.
     const auto sw = switchFont();
     const int switchWidth = ceilToInt(widthOf(sw, "EDIT") + widthOf(sw, "SHOW")) + 4 * 12 + 2;
-    modeSwitch_ = juce::Rectangle<int>(w - kPadX - switchWidth, centreY - 14, switchWidth, 28);
+    const int buttonsWidth = state_.windowButtons ? 3 * kWindowButtonWidth : 0;
+    modeSwitch_ = juce::Rectangle<int>(w - buttonsWidth - kPadX - switchWidth, centreY - 14, switchWidth, 28);
     int right = modeSwitch_.getX() - kGap;
 
     // Edit mode: the tabs, Undo and Snapshots.
@@ -590,6 +597,90 @@ void TopBar::paint(juce::Graphics& g) {
     g.drawText("EDIT", editPart, juce::Justification::centred, false);
     g.setColour(edit ? theme::dim : kOnEmber);
     g.drawText("SHOW", showPart, juce::Justification::centred, false);
+
+    for (const auto button : {WindowArea::Minimise, WindowArea::Maximise, WindowArea::Close}) drawWindowButton(g, button);
+}
+
+// A window button, as Windows draws its caption buttons but in the app's colours: thin glyph lines in --mid, a faint --field
+// wash on hover (a little stronger pressed). Close turns danger red with a white glyph, as in Windows. Maximise is a square,
+// and two overlapping squares (restore) while the window is maximised.
+void TopBar::drawWindowButton(juce::Graphics& g, WindowArea button) const {
+    const auto area = windowButtonArea(button);
+    if (area.isEmpty()) return;
+    const bool hot = hotButton_ == button, pressed = hot && buttonPressed_, close = button == WindowArea::Close;
+    if (hot) {
+        g.setColour(close ? (pressed ? theme::danger.withMultipliedBrightness(0.8f) : theme::danger)
+                          : (pressed ? theme::field.withMultipliedAlpha(2.0f) : theme::field));
+        g.fillRect(area);
+    }
+    g.setColour(close && hot ? juce::Colours::white : (hot ? theme::text : theme::mid));
+    // Lines on whole pixels (plus a half) so they stay one crisp pixel wide at any scale that is a whole number.
+    const float cx = std::floor(static_cast<float>(area.getCentreX())) + 0.5f, cy = std::floor(static_cast<float>(area.getCentreY())) + 0.5f;
+    constexpr float kHalf = 5.0f;                                     // the glyphs are 10 px across
+    switch (button) {
+        case WindowArea::Minimise: g.drawLine(cx - kHalf, cy, cx + kHalf, cy, 1.0f); break;
+        case WindowArea::Maximise:
+            if (!state_.maximised) {
+                g.drawRect(juce::Rectangle<float>(cx - kHalf, cy - kHalf, 2.0f * kHalf, 2.0f * kHalf), 1.0f);
+            } else {
+                constexpr float kSide = 8.0f, kShift = 2.0f;          // the front square, low and left; the back one's top and right edges
+                g.drawRect(juce::Rectangle<float>(cx - kHalf, cy - kHalf + kShift, kSide, kSide), 1.0f);
+                juce::Path back;
+                back.startNewSubPath(cx - kHalf + kShift, cy - kHalf + kShift);
+                back.lineTo(cx - kHalf + kShift, cy - kHalf);
+                back.lineTo(cx + kHalf, cy - kHalf);
+                back.lineTo(cx + kHalf, cy + kHalf - kShift);
+                back.lineTo(cx + kHalf - kShift, cy + kHalf - kShift);
+                g.strokePath(back, juce::PathStrokeType(1.0f));
+            }
+            break;
+        case WindowArea::Close: {
+            juce::Path cross;
+            cross.addLineSegment({cx - kHalf, cy - kHalf, cx + kHalf, cy + kHalf}, 0.0f);
+            cross.addLineSegment({cx - kHalf, cy + kHalf, cx + kHalf, cy - kHalf}, 0.0f);
+            g.strokePath(cross, juce::PathStrokeType(1.0f));
+            break;
+        }
+        default: break;
+    }
+}
+
+juce::Rectangle<int> TopBar::windowButtonArea(WindowArea button) const {
+    if (!state_.windowButtons) return {};
+    int slot = 0;                                                     // from the right edge: Close, Maximise, Minimise
+    switch (button) {
+        case WindowArea::Close: slot = 1; break;
+        case WindowArea::Maximise: slot = 2; break;
+        case WindowArea::Minimise: slot = 3; break;
+        default: return {};
+    }
+    return {getWidth() - slot * kWindowButtonWidth, 0, kWindowButtonWidth, height};
+}
+
+WindowArea TopBar::buttonAt(juce::Point<int> p) const {
+    for (const auto button : {WindowArea::Minimise, WindowArea::Maximise, WindowArea::Close})
+        if (windowButtonArea(button).contains(p)) return button;
+    return WindowArea::Client;
+}
+
+WindowArea TopBar::windowAreaAt(juce::Point<int> p) const {
+    if (const auto button = buttonAt(p); button != WindowArea::Client) return button;
+    // Only Edit mode's bar moves the window; on stage a stray drag or double-click must never move or maximise it.
+    if (state_.mode != Mode::Edit || !getLocalBounds().contains(p)) return WindowArea::Client;
+    if (tabAt(p) >= 0 || logo_.contains(p) || modeSwitch_.contains(p)) return WindowArea::Client;
+    for (auto* child : getChildren())                                 // Undo, Snapshots and the pills
+        if (child->isVisible() && child->getBounds().contains(p)) return WindowArea::Client;
+    return WindowArea::Caption;
+}
+
+void TopBar::setWindowButtonHighlight(WindowArea hovered, bool pressed) {
+    const bool isButton = hovered == WindowArea::Minimise || hovered == WindowArea::Maximise || hovered == WindowArea::Close;
+    const auto hot = isButton ? hovered : WindowArea::Client;
+    const bool down = pressed && isButton;
+    if (hot == hotButton_ && down == buttonPressed_) return;
+    hotButton_ = hot;
+    buttonPressed_ = down;
+    repaint();
 }
 
 juce::Rectangle<int> TopBar::tabArea(Page page) const {
@@ -611,6 +702,12 @@ int TopBar::modeSegmentAt(juce::Point<int> p) const {
 
 void TopBar::mouseDown(const juce::MouseEvent& e) {
     const auto p = e.getPosition();
+    // A window button acts on mouse up, on the button the press began on (as Windows' caption buttons do).
+    mouseButton_ = buttonAt(p);
+    if (mouseButton_ != WindowArea::Client) {
+        setWindowButtonHighlight(mouseButton_, true);
+        return;
+    }
     if (const int tab = tabAt(p); tab >= 0) {
         if (onPage) onPage(static_cast<Page>(tab));
         return;
@@ -627,8 +724,25 @@ void TopBar::mouseDown(const juce::MouseEvent& e) {
     if (state_.mode == Mode::Edit && logo_.contains(p)) showAbout();
 }
 
+void TopBar::mouseDrag(const juce::MouseEvent& e) {
+    // Held on a button: pressed while the mouse is over it, plain once it leaves (it may come back).
+    if (mouseButton_ != WindowArea::Client) setWindowButtonHighlight(mouseButton_, buttonAt(e.getPosition()) == mouseButton_);
+}
+
+void TopBar::mouseUp(const juce::MouseEvent& e) {
+    const auto pressedOn = mouseButton_;
+    mouseButton_ = WindowArea::Client;
+    if (pressedOn == WindowArea::Client) return;
+    const auto p = e.getPosition();
+    setWindowButtonHighlight(buttonAt(p), false);
+    if (buttonAt(p) != pressedOn) return;
+    const auto action = pressedOn == WindowArea::Minimise ? onMinimise : pressedOn == WindowArea::Maximise ? onMaximiseToggle : onCloseWindow;
+    if (action) action();                                             // a copy: closing the window may delete the bar
+}
+
 void TopBar::mouseMove(const juce::MouseEvent& e) {
     const auto p = e.getPosition();
+    setWindowButtonHighlight(buttonAt(p), false);
     const int tab = tabAt(p);
     if (tab != hoveredTab_) {
         hoveredTab_ = tab;
@@ -640,6 +754,7 @@ void TopBar::mouseMove(const juce::MouseEvent& e) {
 }
 
 void TopBar::mouseExit(const juce::MouseEvent&) {
+    if (mouseButton_ == WindowArea::Client) setWindowButtonHighlight(WindowArea::Client, false);
     if (hoveredTab_ >= 0) {
         hoveredTab_ = -1;
         repaint();

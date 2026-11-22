@@ -39,6 +39,9 @@ public:
     ~AppShell() override;
 
     void setShowController(app::ShowController*);                 // MainWindow's; the top bar's ▶ ring reads it. nullptr in tests
+    // The window buttons in the top bar: shown while the window has a title bar (MainWindow says so; not in kiosk), and
+    // whether the window is maximised (the middle one draws "restore"). Tests and screenshots: shown, not maximised.
+    void setWindowControls(bool shown, bool maximised);
     void showPage(Page);
     Page page() const { return page_; }
     // Edit → Show: the pre-show dialog over the page; its "Go to Show mode" calls Session::enterShow. Show → Edit: refused
@@ -97,6 +100,7 @@ private:
     app::ShowController* controller_ = nullptr;
     Page page_ = Page::Setlists;
     bool keyboardElsewhere_ = false;
+    bool windowButtons_ = false, maximised_ = false;
 
     std::array<std::unique_ptr<juce::Component>, 4> pages_;      // by Page
     std::unique_ptr<juce::Component> mainView_, stageView_;

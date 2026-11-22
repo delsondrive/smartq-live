@@ -273,9 +273,19 @@ void AppShell::refresh() {
     refreshTopBar();
 }
 
+void AppShell::setWindowControls(bool shown, bool maximised) {
+    if (shown == windowButtons_ && maximised == maximised_) return;
+    windowButtons_ = shown;
+    maximised_ = maximised;
+    refreshTopBar();
+}
+
 void AppShell::refreshTopBar() {
-    topBar_.setState(makeTopBarState(session_, host_, controller_, page_, keyboardElsewhere_,
-                                     remoteStatus ? remoteStatus() : app::RemoteStatus{}));
+    auto state = makeTopBarState(session_, host_, controller_, page_, keyboardElsewhere_,
+                                 remoteStatus ? remoteStatus() : app::RemoteStatus{});
+    state.windowButtons = windowButtons_;
+    state.maximised = maximised_;
+    topBar_.setState(state);
 }
 
 void AppShell::refreshBanners() {
