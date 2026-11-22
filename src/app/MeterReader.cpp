@@ -12,9 +12,32 @@ MeterHub::MeterHub(engine::Engine& engine) : engine_(engine) {}
 
 MeterHub::~MeterHub() { jassert(readers_.empty()); }
 
+// Every peak taken so far goes to the readers already here, so the newcomer starts from nothing and steals nothing.
 void MeterHub::join(MeterReader& reader) {
     const std::lock_guard lock(mutex_);
+    followSong();
+    for (int slot = 0; slot < meter::kSlots; ++slot) take(slot);
     readers_.push_back(&reader);
+}
+
+// Under the lock. A new song the part meters belong to: every reader's copies of the old song's part peaks go. Read before
+// any take: the engine has cleared the old song's peaks by the time it says the new serial.
+void MeterHub::followSong() {
+    const auto serial = engine_.partMetersSerial();
+    if (serial == song_) return;
+    song_ = serial;
+    for (MeterReader* reader : readers_) std::fill_n(reader->seen_.begin(), engine::kMaxParts * 2, 0.0f);   // slots 0 on
+}
+
+// Under the lock: the engine's peak of the slot into every reader's copy.
+void MeterHub::take(int slot) {
+    const auto taken = engine_.takePeak(slot);
+    if (taken == engine::MeterPeak{}) return;
+    const auto i = static_cast<std::size_t>(slot) * 2;
+    for (MeterReader* reader : readers_) {
+        reader->seen_[i] = std::max(reader->seen_[i], taken.left);
+        reader->seen_[i + 1] = std::max(reader->seen_[i + 1], taken.right);
+    }
 }
 
 void MeterHub::leave(MeterReader& reader) {
@@ -24,13 +47,9 @@ void MeterHub::leave(MeterReader& reader) {
 
 engine::MeterPeak MeterHub::read(MeterReader& asking, int slot) {
     const std::lock_guard lock(mutex_);
+    followSong();
+    take(slot);
     const auto i = static_cast<std::size_t>(slot) * 2;
-    if (const auto taken = engine_.takePeak(slot); taken != engine::MeterPeak{}) {
-        for (MeterReader* reader : readers_) {
-            reader->seen_[i] = std::max(reader->seen_[i], taken.left);
-            reader->seen_[i + 1] = std::max(reader->seen_[i + 1], taken.right);
-        }
-    }
     const engine::MeterPeak mine{asking.seen_[i], asking.seen_[i + 1]};
     asking.seen_[i] = asking.seen_[i + 1] = 0.0f;
     return mine;

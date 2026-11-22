@@ -205,7 +205,11 @@ public:
     // Any thread: someone wants the role meters of this bus (meter::roleOnBus). They are measured from the next block on,
     // until it hasn't been asked for half a second to a second. Allocates nothing, never waits.
     void watchBus(int bus) noexcept;
-    int busCount() const noexcept;        // any thread: the mix's buses, as of the last process (at most kMaxBuses)
+    // Any thread: the serial of the song the part meters belong to (the playing song as of the last process; 0 = none).
+    // When the playing song changes, the engine clears every part meter before it changes this (a release store), so a
+    // taker that reads it (acquire) before taking a part meter, and finds a new serial, takes none of the old song's peaks.
+    std::uint64_t partMetersSerial() const noexcept;
+    int busCount() const noexcept;       // any thread: the mix's buses, as of the last process (at most kMaxBuses)
 
 private:
     struct Command {
@@ -304,6 +308,7 @@ private:
     PeakBoard peaks_;                         // every meter's peak since takePeak last took it
     std::atomic<int> bus_count_{0};
     std::atomic<std::uint32_t> watch_asked_{0};   // the buses watchBus asked for since the audio thread last looked
+    std::atomic<std::uint64_t> part_meters_serial_{0};   // partMetersSerial
 
     // Control thread only.
     std::uint64_t next_serial_ = 1;
@@ -352,6 +357,7 @@ private:
     std::unique_ptr<BlockMeters> block_meters_ = std::make_unique<BlockMeters>();   // what this block's renders measured
     std::uint32_t watch_kept_ = 0;           // the buses asked for in the last window, watched through this one
     std::int64_t watch_frames_ = 0;          // samples of this window so far (half a second)
+    std::uint64_t part_meters_song_ = 0;     // the audio thread's copy of part_meters_serial_
 };
 
 } // namespace sqlive::engine

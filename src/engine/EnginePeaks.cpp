@@ -42,6 +42,13 @@ void Engine::publishMeters(float* const* out, int channelCount, int frames) noex
         bus_count_.store(buses, std::memory_order_release);
     }
 
+    // A new playing song (or none): the old song's part peaks no taker has taken yet are dropped, then the serial says so.
+    // This block's part peaks are already the new song's alone (SongRenderer::setSong cleared the block's).
+    if (playing_.serial != part_meters_song_) {
+        for (int p = 0; p < kMaxParts; ++p) peaks_.clear(meter::part(p));
+        part_meters_song_ = playing_.serial;
+        part_meters_serial_.store(part_meters_song_, std::memory_order_release);
+    }
     BlockMeters& m = *block_meters_;
     for (int p = 0; p < kMaxParts; ++p) {
         float& left = m.partLeft[static_cast<std::size_t>(p)];
@@ -75,12 +82,15 @@ void Engine::publishMeters(float* const* out, int channelCount, int frames) noex
     m.watchedBuses = watch_kept_ | watch_asked_.load(std::memory_order_relaxed);
 }
 
-// Relaxed throughout: each peak stands alone, published with nothing else that a reader would read alongside it.
+// Relaxed: each peak stands alone. The one ordering that matters, part peaks against the song they belong to, is
+// partMetersSerial's release and acquire.
 MeterPeak Engine::takePeak(int slot) noexcept { return peaks_.take(slot); }
 
 void Engine::watchBus(int bus) noexcept {
     if (bus >= 0 && bus < kMaxBuses) watch_asked_.fetch_or(1u << static_cast<unsigned>(bus), std::memory_order_relaxed);
 }
+
+std::uint64_t Engine::partMetersSerial() const noexcept { return part_meters_serial_.load(std::memory_order_acquire); }
 
 int Engine::busCount() const noexcept { return bus_count_.load(std::memory_order_acquire); }
 

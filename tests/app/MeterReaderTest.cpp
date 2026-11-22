@@ -62,6 +62,55 @@ TEST_CASE("two readers both see a peak of a single sample", "[meters]") {
     CHECK(b.bus(0).left == 0.0f);
 }
 
+TEST_CASE("a reader made after a peak doesn't get it; those made before still do", "[meters]") {
+    Rig rig(spikes({{700, 0.8f}}));
+    MeterHub hub(rig.engine);
+    rig.block();
+    rig.block();                                                               // 0.8, with no reader at all
+    MeterReader first(hub);
+    CHECK(first.part(0).left == 0.0f);
+    CHECK(first.bus(0).left == 0.0f);
+
+    Rig again(spikes({{700, 0.8f}}));
+    MeterHub hub2(again.engine);
+    MeterReader before(hub2);
+    again.block();
+    again.block();                                                             // 0.8, read by no one yet
+    MeterReader after(hub2);
+    CHECK(after.part(0).left == 0.0f);                                         // from when it was made
+    CHECK(after.bus(0).right == 0.0f);
+    CHECK(before.part(0).left == 0.8f);                                        // nothing stolen from the reader before it
+    CHECK(before.bus(0).right == 0.8f);
+}
+
+TEST_CASE("a part's peaks of one song are never read as another song's", "[meters]") {
+    // Song A's part 0 is loud (0.9), song B's quiet (0.1); B follows A, seamlessly or by a crossfade.
+    for (const auto kind : {FollowKind::Seamless, FollowKind::Crossfade}) {
+        CAPTURE(static_cast<int>(kind));
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.setFollowOn({kind, 0.01});                                           // a 480-sample crossfade
+        e.cue(share(prepareSong("a", TempoMap{}, 0, 0, {{constantAudio(1500, 0.9f, NAN), 0}}, ClickSetup{.enabled = false},
+                                48000.0)));
+        e.start();
+        e.cue(share(prepareSong("b", TempoMap{}, 0, 0, {{constantAudio(48000, 0.1f, NAN), 0}}, ClickSetup{.enabled = false},
+                                48000.0)));
+        MeterHub hub(e);
+        MeterReader idle(hub), busy(hub);
+        std::vector<float> l(512), r(512);
+        float* out[2] = {l.data(), r.data()};
+        e.process(out, 2, 512);
+        CHECK(busy.part(0).left == 0.9f);                                      // A's peak, now in idle's copy too
+        e.process(out, 2, 512);                                                // A's again, read by no one
+        for (int i = 0; i < 4; ++i) e.process(out, 2, 512);                    // B plays, A gone
+        CHECK(e.status().playingSerial != 0);
+        CHECK(idle.part(0).left == Catch::Approx(0.1f));
+        CHECK(busy.part(0).left == Catch::Approx(0.1f));
+        MeterReader late(hub);
+        e.process(out, 2, 512);
+        CHECK(late.part(0).left == Catch::Approx(0.1f));                       // B's parts are measured on its renderer
+    }
+}
+
 TEST_CASE("a reader that skips frames still gets the largest peak since it last asked", "[meters]") {
     Rig rig(spikes({{100, 0.3f}, {600, 0.9f}, {1100, 0.2f}, {1700, 0.4f}}));
     MeterHub hub(rig.engine);

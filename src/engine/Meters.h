@@ -34,7 +34,9 @@
 //
 // The hand-over: per meter, an atomic left and right peak. The audio thread raises them (a compare-exchange, only upwards);
 // one taker takes them (an exchange with 0): app::MeterHub, which hands each peak on to every MeterReader. So any number
-// of readers each see every peak since they last read, and the audio thread never allocates, locks or waits.
+// of readers each see every peak since they last read, and the audio thread never allocates, locks or waits. When the
+// playing song changes, the engine clears the part peaks before it publishes the new serial (Engine::partMetersSerial),
+// so the old song's part peaks are never read as the new one's.
 
 namespace sqlive::engine {
 
@@ -76,6 +78,8 @@ struct BlockMeters {
 
 // The published peaks, one left and right pair a slot: raised by the audio thread, taken by one taker. Allocates its slots
 // when made; nothing after.
+static_assert(std::atomic<float>::is_always_lock_free, "the audio thread never waits on a peak");
+
 class PeakBoard {
 public:
     PeakBoard();
