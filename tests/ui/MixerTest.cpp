@@ -29,12 +29,12 @@ void forEachComponent(juce::Component& root, const std::function<void(juce::Comp
     for (auto* child : root.getChildren()) forEachComponent(*child, visit);
 }
 
-std::vector<LevelFader*> fadersIn(juce::Component& root) {
-    std::vector<LevelFader*> faders;
+std::vector<ChannelStrip*> stripsIn(juce::Component& root) {
+    std::vector<ChannelStrip*> strips;
     forEachComponent(root, [&](juce::Component& c) {
-        if (auto* fader = dynamic_cast<LevelFader*>(&c)) faders.push_back(fader);
+        if (auto* strip = dynamic_cast<ChannelStrip*>(&c)) strips.push_back(strip);
     });
-    return faders;
+    return strips;
 }
 
 bool anyTakesKeyboardFocus(juce::Component& root) {
@@ -85,7 +85,7 @@ TEST_CASE("in Show mode the mixer changes tonight's levels and says so", "[mixer
     CHECK(before.strips[0].target.kind == LevelTarget::Kind::BandClick);
     s.setLevel(before.strips[0].target, -4.0f, "g");
     auto after = makeMixerState(s, song.id, {});
-    CHECK(after.strips[0].changedTonight);  CHECK(after.strips[0].footer == "+2 dB");  CHECK(after.strips[0].footerIsWarning);
+    CHECK(after.strips[0].changedTonight);  CHECK(after.strips[0].footer == "+2 dB tonight");  CHECK(after.strips[0].footerIsWarning);
     CHECK(after.strips[0].value == "-4.0");
     sqlive::test::ScopedLook look;
     ui::MixerPanel panel(s);  panel.show(song.id, {});
@@ -105,7 +105,7 @@ TEST_CASE("a mixer with thirty strips still lays out", "[mixer]") {
     CHECK(childrenInside(page));
     auto& row = page.panel().viewport();
     REQUIRE(row.getViewedComponent() != nullptr);
-    CHECK(row.getViewedComponent()->getWidth() >= 35 * 56);      // strips keep a minimum width of 56 px
+    CHECK(row.getViewedComponent()->getWidth() >= 35 * 112);     // strips are 112 px wide
     CHECK(row.getViewedComponent()->getWidth() > row.getViewWidth());   // and the row scrolls sideways
 }
 
@@ -140,12 +140,12 @@ TEST_CASE("a mixer for sixteen outputs and thirty parts lays out at every window
             REQUIRE(row.getViewedComponent() != nullptr);
             auto* body = row.getViewedComponent();
             CHECK(body->getHeight() <= row.getMaximumVisibleHeight());   // no vertical scrolling: whole strips show
-            // The strips sit side by side, each at least 56 px wide, none overlapping the next.
+            // The strips sit side by side, each 112 px wide, none overlapping the next.
             std::vector<juce::Rectangle<int>> strips;
             for (auto* child : body->getChildren()) strips.push_back(child->getBounds());
             CHECK(strips.size() == 32);
             for (size_t i = 0; i < strips.size(); ++i) {
-                CHECK(strips[i].getWidth() >= 56);
+                CHECK(strips[i].getWidth() == 112);
                 if (i > 0) CHECK(strips[i].getX() >= strips[i - 1].getRight());
             }
             if (w < 1920) CHECK(body->getWidth() > row.getViewWidth());
@@ -167,24 +167,24 @@ TEST_CASE("a click on a fader that isn't sent sends nothing; a drag is one undo 
     sqlive::test::ScopedLook look;
     ui::MixerPanel panel(s);  panel.show(d.setlist().entries[0].songId, rig.outputs[0].id);
     snapshot(panel, 900, 400);
-    auto faders = fadersIn(panel);
+    auto faders = stripsIn(panel);
     REQUIRE(faders.size() == 11);
     auto& fader = *faders[2];                                     // Keys
-    REQUIRE(fader.onDrag != nullptr);
-    fader.onDrag(LevelFader::kMinDb, true, false);                // pressed and released where it is: -60 is "off", not a level
-    fader.onDrag(LevelFader::kMinDb, false, true);
+    REQUIRE(fader.onLevelDrag != nullptr);
+    fader.onLevelDrag(ChannelStrip::kMinDb, true, false);         // pressed and released where it is: -60 is "off", not a level
+    fader.onLevelDrag(ChannelStrip::kMinDb, false, true);
     CHECK_FALSE(s.level(target).has_value());
     const auto undoBefore = s.commands().undoName();
-    fader.onDrag(LevelFader::kMinDb, true, false);                // pressed, moved a pixel (still at the bottom), released
-    fader.onDrag(LevelFader::kMinDb, false, false);
-    fader.onDrag(LevelFader::kMinDb, false, true);
+    fader.onLevelDrag(ChannelStrip::kMinDb, true, false);         // pressed, moved a pixel (still at the bottom), released
+    fader.onLevelDrag(ChannelStrip::kMinDb, false, false);
+    fader.onLevelDrag(ChannelStrip::kMinDb, false, true);
     CHECK_FALSE(s.level(target).has_value());
     CHECK(s.commands().undoName() == undoBefore);                 // and no undo step
-    fader.onDrag(LevelFader::kMinDb, true, false);                // a drag up to -12, in three moves
-    fader.onDrag(-30.0f, false, false);
-    fader.onDrag(-20.0f, false, false);
-    fader.onDrag(-12.0f, false, false);
-    fader.onDrag(-12.0f, false, true);
+    fader.onLevelDrag(ChannelStrip::kMinDb, true, false);         // a drag up to -12, in three moves
+    fader.onLevelDrag(-30.0f, false, false);
+    fader.onLevelDrag(-20.0f, false, false);
+    fader.onLevelDrag(-12.0f, false, false);
+    fader.onLevelDrag(-12.0f, false, true);
     REQUIRE(s.level(target).has_value());
     CHECK(*s.level(target) == -12.0f);
     s.commands().undo();                                          // the whole drag goes back at once

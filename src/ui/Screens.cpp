@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iterator>
+#include <map>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -24,6 +27,7 @@
 #include "model/JsonObject.h"
 #include "model/Snapshots.h"
 #include "ui/AppShell.h"
+#include "ui/MainView.h"
 #include "ui/MixerPage.h"
 #include "ui/NewComputerPage.h"
 #include "ui/Pages.h"
@@ -178,18 +182,6 @@ public:
         pump();
     }
 
-    // Every part and the PA's output lifted until that output clips somewhere, then measured again.
-    void makeOneOutputClip() {
-        const auto* rig = session_->model().rig(session_->rigId());
-        if (rig != nullptr && !rig->outputs.empty())
-            session_->commands().run("output.set", model::jsonObject({{"rigId", rig->id}, {"outputId", rig->outputs[0].id}, {"trimDb", 6}}));
-        for (int i = 0; i < 3; ++i)
-            if (const auto* song = session_->model().song(songIdAt(i)))
-                for (const auto& part : song->parts)
-                    session_->commands().run("part.set", model::jsonObject({{"songId", song->id}, {"partId", part.id}, {"gainDb", 6}}));
-        measureLevels();
-    }
-
 private:
     // Each of the band's devices on a port of its own on this computer, in the current rig.
     bool bindPorts() {
@@ -330,6 +322,50 @@ void addWatchMe(app::Session& session, const juce::String& songId) {
                                                          {"clip", "cues/built-in/Watch me.wav"}, {"text", "Watch me"}}));
 }
 
+// The meters a moment into the music, as a view sees them: another half second played in frames of a thirtieth of a
+// second, each followed by a frame of the view's meters, so the bars, their hold lines and the peak boxes show what the
+// music does there.
+void playMeterFrames(app::Session& session, const std::function<void(double)>& frame) {
+    for (int i = 0; i < 15; ++i) {
+        session.advanceWithoutDevice(kRate / 30);
+        frame(juce::Time::getMillisecondCounterHiRes());
+    }
+}
+
+juce::String roleNamed(const app::Session& session, const juce::String& name) {
+    for (const auto& role : session.model().band().roles)
+        if (role.name == name) return role.id;
+    return {};
+}
+
+// As the mockup's #song has the parts: Keys a little down and to the left, Bass centred-right, Perc up and to the right.
+void dressSongMix(app::Session& session, const juce::String& songId) {
+    const auto* song = session.model().song(songId);
+    if (song == nullptr) return;
+    const std::map<juce::String, std::pair<float, int>> look = {{"Keys", {-3.0f, -40}}, {"Bass", {0.0f, 15}}, {"Perc", {2.0f, 55}}};
+    for (const auto& part : song->parts)
+        if (const auto it = look.find(part.name); it != look.end()) {
+            const app::LevelTarget target{app::LevelTarget::Kind::Part, songId, part.id, {}, {}};
+            session.setLevel(target, it->second.first, "screens");
+            session.setPan(target, it->second.second, "screens");
+        }
+}
+
+// As the mockup's #output has the first output's mix: each role at its own level, Keys and Guitars placed by the output
+// (unlinked), BVs not sent.
+void dressOutputMix(app::Session& session, const juce::String& outputId) {
+    const std::map<juce::String, std::pair<std::optional<float>, std::optional<int>>> look = {
+        {"Cues", {-3.0f, {}}},  {"Keys", {-6.0f, -60}}, {"Synth", {-12.0f, {}}}, {"Guitars", {-4.0f, 40}},
+        {"BVs", {{}, {}}},      {"Perc", {-6.0f, {}}},  {"Strings", {-12.0f, {}}}};
+    for (const auto& [roleName, levelAndPan] : look) {
+        const auto roleId = roleNamed(session, roleName);
+        if (roleId.isEmpty()) continue;
+        const app::LevelTarget target{app::LevelTarget::Kind::Mix, {}, {}, outputId, roleId};
+        session.setLevel(target, levelAndPan.first, "screens " + roleName);
+        if (levelAndPan.second) session.setPan(target, levelAndPan.second, "screens pan " + roleName);
+    }
+}
+
 juce::Image render(const juce::String& name, int width, int height) {
     Scene scene(name == "interrupted" || name == "new-computer" || name == "routing");
     if (!scene.ok()) return {};
@@ -356,6 +392,8 @@ juce::Image render(const juce::String& name, int width, int height) {
         session.perform(name == "stage-looping" ? Action::LoopSection : Action::NextSectionLater);
         session.advanceWithoutDevice(kRate / 100);
         pump();
+        if (auto* view = dynamic_cast<MainView*>(shell.currentContent()))
+            playMeterFrames(session, [view](double now) { view->mixer().tickMeters(now); });
     } else if (name == "stage-between" || name == "stage-loading") {
         // The second song next, in its eight sections.
         session.enterShow();
@@ -438,11 +476,22 @@ juce::Image render(const juce::String& name, int width, int height) {
                     session.commands().run("part.set", model::jsonObject({{"songId", song->id}, {"partId", part.id}, {"gainDb", 2}}));
         shell.openSnapshotsDialog();
     } else if (name == "mixer-song" || name == "mixer-output") {
-        if (name == "mixer-song") scene.makeOneOutputClip();      // the loudest moments, with the PA over
+        // The first song mixed as the mockup's frames have it, played to bar 10 with the meters moving, as the mockup's
+        // "Playing · bar 10.1".
+        const auto songId = scene.songIdAt(0);
+        const auto* rig = session.model().rig(session.rigId());
+        const auto outputId = rig != nullptr && !rig->outputs.empty() ? rig->outputs[0].id : juce::String();
+        dressSongMix(session, songId);
+        if (name == "mixer-output") dressOutputMix(session, outputId);
+        scene.measureLevels();                                    // the loudest moments
         if (auto* mixer = scene.page<MixerPage>(Page::Mixer)) {
-            mixer->openSong(scene.songIdAt(0));
-            const auto* rig = session.model().rig(session.rigId());
-            if (name == "mixer-output" && rig != nullptr && !rig->outputs.empty()) mixer->chooseOutput(rig->outputs[0].id);
+            mixer->openSong(songId);
+            if (name == "mixer-output") mixer->chooseOutput(outputId);
+            session.playSong(songId, 0.0);
+            for (int i = 0; i < 6000 && session.now().seconds < 21.0; ++i) session.advanceWithoutDevice(kRate / 100);
+            pump();
+            mixer->tickMeters(juce::Time::getMillisecondCounterHiRes());   // the role meters on the output start from here
+            playMeterFrames(session, [mixer](double now) { mixer->tickMeters(now); });
         }
     } else if (name == "remote-setup") {
         // The server on, one phone waiting and two let in, as the mockup's screen 14 has it. Nothing is started: the page

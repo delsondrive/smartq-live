@@ -17,7 +17,7 @@ namespace sqlive::ui {
 // The names, and what each shows:
 //   main-view      Show mode's main view: the first demo song on its "Long ending" (then a 4 s crossfade), with "Watch me"
 //                  in its Chorus, played into that Chorus (bar 10), the Outro chosen to come next with ↓, the click raised
-//                  2 dB tonight
+//                  2 dB tonight, the compact mixer's meters moving with the music
 //   stage-playing  the stage view, the same moment
 //   stage-looping  the same, with the Chorus looping instead
 //   stage-between  the stage view between songs: the first song played, the second (in eight sections) up next
@@ -30,8 +30,10 @@ namespace sqlive::ui {
 //   new-song       the New song dialog over the Setlists page, with three stems, one it can't place, and a MIDI file
 //   song-editor    the Song editor on the first song: every lane, its "Long ending" with the Chorus just put in once more,
 //                  "Watch me" in the Chorus, and Guitar 1's change at bar 9 selected
-//   mixer-song     the Mixer, "Levels for" This song
-//   mixer-output   the Mixer, "Levels for" the rig's first output
+//   mixer-song     the Mixer, "Levels for" This song: the first song's parts levelled and panned as the mockup's #song,
+//                  measured, and played to bar 10 with the meters moving
+//   mixer-output   the Mixer, "Levels for" the rig's first output, its roles levelled and panned as the mockup's #output
+//                  (Keys and Guitars unlinked, BVs not sent), played to bar 10 with the meters moving
 //   routing        Setup's audio and routing
 //   midi-setup     Setup's MIDI devices and controls, with a footswitch learned for Start and one for Stop
 //   cue-voice      Setup's cue voice page, the voice made by a stand-in that writes tones, Solo announced by the band's

@@ -205,6 +205,12 @@ NowPlaying Session::now() const {
     return n;
 }
 
+int Session::playingPartIndex(const juce::String& songId, const juce::String& partId) const {
+    if (!playing_.active() || playing_.prepared == nullptr || playing_.songId != songId) return -1;
+    const auto found = playing_.prepared->partIndex.find(partId);
+    return found != playing_.prepared->partIndex.end() ? found->second : -1;
+}
+
 ArrangementNow Session::playingNow() const {
     ArrangementNow playing;
     playing.status = engine_.status();

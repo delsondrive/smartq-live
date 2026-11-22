@@ -105,6 +105,9 @@ public:
     Settings& settings();                   const Settings& settings() const;               // const: computerName, showMemory
     engine::Engine& engine();
     MeterHub& meters();                                         // the engine's live meters: each view makes its own MeterReader on it
+    // The part's index in what the engine plays (MeterReader::part), while that song is the one playing; else -1, as for a
+    // part the engine left out.
+    int playingPartIndex(const juce::String& songId, const juce::String& partId) const;
     const model::LoadReport& loadReport() const;
     // The band's snapshots. One named "Opened the folder" is made, automatically, when the band opens in Edit mode; when it
     // opens straight into a show, at the first leaveShow instead, as Show mode never writes the band folder. The command
@@ -216,9 +219,9 @@ public:
     bool soloed(const juce::String& songId, const juce::String& partId) const;
     juce::StringArray soloedParts(const juce::String& songId) const;   // in the song's order; only parts it still has
     bool hasTonightChanges() const;
-    int tonightChangeCount() const;                              // how many levels were changed tonight (Tonight::count)
+    int tonightChangeCount() const;                              // how many levels and pans were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,
-    // and the answer says how many, in plain words ("2 levels couldn't be kept: …"); "" when all of it was kept.
+    // and the answer says how many, in plain words ("2 changes couldn't be kept: …"); "" when all of it was kept.
     juce::String keepTonightChanges();
     void dropTonightChanges();
     model::SongDoc songAsHeard(const juce::String& songId) const;    // the document with tonight's changes applied

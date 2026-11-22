@@ -30,7 +30,7 @@ class Veil;
 // veil. While the red banner shows, the show view sits under it, dimmed to half (the mockup's screen 5). It refreshes on Session::changes() and 30 times a second for the clock. Pages and views are plugged in by plugInPages (Pages.h); a page not plugged in yet shows nothing.
 //
 // In Show mode nothing here writes the band folder: the top bar shows no Undo, and an undo asked for anyway is ignored.
-// Tonight's level changes are asked about only in Edit mode, and always there while Session::hasTonightChanges(): they
+// Tonight's changes (levels and pans) are asked about only in Edit mode, and always there while Session::hasTonightChanges(): they
 // come only from a show that ended (whoever called leaveShow), or one the app closed during before the question was
 // answered. The question goes while a show runs, and comes back when it ends.
 class AppShell : public juce::Component, private juce::ChangeListener, private juce::Timer {

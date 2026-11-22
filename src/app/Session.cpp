@@ -367,7 +367,7 @@ juce::String Session::keepTonightChanges() {
     // step whenever its key matches, and a reused one would fold them into an edit made before the show. Tonight is
     // cleared only afterwards, so what is heard doesn't change while the documents catch up with it.
     const auto key = juce::Uuid().toString();
-    // A command refused is a level whose song or output has gone since: it can't be kept. A part's gain and mute are one
+    // A command refused is a change (a level or a pan) whose song or output has gone since: it can't be kept. A part's gain and mute are one
     // level, as Tonight::count has it.
     std::set<juce::String> refused;
     for (const auto& [name, params] : tonight_.asCommands(rig_id_)) {
@@ -380,7 +380,7 @@ juce::String Session::keepTonightChanges() {
     tonightChanged();
     const int lost = static_cast<int>(refused.size());
     if (lost == 0) return {};
-    return (lost == 1 ? juce::String("1 level") : juce::String(lost) + " levels") + " couldn't be kept: the song or output is gone.";
+    return (lost == 1 ? juce::String("1 change") : juce::String(lost) + " changes") + " couldn't be kept: the song or output is gone.";
 }
 
 void Session::dropTonightChanges() {

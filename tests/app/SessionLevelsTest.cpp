@@ -114,7 +114,7 @@ TEST_CASE("keeping tonight's changes keeps what can be kept, and says how many c
     s.setLevel(click, -3.0f, "g");
     REQUIRE(s.leaveShow());
     s.commands().run("song.remove", juce::JSON::parse(R"({"songId": ")" + gone.id + R"("})"));
-    CHECK(s.keepTonightChanges() == "2 levels couldn't be kept: the song or output is gone.");
+    CHECK(s.keepTonightChanges() == "2 changes couldn't be kept: the song or output is gone.");
     CHECK_FALSE(s.hasTonightChanges());
     CHECK(s.model().band().clickDb == -3.0f);                                     // the rest was kept
     s.enterShow();  s.setLevel(click, -4.0f, "g");  REQUIRE(s.leaveShow());

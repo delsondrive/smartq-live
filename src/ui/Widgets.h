@@ -164,50 +164,6 @@ private:
     bool on_ = false;
 };
 
-// The mockup's .fader: an 8 px track, the meter filling it from the bottom in the strip's colour, and a 32 x 14 cap,
-// white, or caution when the level was changed tonight. A level that isn't sent (nullopt) puts the cap at the bottom, dimmed.
-// A drag moves the cap with the mouse from wherever it is pressed (Shift for a quarter of the movement); a double-click
-// sets 0 dB; the mouse wheel moves 0.5 dB a notch. Levels are reported to a tenth of a dB, from -60 ("off") to +6.
-// onDrag(db, gestureStart, gestureEnd): a press starts a gesture with the current level, each move that changes it
-// reports it, the release ends it; a double-click or a wheel notch is a gesture of its own (start and end together).
-class LevelFader : public juce::Component {
-public:
-    static constexpr float kMinDb = -60.0f, kMaxDb = 6.0f;
-
-    LevelFader();
-    void setValue(std::optional<float> db);
-    std::optional<float> value() const { return value_; }
-    using juce::Component::setColour;
-    void setColour(juce::Colour);
-    void setChangedTonight(bool);
-    void setMeter(float gain01);                  // the playing level as a linear gain, 1 = full scale
-    std::function<void(float db, bool gestureStart, bool gestureEnd)> onDrag;
-
-    // The travel: the bottom 15% covers -60 to -30 dB, the next 60% -30 to 0 dB, the top 25% 0 to +6 dB.
-    static float dbAtFraction(float fromBottom01);
-    static float fractionForDb(float db);
-
-    void paint(juce::Graphics&) override;
-    void mouseDown(const juce::MouseEvent&) override;
-    void mouseDrag(const juce::MouseEvent&) override;
-    void mouseUp(const juce::MouseEvent&) override;
-    void mouseDoubleClick(const juce::MouseEvent&) override;
-    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
-
-private:
-    float travel() const;                        // the pixels the cap's centre moves from -60 to +6
-    float yForFraction(float) const;
-    float currentDb() const;
-    void report(float db, bool start, bool end);
-
-    std::optional<float> value_;
-    juce::Colour colour_ = theme::mid;
-    bool changedTonight_ = false;
-    float meter_ = 0.0f;
-    bool dragging_ = false;
-    float dragFraction_ = 0.0f, lastY_ = 0.0f, wheelAccumulated_ = 0.0f;
-};
-
 // The mockup's kbd: the key's name, 11 px semibold, on a field with a hairline border, 2 px at the bottom, 4 px corners,
 // 18 px high and centred on centreY, starting at x. Returns its width.
 float drawKey(juce::Graphics&, const juce::String& key, float x, float centreY);

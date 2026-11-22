@@ -24,8 +24,8 @@ constexpr int kQuestionWidth = 460;
 
 }  // namespace
 
-// "Keep tonight's level changes?": the sentence "<n> levels were changed during the show." and the buttons "Drop them" and
-// "Keep them" (primary), drawn as the mockup's dialogs are.
+// "Keep tonight's changes?": the sentence "<n> changes were made during the show." (levels and pans) and the buttons
+// "Drop them" and "Keep them" (primary), drawn as the mockup's dialogs are.
 class AppShell::TonightQuestion : public juce::Component {
 public:
     std::function<void()> onKeep, onDrop;
@@ -38,8 +38,8 @@ public:
     }
 
     void setCount(int n) {
-        const auto sentence = n == 1 ? juce::String("1 level was changed during the show.")
-                                     : juce::String(n) + " levels were changed during the show.";
+        const auto sentence = n == 1 ? juce::String("1 change was made during the show.")
+                                     : juce::String(n) + " changes were made during the show.";
         if (sentence == sentence_) return;
         sentence_ = sentence;
         repaint();
@@ -67,7 +67,7 @@ public:
 
         g.setColour(theme::text);
         g.setFont(theme::font(18.0f, true));
-        g.drawText("Keep tonight's level changes?", juce::Rectangle<int>(0, 0, getWidth(), kHeaderHeight).reduced(kPadX, 0),
+        g.drawText("Keep tonight's changes?", juce::Rectangle<int>(0, 0, getWidth(), kHeaderHeight).reduced(kPadX, 0),
                    juce::Justification::centredLeft, true);
         g.setColour(theme::mid);
         g.setFont(theme::font(theme::sizeBody));
