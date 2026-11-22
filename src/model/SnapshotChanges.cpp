@@ -74,6 +74,7 @@ void describeParts(Lines& out, const juce::String& where, const SongDoc& then, c
         }
         if (const auto level = levelChange(before->gainDb, part.gainDb); level.isNotEmpty()) out.add(where, part.name + " level " + level);
         if (before->mute != part.mute) out.add(where, part.name + (part.mute ? " muted" : " unmuted"));
+        if (before->pan != part.pan) out.add(where, part.name + " pan " + formatPan(part.pan) + ", was " + formatPan(before->pan));
         if (before->roleId != part.roleId)
             out.add(where, part.name + " role " + roleName(thenBand, before->roleId) + kArrow + roleName(nowBand, part.roleId));
     }
@@ -193,7 +194,23 @@ void describeSetlist(Lines& out, const BandModel& thenModel, const BandModel& no
     if (between) out.add(where, "what happens between songs changed");
 }
 
-void describeRig(Lines& out, const BandDoc& thenBand, const BandDoc& nowBand, const RigDoc& then, const RigDoc& now) {
+// Each role's own pan on an output: "Keys on Headphones: own pan R 30" (unlinked), "… own pan L 10, was R 30", and
+// "… follows the song" (linked again).
+void describeOwnPans(Lines& out, const juce::String& where, const BandDoc& thenBand, const BandDoc& nowBand, const OutputDoc& then,
+                     const OutputDoc& now) {
+    std::set<juce::String> roles;
+    for (const auto& p : then.pan) roles.insert(p.first);
+    for (const auto& p : now.pan) roles.insert(p.first);
+    for (const auto& role : roles) {
+        const auto a = then.pan.find(role), b = now.pan.find(role);
+        const auto who = roleName(b != now.pan.end() ? nowBand : thenBand, role) + " on " + now.name + ": ";
+        if (b == now.pan.end()) out.add(where, who + "follows the song");
+        else if (a == then.pan.end()) out.add(where, who + "own pan " + formatPan(b->second));
+        else if (a->second != b->second) out.add(where, who + "own pan " + formatPan(b->second) + ", was " + formatPan(a->second));
+    }
+}
+
+void describeRig(Lines& out,const BandDoc& thenBand, const BandDoc& nowBand, const RigDoc& then, const RigDoc& now) {
     const auto& where = now.name;
     if (then.name != now.name) out.add(where, "was " + quoted(then.name));
 
@@ -218,6 +235,7 @@ void describeRig(Lines& out, const BandDoc& thenBand, const BandDoc& nowBand, co
                 out.add(where, output.name + ": " + name + " " + level);
         }
         if (const auto trim = levelChange(was->trimDb, output.trimDb); trim.isNotEmpty()) out.add(where, output.name + " overall level " + trim);
+        describeOwnPans(out, where, thenBand, nowBand, *was, output);
     }
     for (const auto& output : then.outputs)
         if (byId(now.outputs, output.id) == nullptr) outputsChanged = true;

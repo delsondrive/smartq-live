@@ -192,6 +192,20 @@ public:
     void setLevel(const LevelTarget&, std::optional<float> db, const juce::String& gestureId);
     void setMute(const juce::String& songId, const juce::String& partId, bool);
     bool changedTonight(const LevelTarget&) const;               // for a Part target, its mute counts too
+    // Pan (SessionPan.cpp), -100 (left) to 100 (right). A Part target is the song's pan for that part, for every output; a
+    // Mix target is a role's own pan on that output, which is used in every song instead of the song's pan; a role without
+    // one follows the song (is linked). Other kinds have no pan.
+    //
+    // pan: as heard now, tonight's changes included. Part: the song's pan (nullopt only when there is no such part). Mix:
+    // the role's own pan, or nullopt while it follows the song (or the output is gone).
+    std::optional<int> pan(const LevelTarget&) const;
+    // Part: sets the song's pan (nullopt is ignored). Mix: a value gives the role its own pan there (unlinking it); nullopt
+    // links it again. Limited to -100..100. Edit mode: a command, coalesced by gestureId so one drag is one undo step, named
+    // "pan Keys", "pan Keys on Headphones" or "link Keys on Headphones". Show mode: for tonight only (linking is ignored
+    // there; a value on a linked role is a tonight own pan, which keeping tonight's changes turns into an unlink and a pan).
+    // Either way it is heard at once.
+    void setPan(const LevelTarget&, std::optional<int> pan, const juce::String& gestureId);
+    bool panChangedTonight(const LevelTarget&) const;
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                              // how many levels were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,
@@ -334,7 +348,9 @@ private:
     void rememberShow();                                         // in Show mode: the show memory, when it differs
     void writeShowMemory();                                      // the show memory as it is now; the file is saved by the flush
     void tonightChanged();
-    void snapshotOnOpening();                                    // Edit mode: the automatic "Opened the folder" snapshot
+    // "Keys on Headphones" for a Mix target, from the band's role and the chosen rig's output; "" when either is gone.
+    juce::String roleOnOutputWords(const LevelTarget&) const;
+    void snapshotOnOpening();                                   // Edit mode: the automatic "Opened the folder" snapshot
 
     // The voice being made (SessionVoice.cpp): its thread, what it may write, and its callbacks.
     struct VoiceJob;

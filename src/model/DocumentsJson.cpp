@@ -1,5 +1,7 @@
 #include "model/DocumentsJson.h"
 
+#include <algorithm>
+#include <cmath>
 #include <set>
 
 #include "model/DocumentsJsonDetail.h"
@@ -49,6 +51,7 @@ juce::var write(const PartDoc& p) {
     auto o = startObject();
     put(o, "id", p.id); put(o, "name", p.name); put(o, "file", p.file); put(o, "roleId", p.roleId);
     put(o, "gainDb", (double) p.gainDb); put(o, "mute", p.mute); put(o, "channels", p.channels);
+    if (p.pan != 0) put(o, "pan", p.pan);                          // centre is not written: a file from before pan stays as it was
     return finish(o, p.extra);
 }
 juce::var write(const Transition& t) {
@@ -69,6 +72,11 @@ juce::var write(const OutputDoc& d) {
     auto mix = startObject();
     for (auto& [role, db] : d.mix) mix->setProperty(juce::Identifier(role), (double) db);
     put(o, "mix", juce::var(mix.get()));
+    if (! d.pan.empty()) {                                         // every role following the song is not written
+        auto pan = startObject();
+        for (auto& [role, value] : d.pan) pan->setProperty(juce::Identifier(role), value);
+        put(o, "pan", juce::var(pan.get()));
+    }
     return finish(o, d.extra);
 }
 juce::var write(const ComputerBinding& c) {
@@ -106,6 +114,7 @@ void read(Reader& r, PartDoc& out, std::set<juce::String>& seen) {
         out.file = {};
     }
     out.gainDb = r.db("gainDb", 0.0f); out.mute = r.flag("mute", false); out.channels = r.whole("channels", 2, 1, 2);
+    out.pan = r.whole("pan", 0, kMinPan, kMaxPan);
     out.extra = r.rest();
 }
 void read(Reader& r, Transition& out) {
@@ -127,6 +136,14 @@ void read(Reader& r, OutputDoc& out, std::set<juce::String>& seen) {
     r.members("mix", [&](const juce::String& role, const juce::var& v, const juce::String& at) {
         if (! isNumber(v)) { r.note(at + " is not a number, so it is left out."); return; }
         out.mix[role] = clampDb((float) (double) v);
+    });
+    r.members("pan", [&](const juce::String& role, const juce::var& v, const juce::String& at) {
+        if (! isNumber(v)) { r.note(at + " is not a number, so the role follows the song."); return; }
+        const double x = std::round((double) v), limited = std::clamp(x, (double) kMinPan, (double) kMaxPan);
+        if (limited != x)
+            r.note(at + " is " + juce::String(x) + ", outside " + juce::String(kMinPan) + " to " + juce::String(kMaxPan) + ", so "
+                   + juce::String(limited) + " is used.");
+        out.pan[role] = (int) limited;
     });
     out.extra = r.rest();
 }

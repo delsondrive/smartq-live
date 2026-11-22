@@ -125,3 +125,17 @@ TEST_CASE("the guard refuses a command, an undo and a redo with its sentence, an
     CHECK(c.run("test.rename", params({{"name", "Other"}})).ok);
     CHECK(m.band().name == "Other");
 }
+TEST_CASE("a step can carry its own words for the undo tip", "[commands]") {
+    BandModel m; m.editBand().name = "Old"; CommandLayer c(m); addRename(c);
+    CHECK(c.undoWords().isEmpty());
+    c.run("test.rename", params({{"name", "A"}}));
+    CHECK(c.undoName() == "test.rename");  CHECK(c.undoWords().isEmpty());  // none given
+    c.run("test.rename", params({{"name", "B"}}), "drag", "rename it");
+    c.run("test.rename", params({{"name", "C"}}), "drag", "rename it again");
+    CHECK(c.undoName() == "test.rename");  CHECK(c.undoWords() == "rename it");   // one step: its first words stay
+    c.undo();
+    CHECK(m.band().name == "A");
+    CHECK(c.redoWords() == "rename it");  CHECK(c.undoWords().isEmpty());
+    c.redo();
+    CHECK(c.undoWords() == "rename it");
+}

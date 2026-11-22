@@ -53,6 +53,7 @@ const juce::StringArray& tabNames() {
 juce::String undoWords(const juce::String& command) {
     if (command == "band.rename") return "rename the band";
     if (command.startsWith("part.")) return "change a part";
+    if (command == "mix.setPan") return "change a pan";
     if (command == "mix.setLevel" || command.startsWith("output.")) return "change the routing";
     if (command.startsWith("setlist.")) return "change the setlist";
     if (command == "song.add") return "add a song";
@@ -123,7 +124,9 @@ TopBarState makeTopBarState(const app::Session& session, const app::AudioHost* h
 
     // Show mode never writes the band folder, so it offers no undo.
     t.canUndo = t.mode == Mode::Edit && session.commands().canUndo();
-    t.undoTip = t.canUndo ? "Undo: " + undoWords(session.commands().undoName()) : juce::String();
+    // A step run with its own words ("pan Keys") says them; the others are named by their command.
+    const auto words = session.commands().undoWords();
+    t.undoTip = t.canUndo ? "Undo: " + (words.isNotEmpty() ? words : undoWords(session.commands().undoName())) : juce::String();
     t.holdProgress = controller != nullptr ? controller->holdProgress() : 0.0;
 
     using Level = StatusPill::Level;

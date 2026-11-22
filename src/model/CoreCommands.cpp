@@ -141,7 +141,7 @@ void registerCoreCommands(CommandLayer& layer) {
         if (uses > 1) refuse(String(uses) + " parts still use " + role.name + ".");
         eraseIf(m.editBand().roles, [&](const Role& r) { return r.id == role.id; });
         for (auto& id : m.rigIds())
-            for (auto& out : m.editRig(id)->outputs) out.mix.erase(role.id);
+            for (auto& out : m.editRig(id)->outputs) { out.mix.erase(role.id); out.pan.erase(role.id); }
         return CommandResult::success();
     });
 
@@ -211,6 +211,7 @@ void registerCoreCommands(CommandLayer& layer) {
         }
         if (p.given("gainDb")) part.gainDb = p.db("gainDb");
         if (p.given("mute")) part.mute = p.flag("mute");
+        if (p.given("pan")) part.pan = p.whole("pan", kMinPan, kMaxPan);
         return CommandResult::success();
     });
     add("part.remove", [](BandModel& m, const Params& p) {
@@ -378,6 +379,16 @@ void registerCoreCommands(CommandLayer& layer) {
         const float db = p.db("db");
         if (! mayRoute(role.kind, out.label)) refuse(whyNot(role.kind, out.label));
         out.mix[role.id] = db;
+        return CommandResult::success();
+    });
+    // A role's own pan on an output, used in every song instead of the song's pan for that role's parts; void links it
+    // again (it follows the song). Whether the role is sent there doesn't matter: the pan waits for the send.
+    add("mix.setPan", [](BandModel& m, const Params& p) {
+        auto& out = outputOf(rigOf(m, p), p);
+        const Role role = roleOf(m, p.id("roleId"));
+        if (! p.present("pan")) refuse("A pan needs pan, or void to follow the song.");
+        if (! p.given("pan")) { out.pan.erase(role.id); return CommandResult::success(); }
+        out.pan[role.id] = p.whole("pan", kMinPan, kMaxPan);
         return CommandResult::success();
     });
 }

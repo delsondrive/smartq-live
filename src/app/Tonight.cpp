@@ -1,7 +1,9 @@
 #include "app/Tonight.h"
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <set>
 
 #include "model/JsonObject.h"
 #include "model/Units.h"
@@ -64,20 +66,28 @@ void Tonight::setMute(const juce::String& songId, const juce::String& partId, bo
     mutes_[partTarget(songId, partId)] = mute;
 }
 
+void Tonight::setPan(const LevelTarget& target, int pan) {
+    if (target.kind != Kind::Part && target.kind != Kind::Mix) return;
+    pans_[target] = model::clampPan(pan);
+}
+
 bool Tonight::has(const LevelTarget& target) const { return levels_.count(target) > 0; }
 bool Tonight::hasMute(const juce::String& songId, const juce::String& partId) const {
     return mutes_.count(partTarget(songId, partId)) > 0;
 }
-bool Tonight::isEmpty() const { return levels_.empty() && mutes_.empty(); }
+bool Tonight::hasPan(const LevelTarget& target) const { return pans_.count(target) > 0; }
+bool Tonight::isEmpty() const { return levels_.empty() && mutes_.empty() && pans_.empty(); }
 int Tonight::count() const {
-    int n = static_cast<int>(levels_.size());
-    for (const auto& entry : mutes_)
-        if (!levels_.contains(entry.first)) ++n;
-    return n;
+    std::set<LevelTarget> changed;
+    for (const auto& entry : levels_) changed.insert(entry.first);
+    for (const auto& entry : mutes_) changed.insert(entry.first);
+    for (const auto& entry : pans_) changed.insert(entry.first);
+    return static_cast<int>(changed.size());
 }
 void Tonight::clear() {
     levels_.clear();
     mutes_.clear();
+    pans_.clear();
 }
 
 // ---- Applying them -----------------------------------------------------------------------------------------------------
@@ -94,6 +104,11 @@ model::SongDoc Tonight::apply(model::SongDoc song) const {
         if (target.songId != song.id) continue;
         for (auto& part : song.parts)
             if (part.id == target.partId) part.mute = mute;
+    }
+    for (const auto& [target, pan] : pans_) {
+        if (target.kind != Kind::Part || target.songId != song.id) continue;
+        for (auto& part : song.parts)
+            if (part.id == target.partId) part.pan = pan;
     }
     return song;
 }
@@ -112,6 +127,11 @@ model::RigDoc Tonight::apply(model::RigDoc rig) const {
             }
         }
     }
+    for (const auto& [target, pan] : pans_) {
+        if (target.kind != Kind::Mix) continue;
+        for (auto& out : rig.outputs)
+            if (out.id == target.outputId) out.pan[target.roleId] = pan;
+    }
     return rig;
 }
 
@@ -128,14 +148,17 @@ model::BandDoc Tonight::apply(model::BandDoc band) const {
 // ---- JSON --------------------------------------------------------------------------------------------------------------
 
 juce::String Tonight::toJson() const {
-    juce::Array<juce::var> levels, mutes;
+    juce::Array<juce::var> levels, mutes, pans;
     for (const auto& [target, db] : levels_)
         levels.add(jsonObject({{"kind", nameOf(target.kind)}, {"songId", target.songId}, {"partId", target.partId},
                            {"outputId", target.outputId}, {"roleId", target.roleId},
                            {"db", db.has_value() ? juce::var(*db) : juce::var()}}));
     for (const auto& [target, mute] : mutes_)
         mutes.add(jsonObject({{"songId", target.songId}, {"partId", target.partId}, {"mute", mute}}));
-    return juce::JSON::toString(jsonObject({{"levels", levels}, {"mutes", mutes}}), true);
+    for (const auto& [target, pan] : pans_)
+        pans.add(jsonObject({{"kind", nameOf(target.kind)}, {"songId", target.songId}, {"partId", target.partId},
+                             {"outputId", target.outputId}, {"roleId", target.roleId}, {"pan", pan}}));
+    return juce::JSON::toString(jsonObject({{"levels", levels}, {"mutes", mutes}, {"pans", pans}}), true);
 }
 
 Tonight Tonight::fromJson(const juce::String& text) {
@@ -156,6 +179,17 @@ Tonight Tonight::fromJson(const juce::String& text) {
             const auto mute = item.getProperty("mute", {});
             if (!mute.isBool()) continue;
             tonight.setMute(item.getProperty("songId", {}).toString(), item.getProperty("partId", {}).toString(), (bool) mute);
+        }
+    }
+    // Written since pans came; a file from before has none.
+    if (const auto* pans = parsed.getProperty("pans", {}).getArray()) {
+        for (const auto& item : *pans) {
+            const auto kind = kindNamed(item.getProperty("kind", {}).toString());
+            const auto pan = item.getProperty("pan", {});
+            if (!kind.has_value() || !(pan.isInt() || pan.isInt64() || pan.isDouble()) || !std::isfinite((double) pan)) continue;
+            const LevelTarget target{*kind, item.getProperty("songId", {}).toString(), item.getProperty("partId", {}).toString(),
+                                     item.getProperty("outputId", {}).toString(), item.getProperty("roleId", {}).toString()};
+            tonight.setPan(target, static_cast<int>(std::clamp(std::round((double) pan), -1000.0, 1000.0)));   // setPan limits it
         }
     }
     return tonight;
@@ -188,6 +222,13 @@ std::vector<std::pair<juce::String, juce::var>> Tonight::asCommands(const juce::
     }
     for (const auto& [target, mute] : mutes_)
         commands.emplace_back("part.set", jsonObject({{"songId", target.songId}, {"partId", target.partId}, {"mute", mute}}));
+    for (const auto& [target, pan] : pans_) {
+        if (target.kind == Kind::Part)
+            commands.emplace_back("part.set", jsonObject({{"songId", target.songId}, {"partId", target.partId}, {"pan", pan}}));
+        else                                                     // a Mix target: unlinks the role and sets its own pan, in one
+            commands.emplace_back("mix.setPan", jsonObject({{"rigId", rigId}, {"outputId", target.outputId},
+                                                        {"roleId", target.roleId}, {"pan", pan}}));
+    }
     return commands;
 }
 

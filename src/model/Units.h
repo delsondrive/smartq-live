@@ -18,4 +18,8 @@ inline float clampDb(float db) noexcept {
     return db < kMinDb ? kMinDb : (db > kMaxDb ? kMaxDb : db);
 }
 
+// A pan: -100 is hard left, 0 the centre, +100 hard right. Into that range.
+inline constexpr int kMinPan = -100, kMaxPan = 100;
+inline int clampPan(int pan) noexcept { return pan < kMinPan ? kMinPan : (pan > kMaxPan ? kMaxPan : pan); }
+
 }  // namespace sqlive::model

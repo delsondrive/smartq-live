@@ -27,7 +27,8 @@ void CommandLayer::notify(const std::vector<BandModel::Change>& changes) {
     onChanged(keys);
 }
 
-CommandResult CommandLayer::run(const juce::String& name, const juce::var& params, const juce::String& coalesceKey) {
+CommandResult CommandLayer::run(const juce::String& name, const juce::var& params, const juce::String& coalesceKey,
+                                const juce::String& words) {
     const auto it = handlers_.find(name);
     if (it == handlers_.end()) return CommandResult::failure("Unknown command: " + name);
     if (guard_)
@@ -57,7 +58,7 @@ CommandResult CommandLayer::run(const juce::String& name, const juce::var& param
         }
         std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
     } else {
-        undo_stack_.push_back({name, coalesceKey, changes});
+        undo_stack_.push_back({name, coalesceKey, words, changes});
         while (undo_stack_.size() > kMaxSteps) undo_stack_.pop_front();
     }
     redo_stack_.clear();
@@ -70,6 +71,8 @@ bool CommandLayer::canUndo() const { return !undo_stack_.empty(); }
 bool CommandLayer::canRedo() const { return !redo_stack_.empty(); }
 juce::String CommandLayer::undoName() const { return undo_stack_.empty() ? juce::String() : undo_stack_.back().name; }
 juce::String CommandLayer::redoName() const { return redo_stack_.empty() ? juce::String() : redo_stack_.back().name; }
+juce::String CommandLayer::undoWords() const { return undo_stack_.empty() ? juce::String() : undo_stack_.back().words; }
+juce::String CommandLayer::redoWords() const { return redo_stack_.empty() ? juce::String() : redo_stack_.back().words; }
 
 void CommandLayer::setGuard(Guard guard) { guard_ = std::move(guard); }
 

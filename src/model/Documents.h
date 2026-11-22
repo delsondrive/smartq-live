@@ -110,6 +110,7 @@ struct ClickDoc {
 };
 struct PartDoc {
     juce::String id, name, file, roleId; float gainDb = 0.0f; bool mute = false; int channels = 2;
+    int pan = 0;                                                   // -100 (left) to 100 (right); the song's, for every output
     juce::NamedValueSet extra;
     bool operator==(const PartDoc&) const = default;
 };
@@ -148,6 +149,7 @@ enum class OutputLabel { Monitor, Foh, Timecode, Unused };
 struct OutputDoc {
     juce::String id, name; int firstChannel = 1; bool stereo = true; OutputLabel label = OutputLabel::Monitor;
     float trimDb = 0.0f; std::map<juce::String, float> mix;   // role id -> dB; absent = not sent. firstChannel is 1-based
+    std::map<juce::String, int> pan;                          // role id -> its own pan here; absent = follows the song (linked)
     juce::NamedValueSet extra;
     bool operator==(const OutputDoc&) const = default;
 };

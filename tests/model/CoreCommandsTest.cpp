@@ -295,3 +295,35 @@ TEST_CASE("a band, a rig and a song hold no more than the engine can play", "[co
     CHECK(f.run("song.add", params({{"song", songWith(129)}})).message == "A song can have up to 128 parts.");
     CHECK(f.run("song.add", params({{"song", songWith(128)}})).ok);
 }
+
+TEST_CASE("a part's pan, and a role's own pan on an output", "[core][pan]") {
+    Fixture f;
+    auto rigId = f.rigId(), phones = f.rig().outputs[0].id, keysId = f.roleId("Keys");
+    juce::String partId;
+    auto song = f.addSong("Song", keysId, &partId);
+    CHECK(f.run("part.set", params({{"songId", song}, {"partId", partId}, {"pan", -40}})).ok);
+    CHECK(f.model.song(song)->parts[0].pan == -40);
+    CHECK(f.run("part.set", params({{"songId", song}, {"partId", partId}, {"pan", 250}})).ok);
+    CHECK(f.model.song(song)->parts[0].pan == 100);                         // limited to -100..100
+    CHECK_FALSE(f.run("part.set", params({{"songId", song}, {"partId", partId}, {"pan", "left"}})).ok);
+
+    CHECK(f.rig().outputs[0].pan.empty());                                   // every role follows the song
+    CHECK(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", phones}, {"roleId", keysId}, {"pan", 30}})).ok);
+    CHECK(f.rig().outputs[0].pan.at(keysId) == 30);                          // an own pan
+    CHECK(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", phones}, {"roleId", keysId}, {"pan", -300}})).ok);
+    CHECK(f.rig().outputs[0].pan.at(keysId) == -100);
+    CHECK(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", phones}, {"roleId", keysId}, {"pan", juce::var()}})).ok);
+    CHECK(f.rig().outputs[0].pan.count(keysId) == 0);                        // void: it follows the song again
+    CHECK_FALSE(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", phones}, {"roleId", keysId}})).ok);
+    CHECK(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", phones}, {"roleId", "nope"}, {"pan", 0}})).message == "That role no longer exists.");
+    CHECK(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", "nope"}, {"roleId", keysId}, {"pan", 0}})).message == "That output no longer exists.");
+
+    // Removing a role takes its own pans with it.
+    auto loops = f.run("role.add", params({{"name", "Loops"}})).value.toString();
+    CHECK(f.run("mix.setPan", params({{"rigId", rigId}, {"outputId", phones}, {"roleId", loops}, {"pan", 20}})).ok);
+    CHECK(f.run("role.remove", params({{"roleId", loops}})).ok);
+    CHECK(f.rig().outputs[0].pan.count(loops) == 0);
+
+    while (f.commands.canUndo()) f.commands.undo();
+    CHECK(f.rig().outputs[0].pan.empty());
+}

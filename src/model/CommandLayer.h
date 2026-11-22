@@ -26,10 +26,14 @@ public:
 
     void registerCommand(const juce::String& name, Handler);
     bool hasCommand(const juce::String& name) const;
-    CommandResult run(const juce::String& name, const juce::var& params, const juce::String& coalesceKey = {});
+    // words: what the step does in the user's own words ("pan Keys"), for the undo tip; a step merged into the one before
+    // it (the same coalesceKey) keeps that one's words.
+    CommandResult run(const juce::String& name, const juce::var& params, const juce::String& coalesceKey = {},
+                      const juce::String& words = {});
 
     bool canUndo() const;  bool canRedo() const;
     juce::String undoName() const;  juce::String redoName() const;      // the command's name, "" when there is none
+    juce::String undoWords() const; juce::String redoWords() const;     // the words run was given, "" when none (or no step)
     CommandResult undo();  CommandResult redo();
     void clearHistory();
     void clearRedo();                                           // a step just undone that must never be redone
@@ -52,7 +56,7 @@ public:
     const BandModel& model() const noexcept { return band_model_; }
 
 private:
-    struct Entry { juce::String name, coalesceKey; std::vector<BandModel::Change> changes; };
+    struct Entry { juce::String name, coalesceKey, words; std::vector<BandModel::Change> changes; };
     void apply(const std::vector<BandModel::Change>&, bool useAfter);
     void notify(const std::vector<BandModel::Change>&);
 

@@ -195,3 +195,31 @@ TEST_CASE("a snapshot older than what it is compared with is still readable", "[
         CHECK_NOTHROW(describeChanges(now, then));
     }
 }
+
+TEST_CASE("pan changes are listed in the user's words", "[changes][pan]") {
+    DemoSession d; auto& s = *d.session; SnapshotStore store(s.folder());
+    const auto song = d.setlist().entries[0].songId;
+    const auto title = s.model().song(song)->title;
+    const auto& rig = *s.model().rig(s.rigId());
+    const auto rigName = rig.name, phones = rig.outputs[0].id, outputName = rig.outputs[0].name;
+    auto roleId = [&](const char* name) {
+        for (const auto& r : s.model().band().roles) if (r.name == name) return r.id;
+        return juce::String();
+    };
+    auto ownPan = [&](const char* role, const juce::var& pan) {
+        REQUIRE(s.commands().run("mix.setPan", params({{"rigId", s.rigId()}, {"outputId", phones}, {"roleId", roleId(role)}, {"pan", pan}})).ok);
+    };
+    REQUIRE(s.model().song(song)->parts[0].name == "Keys");
+    ownPan("Bass", 10);  ownPan("Perc", -20);                                   // before the snapshot
+    store.create(s.model(), "Then", false);  auto id = store.list().front().id;
+    REQUIRE(s.commands().run("part.set", params({{"songId", song}, {"partId", s.model().song(song)->parts[0].id}, {"pan", -40}})).ok);
+    ownPan("Keys", 30);  ownPan("Bass", juce::var());  ownPan("Perc", 15);
+    BandModel then;  REQUIRE(store.load(id, then).wasOk());
+    const auto lines = describeChanges(then, s.model(), 1000);
+    CHECK(has(lines, title, "Keys pan L 40, was C"));
+    CHECK(has(lines, rigName, "Keys on " + outputName + ": own pan R 30"));
+    CHECK(has(lines, rigName, "Bass on " + outputName + ": follows the song"));
+    CHECK(has(lines, rigName, "Perc on " + outputName + ": own pan R 15, was L 20"));
+    CHECK_FALSE(has(lines, title, "changed"));                                   // said already
+    CHECK_FALSE(has(lines, rigName, "changed"));
+}
