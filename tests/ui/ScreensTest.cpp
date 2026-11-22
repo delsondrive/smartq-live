@@ -26,11 +26,21 @@ TEST_CASE("every screen renders, and none is blank", "[screens]") {
     juce::ScopedJuceInitialiser_GUI gui;
     sqlive::test::ScopedLook look;
     CHECK(ui::screenNames().size() == 19);
+    // The window buttons as the window shows them: in Edit mode, at the bar's far right; none in Show mode, which is full
+    // screen on stage. The close button's glyph is drawn in --mid (dimmed under a dialog's veil); in Show mode the EDIT/SHOW
+    // switch's ember SHOW is there instead.
+    const juce::StringArray showMode{"main-view", "stage-playing", "stage-looping", "stage-between", "stage-loading", "interrupted"};
+    const juce::StringArray noBar{"welcome", "new-computer"};
     for (auto& name : ui::screenNames()) {
         INFO(name);
         auto image = ui::renderScreen(name);
         CHECK(image.getWidth() == 1280);  CHECK(image.getHeight() == 760);
         CHECK(fractionNotBackground(image) > kDrawnFloor);
+        if (!noBar.contains(name)) {
+            const auto corner = image.getClippedImage({1280 - 46, 0, 46, 62});
+            const bool glyph = hasColour(corner, theme::mid) || hasColour(corner, theme::mid.overlaidWith(theme::veil));
+            CHECK(glyph == !showMode.contains(name));
+        }
     }
     sqlive::test::TempDir t;
     REQUIRE(ui::renderScreens(t.dir()).wasOk());

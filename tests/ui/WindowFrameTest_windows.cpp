@@ -8,6 +8,7 @@
 #include "ui/AppShell.h"
 #include "ui/MainWindow.h"
 #include "ui/TopBar.h"
+#include "ui/Veil.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -110,6 +111,8 @@ TEST_CASE("Show mode's kiosk leaves the window to Windows, and leaving it brings
     OpenWindow w;
     auto& bar = w.bar();
     const auto close = bar.windowButtonArea(WindowArea::Close).getCentre();
+    RECT before{};
+    GetWindowRect(w.hwnd(), &before);
     w.window.setKioskAllowed(true);
     w.d.session->enterShow();
     w.d.settle();
@@ -123,6 +126,65 @@ TEST_CASE("Show mode's kiosk leaves the window to Windows, and leaving it brings
     CHECK(bar.state().windowButtons);
     RECT frame{};
     GetWindowRect(w.hwnd(), &frame);
+    CHECK(EqualRect(&frame, &before));                            // where it was, at its size
     CHECK(w.clientTopOnScreen() == frame.top);
     CHECK(w.hitAt(bar.windowButtonArea(WindowArea::Close).getCentre()) == HTCLOSE);
+}
+
+TEST_CASE("the window buttons act on Windows' own clicks: on release, on the button pressed, once", "[frame]") {
+    OpenWindow w;
+    int closed = 0;
+    w.window.onClose = [&] { ++closed; };
+    const auto click = [&](UINT downOn, UINT upOn) {
+        SendMessage(w.hwnd(), WM_NCLBUTTONDOWN, downOn, 0);
+        SendMessage(w.hwnd(), WM_NCLBUTTONUP, upOn, 0);
+        w.d.settle();
+    };
+    REQUIRE_FALSE(IsZoomed(w.hwnd()));
+    click(HTMAXBUTTON, HTMAXBUTTON);
+    CHECK(IsZoomed(w.hwnd()));                                    // once: twice would have restored it again
+    CHECK(w.bar().state().maximised);
+    click(HTMAXBUTTON, HTMAXBUTTON);
+    CHECK_FALSE(IsZoomed(w.hwnd()));
+    // Pressed on one button and let go on another: neither acts.
+    click(HTCLOSE, HTMAXBUTTON);
+    click(HTMAXBUTTON, HTCLOSE);
+    CHECK_FALSE(IsZoomed(w.hwnd()));
+    CHECK(closed == 0);
+    click(HTCLOSE, HTCLOSE);                                      // through closeButtonPressed(), once
+    CHECK(closed == 1);
+
+    // A song playing in Show mode (kiosk not allowed here, so the buttons show): the close button is refused.
+    w.d.session->enterShow();
+    w.d.session->perform(app::Action::Start);
+    w.d.session->advanceWithoutDevice(48000 * 2);
+    w.d.settle();
+    REQUIRE(w.d.session->now().playing);
+    click(HTCLOSE, HTCLOSE);
+    CHECK(closed == 1);
+    CHECK(IsWindow(w.hwnd()));
+}
+
+TEST_CASE("a dialog over the top bar never drags the window", "[frame]") {
+    OpenWindow w;
+    w.window.centreWithSize(1100, 680);                           // the narrowest window: a tall dialog reaches into the bar
+    for (int i = 0; i < 20; ++i)
+        REQUIRE(w.d.session->snapshots().create(w.d.session->model(), "Snapshot " + juce::String(i + 1), false).wasOk());
+    w.d.settle();
+    auto& shell = w.window.shell();
+    auto& bar = w.bar();
+    const juce::Point<int> onHeader{300, 50}, onBackdrop{100, 50};   // in the shell, where the bar is empty
+    REQUIRE(bar.windowAreaAt(bar.getLocalPoint(&shell, onHeader)) == WindowArea::Caption);
+    CHECK(w.hitAt(bar.getLocalPoint(&shell, onHeader)) == HTCAPTION);
+
+    shell.openSnapshotsDialog();
+    w.d.settle();
+    REQUIRE(shell.showingSnapshotsDialog());
+    auto* veil = dynamic_cast<Veil*>(shell.getComponentAt(onBackdrop));
+    REQUIRE(veil != nullptr);
+    REQUIRE(veil->content().getBoundsInParent().contains(onHeader));
+    CHECK(w.hitAt(bar.getLocalPoint(&shell, onHeader)) == HTCLIENT);
+    CHECK(w.hitAt(bar.getLocalPoint(&shell, onBackdrop)) == HTCLIENT);
+    CHECK(w.hitAt(bar.windowButtonArea(WindowArea::Close).getCentre()) == HTCLOSE);
+    CHECK(w.hitAt(bar.windowButtonArea(WindowArea::Minimise).getCentre()) == HTMINBUTTON);
 }

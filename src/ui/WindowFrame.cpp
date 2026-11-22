@@ -32,8 +32,9 @@ WindowFrame::~WindowFrame() { setHook(nullptr, false); }
 
 bool WindowFrame::attached() const { return hwnd_ != nullptr; }
 
-// JUCE calls this twice when it makes a new native window: first with none (the old one still there, about to go), then
-// with the new one.
+// JUCE calls this twice when addToDesktop makes a new native window: first with none (the old one still there, about to
+// go), then with the new one. removeFromDesktop, and a window simply destroyed, call nothing here: the procedure's
+// WM_NCDESTROY lets go of those. Kiosk mode, in JUCE 9, restyles the same native window, so it changes no peer.
 void WindowFrame::componentPeerChanged() { follow(); }
 
 }  // namespace sqlive::ui

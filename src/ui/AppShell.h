@@ -42,6 +42,10 @@ public:
     // The window buttons in the top bar: shown while the window has a title bar (MainWindow says so; not in kiosk), and
     // whether the window is maximised (the middle one draws "restore"). Tests and screenshots: shown, not maximised.
     void setWindowControls(bool shown, bool maximised);
+    // What a point of the shell is to the window (for its frame, WindowFrame): the top bar's answer (TopBar::windowAreaAt),
+    // but never the caption where something lies over the bar there, such as a dialog's veil: a press on a dialog is the
+    // dialog's, never a drag of the window. The window buttons answer as the bar says.
+    WindowArea windowAreaAt(juce::Point<int> local);
     void showPage(Page);
     Page page() const { return page_; }
     // Edit → Show: the pre-show dialog over the page; its "Go to Show mode" calls Session::enterShow. Show → Edit: refused

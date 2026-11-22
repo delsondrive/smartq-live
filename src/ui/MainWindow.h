@@ -32,10 +32,10 @@ bool keyboardElsewhere(bool inShow, bool active, int modalCount);
 // RemoteAccess and RemoteServer, both or neither; none in tests) goes to Setup's Remote page and the top bar; both must
 // outlive the window.
 //
-// On Windows the top bar is the title bar (WindowFrame): no separate strip, the bar's empty parts drag the window in Edit
-// mode, and its minimise, maximise or restore, and close buttons are the window's. They show while the frame has the window
-// and it isn't in kiosk mode, the middle one as "restore" while it is maximised. Elsewhere the window keeps its native title
-// bar and the top bar shows no buttons.
+// On Windows the top bar is the title bar (WindowFrame): no separate strip, the bar's empty parts (where no dialog covers
+// them) drag the window in Edit mode, and its minimise, maximise or restore, and close buttons are the window's. They show
+// while the frame has the window and it isn't in kiosk mode, the middle one as "restore" while it is maximised. Elsewhere
+// the window keeps its native title bar and the top bar shows no buttons.
 //
 // In Show mode the ShowController listens to the keys, the window takes kiosk mode (when allowed) and the screen saver is
 // off; leaving Show mode undoes all three. Whenever the window stops being active the controller forgets every held key,
@@ -75,7 +75,7 @@ private:
     juce::TooltipWindow tooltips_;
     bool inShow_ = false, kioskAllowed_ = true, kiosk_ = false;
     juce::ScopedMessageBox message_;
-    std::unique_ptr<WindowFrame> frame_;                          // let go of first, in the destructor
+    std::unique_ptr<WindowFrame> frame_;                          // let go of early in the destructor, just after kiosk mode
 };
 
 }  // namespace sqlive::ui

@@ -280,6 +280,15 @@ void AppShell::setWindowControls(bool shown, bool maximised) {
     refreshTopBar();
 }
 
+WindowArea AppShell::windowAreaAt(juce::Point<int> local) {
+    const auto area = topBar_.windowAreaAt(topBar_.getLocalPoint(this, local));
+    if (area != WindowArea::Caption) return area;
+    // The caption only where the bar itself is on top: a veil (and its dialog, whose top reaches into the bar in a short
+    // window) takes the press for itself.
+    auto* top = getComponentAt(local);
+    return top == &topBar_ || topBar_.isParentOf(top) ? WindowArea::Caption : WindowArea::Client;
+}
+
 void AppShell::refreshTopBar() {
     auto state = makeTopBarState(session_, host_, controller_, page_, keyboardElsewhere_,
                                  remoteStatus ? remoteStatus() : app::RemoteStatus{});

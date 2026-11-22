@@ -10,6 +10,7 @@
 #include "ui/AppShell.h"
 #include "ui/Theme.h"
 #include "ui/TopBar.h"
+#include "ui/Veil.h"
 
 using namespace sqlive;
 using namespace sqlive::app;
@@ -182,4 +183,32 @@ TEST_CASE("at the narrowest window with buttons the Edit bar's pieces don't over
     CHECK(bar.windowAreaAt({minX - 17, 31}) == WindowArea::Client);
     for (const auto& piece : pieces)
         if (piece != bar.windowButtonArea(WindowArea::Minimise)) CHECK_FALSE(piece.contains(juce::Point<int>(minX - 17, 31)));
+}
+
+TEST_CASE("a dialog over the top bar is never the window's caption, and the buttons still answer", "[shell]") {
+    DemoSession d; auto& s = *d.session;
+    sqlive::test::ScopedLook look;
+    // The narrowest window: a tall dialog (the Snapshots one with many snapshots) is 80 px shorter than the shell, so its top
+    // 22 px lie over the bar's lower part, where the bar itself is empty.
+    ui::AppShell shell(s, nullptr);  shell.setBounds(0, 0, 1100, 680);  shell.setVisible(true);   // as in a window
+    shell.setWindowControls(true, false);
+    auto& bar = shell.topBar();
+    for (int i = 0; i < 20; ++i) REQUIRE(s.snapshots().create(s.model(), "Snapshot " + juce::String(i + 1), false).wasOk());
+    const juce::Point<int> onHeader{300, 50}, onBackdrop{100, 50};
+    REQUIRE(bar.windowAreaAt(onHeader) == WindowArea::Caption);
+    REQUIRE(bar.windowAreaAt(onBackdrop) == WindowArea::Caption);
+    CHECK(shell.windowAreaAt(onHeader) == WindowArea::Caption);   // nothing over the bar yet
+    CHECK(shell.windowAreaAt(onBackdrop) == WindowArea::Caption);
+
+    shell.openSnapshotsDialog();
+    REQUIRE(shell.showingSnapshotsDialog());
+    auto* veil = dynamic_cast<Veil*>(shell.getComponentAt(onBackdrop));
+    REQUIRE(veil != nullptr);
+    const auto dialog = veil->content().getBoundsInParent();
+    REQUIRE(dialog.getY() < 50);                                  // the dialog reaches into the bar
+    REQUIRE(dialog.contains(onHeader));
+    REQUIRE_FALSE(dialog.contains(onBackdrop));
+    CHECK(shell.windowAreaAt(onHeader) == WindowArea::Client);    // a press on the dialog's header is the dialog's
+    CHECK(shell.windowAreaAt(onBackdrop) == WindowArea::Client);  // and the veil's, which takes every click outside it
+    for (const auto a : kButtons) CHECK(shell.windowAreaAt(bar.windowButtonArea(a).getCentre()) == a);
 }

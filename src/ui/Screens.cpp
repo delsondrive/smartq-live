@@ -109,7 +109,6 @@ public:
         server_ = std::make_unique<app::RemoteServer>(*session_, *access_, [] { return juce::String("{}"); });   // never started
         shell_ = std::make_unique<AppShell>(*session_, host_.get());
         shell_->setShowController(controller_.get());
-        shell_->setWindowControls(true, false);                   // as a window with a title bar shows them: not maximised
         plugInPages(*shell_, *session_, host_.get(), controller_.get(), input_.get(), access_.get(), server_.get());
         settle();
     }
@@ -336,6 +335,12 @@ juce::Image render(const juce::String& name, int width, int height) {
     if (!scene.ok()) return {};
     auto& session = scene.session();
     auto& shell = scene.shell();
+    // The shell as the window shows it: in Edit mode with its window buttons (not maximised); in Show mode with none, since
+    // on stage Show mode is full screen (kiosk).
+    const auto shot = [&] {
+        shell.setWindowControls(session.mode() == Mode::Edit, false);
+        return snapshot(shell, width, height);
+    };
 
     if (name == "main-view" || name == "stage-playing" || name == "stage-looping") {
         // The first song on its "Long ending", then a crossfade, with "Watch me" in its Chorus; played into that Chorus,
@@ -362,7 +367,7 @@ juce::Image render(const juce::String& name, int width, int height) {
             session.cache().setPaused(true);
             session.cache().forget(session.now().nextSongId);
             pump();
-            auto image = snapshot(shell, width, height);
+            auto image = shot();
             session.cache().setPaused(false);
             scene.settle();
             return image;
@@ -461,7 +466,7 @@ juce::Image render(const juce::String& name, int width, int height) {
                 remote->showState(state);
             }
         }
-        return snapshot(shell, width, height);
+        return shot();
     } else if (name == "routing") {
         scene.page<juce::Component>(Page::Setup);
     } else if (name == "cue-voice") {
@@ -479,7 +484,7 @@ juce::Image render(const juce::String& name, int width, int height) {
         return {};
     }
     scene.settle();
-    return snapshot(shell, width, height);
+    return shot();
 }
 
 }  // namespace

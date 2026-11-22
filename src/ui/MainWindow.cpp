@@ -38,8 +38,7 @@ MainWindow::MainWindow(app::Session& session, app::AudioHost* host, app::RemoteA
     // The window has its native window from here on. The frame is made before the window takes its size, so the size is
     // the one without a caption strip.
     frame_ = std::make_unique<WindowFrame>(*this, [this](juce::Point<int> screen) {
-        auto& topBar = shell_.topBar();
-        return topBar.isShowing() ? topBar.windowAreaAt(topBar.getLocalPoint(nullptr, screen)) : WindowArea::Client;
+        return shell_.topBar().isShowing() ? shell_.windowAreaAt(shell_.getLocalPoint(nullptr, screen)) : WindowArea::Client;
     });
     frame_->onButtonHighlight = [this](WindowArea hovered, bool pressed) { shell_.topBar().setWindowButtonHighlight(hovered, pressed); };
     frame_->onAttachedChanged = [this] { followFrame(); };
@@ -52,13 +51,18 @@ MainWindow::MainWindow(app::Session& session, app::AudioHost* host, app::RemoteA
 }
 
 MainWindow::~MainWindow() {
-    frame_.reset();                                               // before anything it calls back into goes
+    // Out of kiosk mode while the frame still has the window: leaving it restyles the window, which without the frame would
+    // show Windows' light title strip for the window's last moment.
+    if (kiosk_) {
+        kiosk_ = false;
+        juce::Desktop::getInstance().setKioskModeComponent(nullptr);
+    }
+    frame_.reset();                                              // before anything it calls back into goes
     session_.changes().removeChangeListener(this);
     if (inShow_) {
         removeKeyListener(&controller_);
         juce::Desktop::setScreenSaverEnabled(true);
     }
-    if (kiosk_) juce::Desktop::getInstance().setKioskModeComponent(nullptr);
     clearContentComponent();
 }
 
