@@ -125,14 +125,23 @@ public:
 
     static constexpr int idealHeight = kPlayingTop + kPlayingRow + kPlayingGap + 2 * kOmeterRow + 2 * kOmeterGap + kOmeterScale;
 
+    // Another bus, or back after a while hidden: what the reader holds is old music (another output, another song), so
+    // the next frame drops it and the bars start from nothing.
     void setBus(int bus) {
         if (bus == bus_) return;
         bus_ = bus;
+        stale_ = true;
         level_[0] = level_[1] = ChannelStrip::kMinDb;
         repaint();
     }
 
     void tick() {
+        if (stale_) {
+            stale_ = false;
+            if (bus_ >= 0) reader_.bus(bus_);
+            level_[0] = level_[1] = ChannelStrip::kMinDb;
+            repaint();
+        }
         const auto peak = bus_ >= 0 ? reader_.bus(bus_) : app::MeterReader::Peak{};
         bool changed = false;
         for (int side = 0; side < 2; ++side) {
@@ -144,6 +153,7 @@ public:
         }
         if (changed) repaint();
     }
+    float levelDb(int side) const { return level_[side & 1]; }    // for tests
 
     void paint(juce::Graphics& g) override {
         auto area = getLocalBounds().toFloat();
@@ -193,12 +203,14 @@ public:
 
 private:
     void timerCallback() override {
-        if (bus_ >= 0 && shownWithParents(*this)) tick();
+        if (!shownWithParents(*this)) stale_ = true;
+        else if (bus_ >= 0) tick();
     }
 
     app::MeterReader reader_;
     int bus_ = -1;
     float level_[2] = {ChannelStrip::kMinDb, ChannelStrip::kMinDb};
+    bool stale_ = false;
 };
 
 // The mockup's "KEYS · SELECTED STRIP" box: each line the keys, drawn as keys, then what they do, a key ("Shift") among
@@ -393,6 +405,8 @@ void MixerPage::tickMeters(double nowMs) {
     panel_.tickMeters(nowMs);
     if (playingNow_->isVisible()) playingNow_->tick();
 }
+
+float MixerPage::playingNowDb(int side) const { return playingNow_->levelDb(side); }
 
 void MixerPage::layOutAgain() {
     resized();

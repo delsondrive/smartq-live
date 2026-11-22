@@ -142,11 +142,13 @@ void MixerPanel::setSoloed(int stripIndex, bool soloed) {
 void MixerPanel::changeListenerCallback(juce::ChangeBroadcaster*) { refresh(); }
 
 void MixerPanel::visibilityChanged() {
-    if (isVisible() && !fresh_) refresh();
+    if (!isVisible()) stale_ = true;
+    else if (!fresh_) refresh();
 }
 
 void MixerPanel::timerCallback() {
     if (shownWithParents(*this)) tickMeters(juce::Time::getMillisecondCounterHiRes());
+    else stale_ = true;
 }
 
 void MixerPanel::resetPeaksIfASongStarted() {
@@ -157,21 +159,37 @@ void MixerPanel::resetPeaksIfASongStarted() {
     for (auto& strip : strips_) strip->resetPeak();
 }
 
-void MixerPanel::tickMeters(double nowMs) {
+app::MeterReader::Peak MixerPanel::read(const MixerState::Meter& meter) {
     using Kind = MixerState::Meter::Kind;
-    resetPeaksIfASongStarted();
-    for (std::size_t i = 0; i < strips_.size() && i < state_.strips.size(); ++i) {
-        const auto& meter = state_.strips[i].meter;
-        app::MeterReader::Peak peak;
-        switch (meter.kind) {
-        case Kind::Part: peak = meters_.part(meter.index); break;
-        case Kind::Click: peak = meters_.click(); break;
-        case Kind::Cues: peak = meters_.cues(); break;
-        case Kind::RoleOnBus: peak = meters_.roleOnBus(meter.index, meter.bus); break;
-        case Kind::None: break;
-        }
-        strips_[i]->setMeter(peak, nowMs);
+    switch (meter.kind) {
+    case Kind::Part: return meters_.part(meter.index);
+    case Kind::Click: return meters_.click();
+    case Kind::Cues: return meters_.cues();
+    case Kind::RoleOnBus: return meters_.roleOnBus(meter.index, meter.bus);
+    case Kind::None: break;
     }
+    return {};
+}
+
+// The reader gives everything since it last asked for a meter. After a while without frames (hidden), or with meters it
+// didn't read before, that is old music, perhaps another song's: it is read and dropped, and every bar, hold line and clip
+// light starts from nothing, before the first frame is drawn. (The peak boxes keep the loudest moment unless a song
+// started, as they would have.) Hidden, there are no frames.
+void MixerPanel::tickMeters(double nowMs) {
+    if (!shownWithParents(*this)) {
+        stale_ = true;
+        return;
+    }
+    if (stale_) {
+        stale_ = false;
+        if (!fresh_) refresh();                                   // the meters as the view shows them now
+        for (std::size_t i = 0; i < strips_.size() && i < state_.strips.size(); ++i) {
+            read(state_.strips[i].meter);
+            strips_[i]->clearMeter();
+        }
+    }
+    resetPeaksIfASongStarted();
+    for (std::size_t i = 0; i < strips_.size() && i < state_.strips.size(); ++i) strips_[i]->setMeter(read(state_.strips[i].meter), nowMs);
 }
 
 void MixerPanel::refresh(bool force) {
@@ -191,6 +209,10 @@ void MixerPanel::refresh(bool force) {
                                           [](const MixerState::Strip& a, const MixerState::Strip& b) {
                                               return a.target == b.target && a.group == b.group;
                                           });
+    // Meters it didn't read until now (another view, a song starting): what the reader holds for them is old.
+    const bool newMeters = !sameStrips || !std::equal(next.strips.begin(), next.strips.end(), state_.strips.begin(),
+                                                      [](const MixerState::Strip& a, const MixerState::Strip& b) { return a.meter == b.meter; });
+    if (newMeters) stale_ = true;
     state_ = std::move(next);
     if (!sameStrips) {
         // Made again only when the strips themselves change, never during a drag of one of them.

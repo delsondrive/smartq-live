@@ -19,8 +19,9 @@ juce::String withTrueMinus(const juce::String&);
 // bar of the strip's colour along the top.
 void paintBody(juce::Graphics&, juce::Rectangle<float> bounds, juce::Colour colour, bool selected);
 
-// The pan bar (.pan): recessed, a faint centre line, a faint fill from the centre to the value and a small glowing marker
-// at it, both in the strip's colour, and the value's words ("C", "L 40") on top, in caution when it is tonight's.
+// The pan bar (.pan): recessed, a faint fill from the centre to the value and a small glowing marker at it, both in the
+// strip's colour, and the value's words ("C", "L 40") above the marker in a soft dark halo, in caution when it is
+// tonight's; the faint centre mark only in the marker's band, under the words.
 // pan nullopt: linked, "Follow" in dim words in a dashed outline.
 void paintPanBar(juce::Graphics&, juce::Rectangle<float> bar, juce::Colour colour, std::optional<int> pan, bool tonight);
 // The link button beside it on an output view (.link): a chain, mint when linked.

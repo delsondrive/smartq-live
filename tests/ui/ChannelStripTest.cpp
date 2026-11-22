@@ -444,7 +444,9 @@ TEST_CASE("the panel's strips show the live meters, and every peak box resets wh
     s.playSong(songId, 0.0);
     s.advanceWithoutDevice(48000);
     d.settle();
-    panel.tickMeters(100.0);
+    panel.tickMeters(100.0);                                       // the song's meters are new to it: what it held goes
+    s.advanceWithoutDevice(4800);
+    panel.tickMeters(133.0);
     auto* keys = panel.stripAt(2);
     CHECK(keys->meterDb(0) > -60.0f);                              // the demo's keys play at about -16 dB
     REQUIRE(keys->peakDb().has_value());
@@ -455,6 +457,63 @@ TEST_CASE("the panel's strips show the live meters, and every peak box resets wh
     panel.tickMeters(200.0);                                       // the first ask starts the bus's role meters
     s.advanceWithoutDevice(4800);
     panel.tickMeters(300.0);
+    CHECK(panel.stripAt(2)->meterDb(0) > -60.0f);
+    s.perform(app::Action::Stop);
+}
+
+TEST_CASE("the pan words sit above the marker and clear of it", "[strip]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    ScopedLook look;
+    ChannelStrip strip;
+    for (const int pan : {0, -40, 15}) {
+        INFO("pan " << pan);
+        auto s = partStrip(kBass);
+        s.pan = pan;
+        strip.set(s, ChannelStrip::Size::Full);
+        const auto image = snapshot(strip, 112, 520);
+        const auto inner = strip.panArea().reduced(1);
+        // The marker and its glow, the bottom 5 px inside the bar: no part of the words in it.
+        CHECK_FALSE(hasColour(image.getClippedImage(inner.withTop(inner.getBottom() - 5)), theme::text, 60));
+        CHECK(hasColour(image.getClippedImage(inner.withTrimmedBottom(5)), theme::text, 60));   // the words, above it
+    }
+}
+
+TEST_CASE("a view shown again starts its meters from nothing", "[strip]") {
+    DemoSession d; auto& s = *d.session;
+    const auto songId = d.setlist().entries[0].songId;
+    ScopedLook look;
+    MixerPanel panel(s);
+    juce::Component page;                                          // a page the panel is on, as in the app
+    page.addAndMakeVisible(panel);
+    panel.show(songId, {});
+    page.setSize(1400, 600);
+    panel.setBounds(page.getLocalBounds());
+    snapshot(panel, 1400, 600);
+    REQUIRE(panel.stripAt(0) != nullptr);
+    panel.stripAt(0)->setMeter({2.0f, 2.0f}, 0.0);                // Click over full scale, before the view was left
+    REQUIRE(panel.stripAt(0)->clipLit());
+
+    panel.setVisible(false);                                      // another page; a song plays meanwhile
+    s.playSong(songId, 0.0);
+    s.advanceWithoutDevice(48000);
+    d.settle();
+    panel.tickMeters(100.0);                                      // hidden: the timer gives it no frames
+    s.advanceWithoutDevice(48000);
+    d.settle();
+
+    panel.setVisible(true);                                       // back: the first frame shows nothing from before
+    panel.tickMeters(200.0);
+    for (int i = 0; i < 5; ++i) {
+        INFO("strip " << i);
+        auto* strip = panel.stripAt(i);
+        REQUIRE(strip != nullptr);
+        CHECK(strip->meterDb(0) == ChannelStrip::kMinDb);
+        CHECK(strip->holdDb(0) == ChannelStrip::kMinDb);
+        CHECK_FALSE(strip->clipLit());
+        CHECK_FALSE(strip->peakDb().has_value());
+    }
+    s.advanceWithoutDevice(4800);                                 // and the next frames show the music
+    panel.tickMeters(233.0);
     CHECK(panel.stripAt(2)->meterDb(0) > -60.0f);
     s.perform(app::Action::Stop);
 }

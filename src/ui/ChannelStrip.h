@@ -61,6 +61,7 @@ public:
     void setMeter(app::MeterReader::Peak now);
     void setMeter(app::MeterReader::Peak now, double nowMs);      // at a chosen time, for tests and the screenshots
     void resetPeak();                                             // the peak box back to "−∞"
+    void clearMeter();                                            // the bars, hold lines and clip light back to nothing
     float meterDb(int side) const { return level_[side & 1]; }    // what each bar shows (0 left, 1 right); -60 empty
     float holdDb(int side) const { return hold_[side & 1]; }      // the hold line; -60 none
     std::optional<float> peakDb() const { return peak_; }         // the peak box; nullopt: "−∞"

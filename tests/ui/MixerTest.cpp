@@ -288,3 +288,32 @@ TEST_CASE("a fader step stays quick in a band of 50 songs", "[benchmark]") {
     WARN("one fader step takes " << each << " ms");
     CHECK(each < 2.0);
 }
+
+TEST_CASE("an output's \"Playing now\" shown again starts from nothing", "[mixer]") {
+    DemoSession d; auto& s = *d.session;
+    auto& rig = *s.model().rig(s.rigId());
+    const auto songId = d.setlist().entries[0].songId;
+    sqlive::test::ScopedLook look;
+    juce::Component window;                                       // the shell the page is on
+    ui::MixerPage page(s);  window.addAndMakeVisible(page);
+    page.openSong(songId);  page.chooseOutput(rig.outputs[0].id);
+    snapshot(page, 1280, 698);
+    s.playSong(songId, 0.0);
+    s.advanceWithoutDevice(48000);
+    page.tickMeters(0.0);                                         // a new bus: what the reader held goes
+    s.advanceWithoutDevice(4800);
+    page.tickMeters(33.0);
+    CHECK(page.playingNowDb(0) > -60.0f);                         // the headphones get the song
+
+    page.setVisible(false);                                       // another page while the song plays on
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    s.advanceWithoutDevice(48000);
+    page.setVisible(true);
+    page.tickMeters(100.0);
+    CHECK(page.playingNowDb(0) == ChannelStrip::kMinDb);          // nothing from while it was away
+    CHECK(page.playingNowDb(1) == ChannelStrip::kMinDb);
+    s.advanceWithoutDevice(4800);
+    page.tickMeters(133.0);
+    CHECK(page.playingNowDb(0) > -60.0f);
+    s.perform(app::Action::Stop);
+}

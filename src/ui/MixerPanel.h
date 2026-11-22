@@ -26,8 +26,9 @@ namespace sqlive::ui {
 // here ever takes the keyboard, so Show mode's keys reach the window.
 //
 // It refreshes on Session::changes() while it and its parents are visible, and on show(). It keeps one MeterReader and,
-// while shown, gives every strip a frame of its meter 30 times a second (tickMeters); each strip's peak box resets when a
-// song starts (a new NowPlaying::playingSerial).
+// while shown, gives every strip a frame of its meter 30 times a second (tickMeters). The first frame after it was
+// hidden, or after its strips' meters changed, drops what the reader held and starts every bar from nothing. Each
+// strip's peak box resets when a song starts (a new NowPlaying::playingSerial).
 class MixerPanel : public juce::Component, private juce::ChangeListener, private juce::Timer {
 public:
     explicit MixerPanel(app::Session&);
@@ -65,6 +66,7 @@ private:
     void setLinked(int stripIndex, bool linked);
     void setSoloed(int stripIndex, bool soloed);
     void resetPeaksIfASongStarted();
+    app::MeterReader::Peak read(const MixerState::Meter&);
 
     app::Session& session_;
     app::MeterReader meters_;
@@ -74,6 +76,7 @@ private:
     juce::String gesture_;                                        // the fader or pan drag going on
     int states_made_ = 0;
     std::uint64_t songSerial_ = 0;                                // the song playing when the peaks were last looked at
+    bool stale_ = false;                                          // the reader holds old peaks: dropped before the next frame
 
     juce::Viewport viewport_;
     std::unique_ptr<Row> row_;

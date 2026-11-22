@@ -40,6 +40,7 @@ public:
     juce::Rectangle<int> sideBounds() const { return side_; }       // for tests: the side panel's box
     int layoutsDone() const { return layouts_done_; }             // for tests: how many times the page was laid out
     void tickMeters(double nowMs);                                // a frame of the strips' and "Playing now"'s meters (the screenshots)
+    float playingNowDb(int side) const;                           // for tests: what "Playing now" shows on that side
 
     void paint(juce::Graphics&) override;
     void resized() override;

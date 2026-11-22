@@ -120,6 +120,15 @@ void ChannelStrip::setMeter(app::MeterReader::Peak now, double nowMs) {
     }
 }
 
+void ChannelStrip::clearMeter() {
+    if (level_[0] == kMinDb && level_[1] == kMinDb && hold_[0] == kMinDb && hold_[1] == kMinDb && !clipLit_) return;
+    level_[0] = level_[1] = hold_[0] = hold_[1] = kMinDb;
+    holdUntil_[0] = holdUntil_[1] = 0.0;
+    clipUntil_ = -1.0;
+    clipLit_ = false;
+    repaint(zone_);
+}
+
 void ChannelStrip::resetPeak() {
     if (!peak_) return;
     peak_.reset();

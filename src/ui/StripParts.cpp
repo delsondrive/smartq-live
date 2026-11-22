@@ -23,6 +23,7 @@ const juce::Colour kBarBack{0xff08070a}, kBarMask{0xff0c0b0f};             // .m
 const juce::Colour kLine{0xfff1edf4};                                      // the cap's centre line, the hold line
 const juce::Colour kLabel{0xff09080b}, kLabelEdge{0x0fffffff};             // .scrib
 const juce::Colour kOnInk{0xff160f10};                                     // words on a red or amber fill
+constexpr float kPanMarkerRoom = 5.0f;                                     // the pan marker and its glow, under the words
 
 // The scale's marks, as the mockup's MARKS: -60 is written "−∞".
 constexpr float kMarks[] = {6.0f, 3.0f, 0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f, -30.0f, -40.0f, -60.0f};
@@ -94,8 +95,11 @@ void paintPanBar(juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour col
     } else {
         paintRecess(g, bar, radius);
     }
-    g.setColour(juce::Colours::white.withAlpha(0.25f));          // .pan i: the centre
-    g.fillRect(juce::Rectangle<float>(std::floor(centreX), inner.getY() + 2.0f, 1.0f, inner.getHeight() - 4.0f));
+    // .pan i: the centre. With a value, only in the marker's band under the words, so it never runs into a glyph (a "C"
+    // with the line under it reads "Ç").
+    g.setColour(juce::Colours::white.withAlpha(0.25f));
+    const float lineTop = pan ? inner.getBottom() - kPanMarkerRoom + 1.0f : inner.getY() + 2.0f;
+    g.fillRect(juce::Rectangle<float>(std::floor(centreX), lineTop, 1.0f, inner.getBottom() - 2.0f - lineTop));
 
     if (pan) {
         const float half = 0.5f * inner.getWidth();
@@ -112,14 +116,23 @@ void paintPanBar(juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour col
         g.fillPath(markerShape);
     }
 
-    const auto font = pan ? theme::font(theme::sizeCaption, true) : theme::font(theme::sizeCaption);
-    g.setFont(font);
-    if (pan) {                                                    // text-shadow: 0 1px 2px #000
-        g.setColour(juce::Colours::black.withAlpha(0.8f));
-        g.drawText(words, bar.translated(0.0f, 1.0f), juce::Justification::centred, false);
+    if (!pan) {
+        g.setFont(theme::font(theme::sizeCaption));
+        g.setColour(theme::dim);
+        g.drawText(words, bar, juce::Justification::centred, false);
+        return;
     }
-    g.setColour(!pan ? theme::dim : tonight ? theme::caution : theme::text);
-    g.drawText(words, bar, juce::Justification::centred, false);
+    // The words above the marker and its glow, so "C" never reads as "Ç", with a soft dark halo around the glyphs (the
+    // mockup's text-shadow) so the centre line and the fill never cross them.
+    const auto above = inner.withTrimmedBottom(kPanMarkerRoom);
+    juce::GlyphArrangement glyphs;
+    glyphs.addFittedText(theme::font(theme::sizeCaption, true), words, above.getX(), above.getY(), above.getWidth(), above.getHeight(),
+                         juce::Justification::centred, 1);
+    juce::Path shape;
+    glyphs.createPath(shape);
+    juce::DropShadow(juce::Colours::black.withAlpha(0.9f), 3, {}).drawForPath(g, shape);
+    g.setColour(tonight ? theme::caution : theme::text);
+    g.fillPath(shape);
 }
 
 void paintLinkButton(juce::Graphics& g, juce::Rectangle<float> r, bool linked) {
