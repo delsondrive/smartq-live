@@ -154,7 +154,13 @@ public:
         for (const auto& lane : timeline_.lanes_) {
             const juce::Rectangle<int> row(0, lane->getY(), getWidth(), lane->getHeight());
             if (!row.intersects(clip)) continue;
-            paintHeader(g, row.withWidth(std::min(headerWidth, getWidth())), *lane);
+            const auto& picked = timeline_.selection_;
+            const bool selected = picked.kind == EditorSelection::Kind::Part && picked.id.isNotEmpty() && lane->partId() == picked.id;
+            if (selected) {                                       // the mockup's .lc behind a selected part: mint at 4 %
+                g.setColour(theme::mint.withAlpha(0.04f));
+                g.fillRect(row.withTrimmedLeft(headerWidth));
+            }
+            paintHeader(g, row.withWidth(std::min(headerWidth, getWidth())), *lane, selected);
             const float top = static_cast<float>(row.getY()), height = static_cast<float>(row.getHeight() - 1);
             g.setColour(juce::Colours::white.withAlpha(0.025f));
             for (const float x : beats_) g.fillRect(left + x, top, 1.0f, height);
@@ -165,15 +171,16 @@ public:
         }
     }
 
+    // A press on a header, either button, is the lane's (and takes the keys to the tracks, as any press does).
     void mouseDown(const juce::MouseEvent& e) override {
         pressedLanes_ = e.x >= headerWidth;
-        if (e.mods.isPopupMenu()) return;
         if (pressedLanes_) {
-            timeline_.pointerAt(e.position.x - static_cast<float>(headerWidth), e.mods, true, true);
+            if (!e.mods.isPopupMenu()) timeline_.pointerAt(e.position.x - static_cast<float>(headerWidth), e.mods, true, true);
             return;
         }
         for (const auto& lane : timeline_.lanes_)
             if (e.y >= lane->getY() && e.y < lane->getBottom()) {
+                if (timeline_.onPressed) timeline_.onPressed();
                 lane->headerPressed(e);
                 return;
             }
@@ -203,10 +210,16 @@ public:
 private:
     // The mockup's .hd: a darker cell with its dot, its title in 12 px semibold and its subtitle on the right in dim, or under
     // the title (11 and 10 px) when the two don't fit side by side. A dimmed lane's dot and words are drawn at 55%. A lane's
-    // "automation" is in mint.
-    static void paintHeader(juce::Graphics& g, juce::Rectangle<int> head, const Lane& lane) {
+    // "automation" is in mint. A selected part's header (.lh.sel): mint at 10 % and a 3 px mint bar along its left edge.
+    static void paintHeader(juce::Graphics& g, juce::Rectangle<int> head, const Lane& lane, bool selected) {
         g.setColour(juce::Colours::black.withAlpha(0.18f));
         g.fillRect(head);
+        if (selected) {
+            g.setColour(theme::mint.withAlpha(0.1f));
+            g.fillRect(head);
+            g.setColour(theme::mint);
+            g.fillRect(head.withWidth(std::min(3, head.getWidth())));
+        }
         g.setColour(theme::hairline);
         g.fillRect(head.getRight() - 1, head.getY(), 1, head.getHeight());
         g.fillRect(head.getX(), head.getBottom() - 1, head.getWidth(), 1);
@@ -408,7 +421,20 @@ void Timeline::select(EditorSelection selection) {
     if (selection == selection_) return;
     selection_ = std::move(selection);
     giveContext();
+    body_->repaint();                                             // a part's header marked, or no longer
     if (onSelectionChanged) onSelectionChanged();
+}
+
+void Timeline::scrollToPart(const juce::String& partId) {
+    for (const auto& lane : lanes_)
+        if (partId.isNotEmpty() && lane->partId() == partId) {
+            const int top = lane->getY(), bottom = lane->getBottom(), height = view_.getViewHeight();
+            int y = view_.getViewPositionY();
+            if (top < y) y = top;
+            else if (bottom > y + height) y = bottom - height;
+            view_.setViewPosition(view_.getViewPositionX(), y);
+            return;
+        }
 }
 
 bool Timeline::removeSelected() {

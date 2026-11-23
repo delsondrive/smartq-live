@@ -63,3 +63,21 @@ TEST_CASE("settings keep each band's phone remote, its phones and token hashes i
     CHECK(memory.phones[1].access == sqlive::app::PhoneAccess::Waiting);  CHECK(memory.tokenHashes[1] == "hash-2");
     CHECK(again.remoteMemory(b).phones.empty());                 // per band
 }
+TEST_CASE("settings keep the Song editor's mixer panel per computer: its height and whether it is folded", "[settings]") {
+    sqlive::test::TempDir t; auto file = t.dir().getChildFile("settings.json");
+    auto a = t.dir().getChildFile("Band A"); a.createDirectory();
+    {   Settings s(file);
+        CHECK(s.editorMixerHeight() == 0);                       // never chosen: the panel's own default
+        CHECK_FALSE(s.editorMixerFolded());
+        s.setEditorMixerHeight(333);  s.setEditorMixerFolded(true);  s.setRigFor(a, "rig-1");
+        REQUIRE(s.save().wasOk()); }
+    Settings again(file);
+    CHECK(again.editorMixerHeight() == 333);  CHECK(again.editorMixerFolded());
+    CHECK(again.rigFor(a) == "rig-1");
+    const auto saved = juce::JSON::parse(file.loadFileAsString());   // this computer's, not a band's
+    CHECK((int) saved.getProperty("editorMixer", {}).getProperty("height", {}) == 333);
+    again.setEditorMixerFolded(false);
+    REQUIRE(again.save().wasOk());
+    CHECK_FALSE(Settings(file).editorMixerFolded());
+    CHECK(Settings(file).editorMixerHeight() == 333);
+}

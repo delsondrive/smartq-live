@@ -439,10 +439,23 @@ juce::Image render(const juce::String& name, int width, int height) {
         if (auto* editor = scene.page<SongEditorPage>(Page::SongEditor)) {
             editor->arrangementRow().choose(arrangementId);       // "Long ending", with its Chorus just put in once more
             editor->arrangementRow().insertSection(chorusId, 4);
-            editor->setCursorSeconds(14.4);                       // bar 7
-            juce::String deviceId;                                // Guitar 1's Crunch selected, so the inspector shows
-            const auto markerId = changeAt(session, scene.songIdAt(0), "Guitar 1", 9, deviceId);
-            if (markerId.isNotEmpty()) editor->timeline().select({EditorSelection::Kind::Marker, deviceId, markerId});
+            juce::String deviceId;                                // a change on Guitar 1 at bar 9
+            changeAt(session, scene.songIdAt(0), "Guitar 1", 9, deviceId);
+            // The mixer under the tracks as the mockup's #editor has it: the song mixed, one part soloed, Bass's track and
+            // strip selected, and the song played to bar 10 with the meters moving.
+            const auto songId = scene.songIdAt(0);
+            dressSongMix(session, songId);
+            if (const auto* song = session.model().song(songId))
+                for (const auto& part : song->parts) {
+                    if (part.name == "Perc") session.setSolo(songId, part.id, true);
+                    if (part.name == "Bass") editor->timeline().select({EditorSelection::Kind::Part, {}, part.id});
+                }
+            session.playSong(songId, 0.0);
+            for (int i = 0; i < 6000 && session.now().seconds < 21.6; ++i) session.advanceWithoutDevice(kRate / 100);
+            pump();
+            auto& mixer = editor->mixerDock().mixer();
+            mixer.tickMeters(juce::Time::getMillisecondCounterHiRes());
+            playMeterFrames(session, [&mixer](double now) { mixer.tickMeters(now); });
         }
         session.flushNow();                                       // "Saved ✓", as the mockup has it
     } else if (name == "midi-setup") {

@@ -18,8 +18,9 @@ namespace sqlive::ui {
 // a bar every 2 px reaching through the centre line, at the level its automation gives there (the mockup's Gtr FX lane).
 // The part's AutomationOverlay lies over the waveform's area; with automation the header's subtitle is "automation", in
 // mint. While the song loads it says how far; a file that is missing (as the page found on disk, setMissing) or couldn't
-// be read says so in caution. A press on the header opens the part's menu: Rename…, Role and Remove…, each a command, in
-// Edit mode only.
+// be read says so in caution. A press on the header selects the part's track (EditorSelection::Kind::Part, marked by the
+// Timeline); a right-click, or a press on the track already selected, opens the part's menu: Rename…, Role and Remove…,
+// each a command, in Edit mode only.
 class PartLane : public Lane {
 public:
     static constexpr int height = 44, waveInset = 4;
@@ -35,7 +36,7 @@ public:
     void refresh() override;
     void headerPressed(const juce::MouseEvent&) override;
     void setMissing(bool);
-    const juce::String& partId() const { return partId_; }
+    juce::String partId() const override { return partId_; }
     AutomationOverlay& automation() { return automation_; }
 
     void paint(juce::Graphics&) override;

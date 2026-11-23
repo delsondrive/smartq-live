@@ -19,10 +19,11 @@ namespace sqlive::ui {
 enum class EditTool { Select, Draw, Automation };
 enum class SnapTo { Bar, Beat, Eighth };                          // the mockup's "Bar · Beat · 1/8"
 
-// What is picked on the timeline: a tempo point (by index), a lane's marker (by device and id), a section (by id), or a cue
-// or an automation point (as their lanes name them).
+// What is picked on the timeline: a tempo point (by index), a lane's marker (by device and id), a section (by id), a cue
+// or an automation point (as their lanes name them), or a part's whole track (by part id: a click on its header, or its
+// strip chosen in the mixer under the tracks).
 struct EditorSelection {
-    enum class Kind { None, Tempo, Marker, Section, Cue, Automation } kind = Kind::None;
+    enum class Kind { None, Tempo, Marker, Section, Cue, Automation, Part } kind = Kind::None;
     juce::String deviceId, id;
     int index = -1;
     bool operator==(const EditorSelection&) const = default;
@@ -54,7 +55,8 @@ public:
     virtual int laneHeight() const = 0;
     virtual bool removeSelected() { return false; }               // Delete: removes this lane's selected item, if it has it
     virtual void refresh() {}                                     // the band, the song or its audio changed: read again
-    virtual void headerPressed(const juce::MouseEvent&) {}        // a press on the lane's header
+    virtual void headerPressed(const juce::MouseEvent&) {}        // a press on the lane's header (either button)
+    virtual juce::String partId() const { return {}; }            // a part's lane: its part's id
 
     // From the Timeline, whenever the scale, the tool, the snap or the selection changes. The scale may be nullptr (no song).
     void setContext(const BarScale*, EditTool, SnapTo, const EditorSelection*);
@@ -101,6 +103,10 @@ private:
 // The white cursor line runs over the ruler and the lanes. A press or drag on the ruler or on a lane's empty space moves it
 // (snapped as the snap says; Alt for no snap), and on a lane, with the Select or Automation tool, also clears the selection. While the
 // song plays the cursor is the playhead, follows it (followPlayhead), and the view scrolls to keep it in sight.
+//
+// A part selected (EditorSelection::Kind::Part) is marked as the mockup's .lh.sel: its header tinted mint with a 3 px mint
+// bar along its left edge, and its lane faintly tinted. scrollToPart scrolls the lanes, the least it can, to show a part's
+// lane whole.
 class Timeline : public juce::Component, private juce::ScrollBar::Listener {
 public:
     static constexpr int headerWidth = 150, scrollBarThickness = 10;
@@ -124,10 +130,11 @@ public:
     const EditorSelection& selection() const { return selection_; }
     void select(EditorSelection);
     bool removeSelected();                                        // Delete: the first lane that removes something
+    void scrollToPart(const juce::String& partId);
 
     std::function<void()> onSelectionChanged;
     std::function<void()> onCursorMoved;                          // by a press or drag (not by followPlayhead or code)
-    std::function<void()> onPressed;                              // any press on the ruler or the lanes
+    std::function<void()> onPressed;                              // any press on the ruler, the lanes or their headers
 
     const juce::Viewport& viewport() const { return view_; }      // the scrolling lanes, with their headers
 

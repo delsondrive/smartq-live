@@ -481,6 +481,11 @@ bool Session::saveSettings() {
     return result.wasOk();
 }
 
+void Session::noteSettingsChanged() {
+    settings_pending_ = true;
+    last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
+}
+
 void Session::flushNow() {
     autosaver_.flush();
     if (settings_pending_) settings_pending_ = !saveSettings();

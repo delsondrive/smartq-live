@@ -393,6 +393,7 @@ TEST_CASE("a cue dragged on the lane moves on release, and one undo takes it bac
     DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(song);
+    page.mixerDock().setFolded(true);                             // the lanes 640 px wide, none scrolled out of sight
     snapshot(page, 1280, 698);
     auto* lane = dynamic_cast<ui::CuesLane*>(page.timeline().lanes()[2].get());
     REQUIRE(lane != nullptr);
@@ -447,6 +448,7 @@ TEST_CASE("an automation point dragged with the Automation tool stays between it
     REQUIRE(setPoints(s, song, part, {{5, -60.0}, {9, 0.0}, {13, -6.0}}));
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(song);
+    page.mixerDock().setFolded(true);                             // the lanes 640 px wide, none scrolled out of sight
     snapshot(page, 1280, 698);
     auto* keys = dynamic_cast<ui::PartLane*>(page.timeline().lanes()[3].get());
     REQUIRE(keys != nullptr);
@@ -480,6 +482,7 @@ TEST_CASE("a click on the line or empty space adds a point, and a double-click o
     const auto part = songOf(s, song).parts[0].id;
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(song);
+    page.mixerDock().setFolded(true);                             // the lanes 640 px wide, none scrolled out of sight
     snapshot(page, 1280, 698);
     auto* keys = dynamic_cast<ui::PartLane*>(page.timeline().lanes()[3].get());
     REQUIRE(keys != nullptr);

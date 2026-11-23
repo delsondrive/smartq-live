@@ -15,8 +15,15 @@ Settings::Settings(juce::File file) : file_(std::move(file)), bands_(new juce::D
 
     // What this version doesn't know (a later one's MIDI or remote settings) is kept as it is, and written back.
     for (const auto& property : parsed.getDynamicObject()->getProperties())
-        if (property.name != juce::Identifier("recent") && property.name != juce::Identifier("bands"))
+        if (property.name != juce::Identifier("recent") && property.name != juce::Identifier("bands")
+            && property.name != juce::Identifier("editorMixer"))
             others_.set(property.name, property.value);
+
+    const auto mixer = parsed.getProperty("editorMixer", {});
+    if (mixer.isObject()) {
+        editorMixerHeight_ = std::max(0, static_cast<int>(mixer.getProperty("height", 0)));
+        editorMixerFolded_ = static_cast<bool>(mixer.getProperty("folded", false));
+    }
 
     if (auto* list = parsed.getProperty("recent", {}).getArray())
         for (const auto& item : *list)
@@ -170,6 +177,10 @@ juce::Result Settings::save() {
     for (const auto& property : others_) root->setProperty(property.name, property.value);
     root->setProperty("recent", recent);
     root->setProperty("bands", bands_);
+    auto* mixer = new juce::DynamicObject();
+    mixer->setProperty("height", editorMixerHeight_);
+    mixer->setProperty("folded", editorMixerFolded_);
+    root->setProperty("editorMixer", juce::var(mixer));
     return model::writeFileAtomically(file_, juce::JSON::toString(juce::var(root)));
 }
 

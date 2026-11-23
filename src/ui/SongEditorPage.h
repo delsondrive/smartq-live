@@ -12,6 +12,7 @@
 #include "app/Session.h"
 #include "ui/ArrangementRow.h"
 #include "ui/EditorInspector.h"
+#include "ui/EditorMixerDock.h"
 #include "ui/TapTempo.h"
 #include "ui/TempoLane.h"
 #include "ui/Timeline.h"
@@ -41,6 +42,7 @@ struct SongEditorState {
     juce::String clickSound = "wood";                             // as song.setClick takes it: "wood", "beep", "rim", "clicks/<name>.wav"
     int subdivision = 0;                                          // 0..3 None, 8ths, Triplets, 16ths
     juce::String saved;  bool saveFailed = false;                 // "Saved ✓", "Saving…", or Session::saveError() (in danger)
+    juce::String solo;                                            // "Solo: Guitar, Keys" while any part of it is soloed; "" none
     bool operator==(const SongEditorState&) const = default;
 };
 
@@ -58,13 +60,15 @@ SongEditorState makeSongEditorState(const app::Session&, const juce::String& son
 // menus), the tools "Select · Draw · Automation" and the snap "Bar · Beat · 1/8", and "▶ Play" / "■ Stop" (a right-click:
 // "▶ Play from the cursor", "▶ Play as arranged") (the tools go to a second row when the window is too narrow for one).
 // Under that, the ArrangementRow. The Timeline: the Tempo lane, the SectionsLane, the CuesLane, a MidiLane per device
-// (midiLaneDevices: the band's, then any the song still has changes for), one PartLane per part (a click on its name:
-// Rename, Role, Remove) and the ClickLane, the parts and the click each with its AutomationOverlay, under the BARS ruler,
-// with the white cursor line (moved by a click or drag on the ruler or a lane's empty space, snapped as the snap says; Alt
-// for no snap), which follows the playhead while the song plays. Right (290 px): the EditorInspector (the change
-// inspector, or TEMPO, SECTION or CUE, then SONG and CLICK; QUICK ACTIONS; and WHEN A SECTION IS CHOSEN LIVE).
-// Footer: where the cursor is, the key hints and how the save went. With no song open: "Choose a song on the left, or add
-// one." and "+ New song".
+// (midiLaneDevices: the band's, then any the song still has changes for), one PartLane per part (a click on its name
+// selects its track; a right-click: Rename, Role, Remove) and the ClickLane, the parts and the click each with its
+// AutomationOverlay, under the BARS ruler, with the white cursor line (moved by a click or drag on the ruler or a lane's
+// empty space, snapped as the snap says; Alt for no snap), which follows the playhead while the song plays. Under the
+// tracks, the EditorMixerDock: the mixer on This song, its selection linked with the tracks'. Right (290 px): the
+// EditorInspector (the change inspector, or TEMPO, SECTION or CUE, then SONG and CLICK; QUICK ACTIONS; and WHEN A SECTION
+// IS CHOSEN LIVE). Footer (EditorFooter): where the cursor is, the key hints (the mixer's while it has a strip selected),
+// the soloed parts in caution and how the save went. With no song open: "Choose a song on the left, or add one." and
+// "+ New song".
 //
 // Every edit is a command (Session::commands()), and only in Edit mode. Space (Edit mode) plays from the cursor or stops;
 // Delete removes what is selected.
@@ -99,6 +103,7 @@ public:
     EditorInspector& inspector() { return inspector_; }           // for tests: the right-hand column
     const juce::Viewport& lanesViewport() const;                  // for tests: the timeline's scrolling lanes
     Timeline& timeline() { return timeline_; }                    // for tests
+    EditorMixerDock& mixerDock() { return dock_; }                // for tests and the screenshots: the mixer under the tracks
     const juce::Viewport& songsViewport() const;                  // for tests: the scrolling list of songs
     juce::String drawnTitle() const;                              // for tests: the title as laid out, shortened with "…" to fit
 
@@ -153,6 +158,7 @@ private:
     TempoLane* tempoLane_ = nullptr;                              // the timeline's, while it has them
     std::vector<PartLane*> partLanes_;
     EditorInspector inspector_;                                   // the right-hand column
+    EditorMixerDock dock_;                                        // under the tracks
     ArrangementRow arrangementRow_;
     std::vector<model::SectionTypeDoc> typesShown_;               // the band's section types, as last shown
     model::CueLead cueLeadShown_ = model::CueLead::OneBar;        // and how early its cues come

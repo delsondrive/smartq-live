@@ -158,12 +158,17 @@ void PartLane::build() {
     }
 }
 
-void PartLane::headerPressed(const juce::MouseEvent&) {
+void PartLane::headerPressed(const juce::MouseEvent& e) {
     // The song and the part are looked up now: an undo can take either away before the page has heard.
     const auto* song = session_.model().song(songId_);
     if (song == nullptr) return;
     const auto part = std::find_if(song->parts.begin(), song->parts.end(), [&](const auto& p) { return p.id == partId_; });
     if (part == song->parts.end()) return;
+    // A press selects the track (and its strip in the mixer under the tracks); the menu comes with a right-click, or a press
+    // on a track already selected.
+    const bool wasSelected = selection().kind == EditorSelection::Kind::Part && selection().id == partId_;
+    if (onSelect) onSelect({EditorSelection::Kind::Part, {}, partId_});
+    if (!wasSelected && !e.mods.isPopupMenu()) return;
     const bool edit = session_.mode() == app::Mode::Edit;
     juce::PopupMenu roles;
     juce::StringArray roleIds;

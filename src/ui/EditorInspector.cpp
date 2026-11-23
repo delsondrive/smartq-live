@@ -121,7 +121,11 @@ bool EditorInspector::show(const juce::String& songId, const EditorSelection& pi
         return lane != song->automation.end() && picked.index >= 0 && picked.index < static_cast<int>(lane->second.size());
     };
     const bool point = picked.kind == Kind::Automation && hasPoint();
-    if ((picked.kind == Kind::Tempo && !tempo) || (picked.kind == Kind::Marker && !change) || (picked.kind == Kind::Section && !section)
+    const auto hasPart = [&] {                                    // a part's track: the song cards, as with nothing picked
+        const auto* song = session_.model().song(songId);
+        return song != nullptr && std::any_of(song->parts.begin(), song->parts.end(), [&](const auto& p) { return p.id == picked.id; });
+    };
+    if ((picked.kind == Kind::Part && !hasPart()) || (picked.kind == Kind::Tempo && !tempo) || (picked.kind == Kind::Marker && !change) || (picked.kind == Kind::Section && !section)
         || (picked.kind == Kind::Cue && !cue) || (picked.kind == Kind::Automation && !point))
         return false;
     tempoCard_.show(tempo ? tempoLane : nullptr, picked.index, editable);

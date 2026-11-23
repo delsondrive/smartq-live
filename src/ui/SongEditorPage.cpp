@@ -16,6 +16,7 @@
 #include "model/JsonObject.h"
 #include "model/SongAudio.h"
 #include "ui/CuesLane.h"
+#include "ui/EditorFooter.h"
 #include "ui/Format.h"
 #include "ui/Helpers.h"
 #include "ui/MidiImportDialog.h"
@@ -39,7 +40,7 @@ constexpr int kSongItemHeight = 30, kSongGap = 4, kNewSongGap = 10, kSongPadX = 
 constexpr int kBarHeight = 47, kBarPadX = 12, kBarGap = 8, kTitleGap = 6, kChipHeight = 24, kButtonHeight = 30, kToolsRow = 38;
 constexpr int kMinTitleWidth = 60;                                  // narrower than this, the tools go to a second row
 constexpr int kMaxSqueeze = 10, kToolCount = 3, kSnapCount = 3;    // a segment gives up at most 10 px (.tools span: 9 a side)
-constexpr int kFooterHeight = 32, kFooterPadX = 12, kFooterGap = 14;
+constexpr int kFooterHeight = 32;
 constexpr int kEmptyCardWidth = 460, kEmptyCardHeight = 150;
 
 const juce::StringArray kMajorKeys{"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
@@ -51,7 +52,6 @@ juce::Font titleFont() { return theme::font(18.0f, true); }
 juce::Font bodyFont() { return theme::font(theme::sizeBody); }
 juce::Font boldFont() { return theme::font(theme::sizeBody, true); }
 juce::Font smallFont() { return theme::font(theme::sizeSmall); }
-juce::Font smallBoldFont() { return theme::font(theme::sizeSmall, true); }
 
 int ceilToInt(float x) { return static_cast<int>(std::ceil(x)); }
 
@@ -128,11 +128,15 @@ SongEditorState makeSongEditorState(const app::Session& session, const juce::Str
 
     const auto looked = missing != nullptr ? std::set<juce::String>() : missingParts(session, songId);
     const auto& missingNow = missing != nullptr ? *missing : looked;
+    const auto soloed = session.soloedParts(songId);
+    juce::StringArray soloNames;
     for (const auto& part : song->parts) {
         const auto* role = model.role(part.roleId);
         state.parts.push_back({part.id, part.name, role != nullptr ? role->name : juce::String(),
                                role != nullptr ? role->colour : theme::dim, missingNow.count(part.id) > 0});
+        if (soloed.contains(part.id)) soloNames.add(part.name);
     }
+    if (!soloNames.isEmpty()) state.solo = "Solo: " + soloNames.joinIntoString(", ");
 
     footerOf(*song, cursorSeconds, state.footerBar, state.footerTime);
 
@@ -280,6 +284,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
       songs_(std::make_unique<SongsBody>(*this)),
       timeline_(session),
       inspector_(session),
+      dock_(session, timeline_),
       arrangementRow_(session),
       title_(std::make_unique<TitleLabel>()),
       tap_("Tap"),
@@ -300,6 +305,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
         repaint(footer_);
     };
     timeline_.onSelectionChanged = [this] {
+        dock_.followTracks(timeline_.selection());                // a part's track: its strip, under the tracks
         showInspector();
         updateControls();                                         // the song panels go while a change is inspected
         resized();
@@ -313,6 +319,10 @@ SongEditorPage::SongEditorPage(app::Session& session)
         setClick(on, sound, subdivision, accent);
     };
     addChildComponent(inspector_);
+    dock_.setKeysHome(this);                                      // Esc in the mixer: the keys to the tracks
+    dock_.onLayoutChanged = [this] { resized(); };
+    dock_.onStripSelected = [this] { repaint(footer_); };         // the mixer's key hints, or the tracks'
+    addChildComponent(dock_);
     arrangementRow_.onPlayAsArranged = [this] { playAsArranged(); };
     arrangementRow_.onArrangementShown = [this] { timeline_.refresh(); };   // the Cues lane names what follows in it
     addChildComponent(arrangementRow_);
@@ -450,6 +460,7 @@ void SongEditorPage::refresh(bool force) {
     shownEditable_ = editable();
     buildLanes();
     timeline_.refresh();
+    dock_.setSong(songId_);
     arrangementRow_.show(songId_);
     showInspector();
     updateControls();
@@ -501,7 +512,7 @@ void SongEditorPage::updateControls() {
     const bool open = state_.songId.isNotEmpty();
     const bool edit = editable();
     for (juce::Component* c : std::initializer_list<juce::Component*>{title_.get(), &tap_, &play_, &timeline_, &tools_,
-                                                                      &snapTo_, &arrangementRow_, &inspector_})
+                                                                      &snapTo_, &arrangementRow_, &inspector_, &dock_})
         c->setVisible(open);
     for (auto& chip : chips_) chip->setVisible(open);
     emptyNew_.setVisible(!open);
@@ -571,6 +582,7 @@ void SongEditorPage::resized() {
     bar_ = edit.removeFromTop(kBarHeight + (twoRows ? kToolsRow : 0));
     arrangementRow_.setBounds(edit.removeFromTop(ArrangementRow::height));
     footer_ = edit.removeFromBottom(kFooterHeight);
+    dock_.setBounds(edit.removeFromBottom(dock_.heightFor(edit.getHeight())));   // the mixer under the tracks, within its limits
     timeline_.setBounds(edit);
 
     auto bar = bar_.withTrimmedBottom(1).reduced(kBarPadX, 0);
@@ -621,47 +633,11 @@ void SongEditorPage::paint(juce::Graphics& g) {
         return;
     }
 
-    // The bar's and the footer's borders.
+    // The bar's border, and the footer (EditorFooter): where the cursor is, the key hints, the solo and how the save went.
     g.setColour(theme::hairline);
     g.fillRect(bar_.getX(), bar_.getBottom() - 1, bar_.getWidth(), 1);
-    g.fillRect(footer_.getX(), footer_.getY(), footer_.getWidth(), 1);
-
-    // The footer: where the cursor is, the key hints, and how the save went on the right.
-    {
-        juce::Graphics::ScopedSaveState saved(g);
-        g.reduceClipRegion(footer_);
-        auto foot = footer_.toFloat().reduced(static_cast<float>(kFooterPadX), 0.0f);
-        const float cy = foot.getCentreY();
-        const auto text = [&](const juce::String& words, juce::Colour colour, const juce::Font& font) {
-            g.setColour(colour);
-            g.setFont(font);
-            const float w = widthOf(font, words);
-            g.drawText(words, juce::Rectangle<float>(foot.getX(), foot.getY(), w + 1.0f, foot.getHeight()), juce::Justification::centredLeft, false);
-            foot.removeFromLeft(w);
-        };
-        const auto gap = [&] { foot.removeFromLeft(static_cast<float>(kFooterGap)); };
-        text("Bar ", theme::dim, smallFont());
-        text(state_.footerBar, theme::mint, smallBoldFont());
-        gap();
-        text(state_.footerTime, theme::dim, smallFont());
-        gap();
-        foot.removeFromLeft(drawKey(g, "Space", foot.getX(), cy));
-        text(" play from the cursor", theme::dim, smallFont());
-        gap();
-        foot.removeFromLeft(drawKey(g, "Del", foot.getX(), cy));
-        text(" delete", theme::dim, smallFont());
-        gap();
-        foot.removeFromLeft(drawKey(g, "Ctrl", foot.getX(), cy));
-        text("+", theme::dim, smallFont());
-        foot.removeFromLeft(drawKey(g, "Z", foot.getX(), cy));
-        text(" undo", theme::dim, smallFont());
-        gap();
-        const auto words = shorten(state_.saved, smallFont(), std::max(0.0f, foot.getWidth()));
-        g.setColour(state_.saveFailed ? theme::danger : state_.saved.startsWith("Saved") ? theme::mint : theme::dim);
-        g.setFont(smallFont());
-        g.drawText(words, foot, juce::Justification::centredRight, false);
-    }
-
+    paintEditorFooter(g, footer_, {state_.footerBar, state_.footerTime, state_.solo, state_.saved, state_.saveFailed,
+                                   dock_.mixer().takesKeys()});
 }
 
 bool SongEditorPage::keyPressed(const juce::KeyPress& key) {

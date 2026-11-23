@@ -90,6 +90,11 @@ void MixerPanel::setCompact(bool compact) {
 
 const juce::Viewport& MixerPanel::viewport() const { return viewport_; }
 
+int MixerPanel::minimumHeight() const {
+    const auto size = compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full;
+    return ChannelStrip::minimumHeight(size) + 2 * kPad + (compact_ ? kCompactTop - kPad : 0) + viewport_.getScrollBarThickness();
+}
+
 ChannelStrip* MixerPanel::stripAt(int index) {
     return juce::isPositiveAndBelow(index, static_cast<int>(strips_.size())) ? strips_[static_cast<std::size_t>(index)].get() : nullptr;
 }
@@ -370,10 +375,12 @@ void MixerPanel::takeKeys() {
     if (isShowing()) grabKeyboardFocus();
 }
 
+void MixerPanel::setKeysHome(juce::Component* home) { keysHome_ = home; }
+
 void MixerPanel::giveKeysBack() {
     setWantsKeyboardFocus(takesKeys());
     if (!hasKeyboardFocus(true)) return;
-    auto* before = keysBefore_.getComponent();
+    auto* before = keysHome_ != nullptr ? keysHome_.getComponent() : keysBefore_.getComponent();
     keysBefore_ = nullptr;
     if (before != nullptr && before->isShowing()) before->grabKeyboardFocus();
     else giveAwayKeyboardFocus();

@@ -112,6 +112,7 @@ TEST_CASE("a press on a lane's empty space moves the cursor, snapped, and clears
     DemoSession d; auto& s = *d.session; auto song = d.setlist().entries[0].songId;
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(song);
+    page.mixerDock().setFolded(true);                             // every lane in view: no scroll bar beside them
     snapshot(page, 1280, 698);
     auto& timeline = page.timeline();
     auto& keys = *timeline.lanes()[3];

@@ -67,3 +67,12 @@ TEST_CASE("the screens can be written at a larger size", "[screens]") {
     CHECK(image.getWidth() == 1920);  CHECK(image.getHeight() == 1080);
     CHECK(fractionNotBackground(image) > kDrawnFloor);
 }
+
+TEST_CASE("the song editor's screen has the mixer under the tracks, a strip selected and a part soloed", "[screens]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    sqlive::test::ScopedLook look;
+    const auto image = ui::renderScreen("song-editor");
+    // Above the footer, right of the track headers and left of the inspector: the dock, its selected strip outlined in mint.
+    CHECK(hasColour(image.getClippedImage({360, 760 - 32 - 200, 1280 - 360 - 290, 200}), theme::mint));
+    CHECK(hasColour(image.getClippedImage({200, 760 - 31, 1280 - 200 - 290, 31}), theme::caution));   // "Solo: Perc"
+}

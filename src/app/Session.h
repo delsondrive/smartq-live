@@ -238,6 +238,7 @@ public:
     void advanceWithoutDevice(int frames);                       // runs the engine with no device, then processes its events;
                                                                  // never while a real device runs
     void flushNow();                                             // autosave and save the settings immediately
+    void noteSettingsChanged();                                  // a view changed settings(): written by the next flush, as the band
     // The last flush, when the band closes or the app quits (the destructor does it too): an edit still held back for the
     // user's answer is written as a conflict copy next to its original, "<name> (<computer name>).json", so "Check files"
     // offers both versions next time.

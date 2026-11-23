@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <vector>
 
 #include <juce_core/juce_core.h>
@@ -61,6 +62,13 @@ public:
     RemoteMemory remoteMemory(const juce::File& bandRoot) const;
     void setRemoteMemory(const juce::File& bandRoot, const RemoteMemory& memory);
 
+    // The Song editor's mixer panel, as this computer's screen left it (not a band's): its height in pixels (0 = never
+    // chosen: the panel's own default) and whether it is folded to its splitter.
+    int editorMixerHeight() const { return editorMixerHeight_; }
+    void setEditorMixerHeight(int height) { editorMixerHeight_ = std::max(0, height); }
+    bool editorMixerFolded() const { return editorMixerFolded_; }
+    void setEditorMixerFolded(bool folded) { editorMixerFolded_ = folded; }
+
     juce::Result save();                                                // writes the file atomically
 
 private:
@@ -71,6 +79,8 @@ private:
     juce::StringArray recent_;                                          // full paths, newest first
     juce::var bands_;                                                   // object: full path -> object
     juce::NamedValueSet others_;                                        // top-level keys this version doesn't know, kept as read
+    int editorMixerHeight_ = 0;                                         // "editorMixer": {"height", "folded"}
+    bool editorMixerFolded_ = false;
 };
 
 }  // namespace sqlive::app

@@ -43,7 +43,8 @@ namespace sqlive::ui {
 //    and the box flashes danger red once; "off" (-inf, −∞) is read only on an output view, where it stops sending the
 //    role. Words not changed from what the box said change nothing (a linked pan starts at
 //    "C" and stays linked);
-//  - Esc (not typing): no strip selected, and the keys go back where they went before.
+//  - Esc (not typing): no strip selected, and the keys go back where they went before (or to keysHome, when the panel's
+//    owner gives one: the Song editor's tracks).
 // A run of arrow presses on one strip is one gesture, so one undo step: it ends when another strip is selected, another
 // key or the mouse is used, the keyboard goes elsewhere, or a second passes without an arrow (clockMs). A run that moved
 // both the level and the pan is named for both ("level and pan Keys"). Every other key (Space, Ctrl+Z, Ctrl+Y) goes on
@@ -68,6 +69,7 @@ public:
     juce::String outputId() const { return outputId_; }
     std::function<void()> onStateChanged;                         // after a refresh that changed state()
     void setCompact(bool);
+    int minimumHeight() const;                                    // a whole strip (a 120 px fader) and the row's scroll bar
     bool compact() const { return compact_; }
 
     const MixerState& state() const { return state_; }
@@ -82,6 +84,8 @@ public:
     int selectedStrip() const { return selected_; }
     std::function<void(int index)> onStripSelected;               // a change of selection made here; -1: none
     bool takesKeys() const;                                       // Edit mode, and a strip selected; never in Show mode
+    void setKeysHome(juce::Component*);                           // where the keys go back to; nullptr: where they went before
+    juce::Component* keysHome() const { return keysHome_.getComponent(); }
     StripValueEditor* typing();                                   // the field being typed into; nullptr when none
     std::function<double()> clockMs = [] { return juce::Time::getMillisecondCounterHiRes(); };   // for the runs of arrows
     bool watchingPresses() const { return watching_; }           // for tests: every mouse press is seen (while typing)
@@ -152,6 +156,7 @@ private:
     int selected_ = -1;
     app::LevelTarget selectedTarget_{};                           // the selected strip's, to find it when strips are made again
     juce::Component::SafePointer<juce::Component> keysBefore_;    // where the keys went before a strip was selected
+    juce::Component::SafePointer<juce::Component> keysHome_;      // where they always go back to, when one is given
     int runStrip_ = -1;                                           // the strip of the run of arrows going on; -1 none
     double runLastMs_ = 0.0;
     juce::String runGesture_;

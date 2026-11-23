@@ -289,6 +289,7 @@ TEST_CASE("the song editor dims the click before the count-in when the click is 
     REQUIRE(s.commands().run("song.setClick", params({{"songId", id}, {"enabled", false}})).ok);
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(id);
+    page.mixerDock().setFolded(true);                             // the tracks down to the footer, the mixer folded away
     auto image = snapshot(page, 1280, 698);
     CHECK(page.arrangementRow().getBounds() == juce::Rectangle<int>(200, 47, 1280 - 200 - 290, 34));   // one row of tools
     // The Click row is under the 47 px bar, the 34 px arrangement row, the 26 px ruler, the 28 px Tempo and Sections lanes,

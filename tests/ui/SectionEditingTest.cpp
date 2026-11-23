@@ -150,6 +150,7 @@ TEST_CASE("the sections lane's gestures: an edge drag, a Draw press, a double-cl
         s.commands().run("section.add", params({{"songId", song}, {"name", name}, {"startBar", bar}}));
     sqlive::test::ScopedLook look;
     ui::SongEditorPage page(s);  page.openSong(song);
+    page.mixerDock().setFolded(true);                             // the lanes 640 px wide, none scrolled out of sight
     snapshot(page, 1280, 698);
     auto& timeline = page.timeline();
     auto* lane = dynamic_cast<ui::SectionsLane*>(timeline.lanes()[1].get());
