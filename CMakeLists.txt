@@ -116,13 +116,19 @@ target_link_libraries(SmartQLive
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
+# Smart Q's DSP, copied unchanged from the Smart Q VST3: plain C++, no JUCE, namespace smartq::dsp, included as "dsp/X.h".
+file(GLOB SQLIVE_DSP_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/dsp/*.cpp")
+add_library(smartq_dsp STATIC ${SQLIVE_DSP_SOURCES})
+target_compile_features(smartq_dsp PUBLIC cxx_std_20)
+target_include_directories(smartq_dsp PUBLIC "${CMAKE_SOURCE_DIR}/src")
+
 # The engine: timing and mixing with no JUCE in it.
 file(GLOB SQLIVE_ENGINE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/engine/*.cpp")
 add_library(sqlive_engine STATIC ${SQLIVE_ENGINE_SOURCES})
 target_compile_features(sqlive_engine PUBLIC cxx_std_20)
 target_include_directories(sqlive_engine PUBLIC "${CMAKE_SOURCE_DIR}/src")
 # An interface target: it adds JUCE's recommended warning flags and nothing else, so the engine stays JUCE-free.
-target_link_libraries(sqlive_engine PRIVATE juce::juce_recommended_warning_flags)
+target_link_libraries(sqlive_engine PUBLIC smartq_dsp PRIVATE juce::juce_recommended_warning_flags)
 
 # Tests
 # As with the app's sources, a test file ending _windows.cpp is built on Windows only and _posix.cpp everywhere else. A
