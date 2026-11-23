@@ -243,6 +243,9 @@ public:
     float effectReductionDb(const EffectsTarget&, int index) const;
     int outputEffectsDelaySamples() const;                      // how late every output leaves for its effects (and MIDI with it)
     const engine::EffectChain* liveChain(const EffectsTarget&) const;   // for tests: the chain playing there now; nullptr for none
+    // The chain playing there now, as liveChain, shared, and each effect's slot in it: for the effects window (ui/fx/ChainHost),
+    // which taps it for its pages and reads its meters. A null chain for none.
+    LiveEffects::Playing playingChain(const EffectsTarget&) const;
     std::uint64_t partEffectsSent() const;                       // for tests: how many PartEffects the engine has taken
     std::uint64_t outputEffectsSent() const;                     // for tests: and OutputEffects
     // Preparing for the show (SessionPrepare.cpp; EffectsPreparer): each part with an effect on, played through its effects

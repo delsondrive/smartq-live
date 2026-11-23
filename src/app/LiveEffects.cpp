@@ -123,11 +123,6 @@ const LiveEffects::Chain* LiveEffects::partChainOf(std::uint64_t serial, const j
     return nullptr;
 }
 
-engine::EffectChain* LiveEffects::partChain(std::uint64_t serial, const juce::String& partId) const {
-    const auto* c = partChainOf(serial, partId);
-    return c != nullptr ? c->chain.get() : nullptr;
-}
-
 float LiveEffects::partReductionDb(std::uint64_t serial, const juce::String& partId, int index) const {
     const auto* c = partChainOf(serial, partId);
     return c != nullptr ? reductionOf(*c, index) : 0.0f;
@@ -184,9 +179,15 @@ void LiveEffects::updateOutputs(const model::RigDoc& rig, const engine::MixSetup
 
 void LiveEffects::deviceStarted() { outputs_fresh_ = true; }
 
-engine::EffectChain* LiveEffects::outputChain(const juce::String& outputId) const {
+LiveEffects::Playing LiveEffects::playingPart(std::uint64_t serial, const juce::String& partId) const {
+    const auto* c = partChainOf(serial, partId);
+    return c != nullptr && c->chain != nullptr ? Playing{c->chain, c->slots} : Playing{};
+}
+
+LiveEffects::Playing LiveEffects::playingOutput(const juce::String& outputId) const {
     const auto found = outputs_.find(outputId);
-    return found != outputs_.end() ? found->second.chain.chain.get() : nullptr;
+    if (found == outputs_.end() || found->second.chain.chain == nullptr) return {};
+    return {found->second.chain.chain, found->second.chain.slots};
 }
 
 float LiveEffects::outputReductionDb(const juce::String& outputId, int index) const {

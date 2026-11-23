@@ -120,11 +120,13 @@ void Session::refreshEffects() {
     live_effects_.send(engine_);
 }
 
-const engine::EffectChain* Session::liveChain(const EffectsTarget& target) const {
+const engine::EffectChain* Session::liveChain(const EffectsTarget& target) const { return playingChain(target).chain.get(); }
+
+LiveEffects::Playing Session::playingChain(const EffectsTarget& target) const {
     if (target.isPart())
-        return playing_.active() && playing_.songId == target.songId ? live_effects_.partChain(playing_.serial, target.partId)
-                                                                     : nullptr;
-    return target.rigId.isEmpty() || target.rigId == rig_id_ ? live_effects_.outputChain(target.outputId) : nullptr;
+        return playing_.active() && playing_.songId == target.songId ? live_effects_.playingPart(playing_.serial, target.partId)
+                                                                     : LiveEffects::Playing{};
+    return target.rigId.isEmpty() || target.rigId == rig_id_ ? live_effects_.playingOutput(target.outputId) : LiveEffects::Playing{};
 }
 
 void Session::holdWithoutEffects(const EffectsTarget& target, bool held) {

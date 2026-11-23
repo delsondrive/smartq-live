@@ -95,11 +95,40 @@ public:
     // slot's meter as Smart Q's AI does, which Smart Q Live has no other use for.
     float takeLargestReductionDb(int slot) noexcept;
 
+    // ---- For the effects window (ui/fx/ChainHost), on the message thread unless said; none of it ever waits on the audio thread.
+
+    // The tap, as Smart Q's Chain::setTap and setTappedSlot: the slot whose input and output the window's page analyzer and
+    // scope hear, -1 for none. The first slot tapped makes the tap's ring (it allocates), which stays until the chain goes; from
+    // then on the audio thread writes each block's samples on both sides of that slot into it, with no lock and no allocation.
+    static constexpr int kTapFrames = 16384;
+    void setTappedSlot(int slot);
+    // One reader. The frames tapped since `position` (frames since the first slot was tapped, which this moves on to the last
+    // frame read), oldest first, as floats: at most maxFrames, and none older than half the ring, so a reader that fell behind
+    // skips ahead. A mono chain's right is a copy of its left. 0 when nothing new has come, and before any slot was tapped.
+    int readTap(std::uint64_t& position, float* beforeLeft, float* beforeRight, float* afterLeft, float* afterRight,
+                int maxFrames) noexcept;
+
+    // Any thread. How many times process has run: it moves on only while the chain is played.
+    std::uint64_t blocksProcessed() const noexcept { return blocks_.load(std::memory_order_relaxed); }
+
+    // Any thread. The window's held listening buttons, Width's Mono (the whole chain's output folded to mono, as Smart Q's) and
+    // a De-Ess's Listen (that slot plays the band it detects on): heard from the next block. Not settings: a change of settings
+    // keeps them, and a chain made again starts with neither. A slot that isn't a De-Ess ignores Listen and reads false.
+    void setMonoHeld(bool held) noexcept { monoHeld_.store(held, std::memory_order_relaxed); }
+    void setDeEssListening(int slot, bool listening) noexcept;
+    bool deEssListening(int slot) const noexcept;
+
+    // Any thread. That slot's live module, for the window to read its meters (each is for any thread to read and take from; the
+    // window takes with dsp::MeterReader::Window) and an EQ's live gains, and for nothing else. Null for a slot not in the chain.
+    smartq::dsp::Module* meteredModule(int slot) const noexcept;
+
 private:
     struct Slot;
+    struct TapRing;
 
     EffectChain();
     static void pushSettings(void* context, const smartq::dsp::ChainOrder& liveSlots, const smartq::dsp::ChainOrder& shadowSlots) noexcept;
+    static void tapHeard(void* context, bool beforeModule, const double* left, const double* right, int frames) noexcept;
 
     std::vector<EffectKind> kinds_;
     std::vector<std::unique_ptr<Slot>> slots_;
@@ -109,6 +138,10 @@ private:
     int maxLatency_ = 0;
     bool stereo_ = true;
     std::atomic<bool> held_{false};
+    std::atomic<bool> monoHeld_{false};
+    std::atomic<std::uint64_t> blocks_{0};
+    std::unique_ptr<TapRing> tapStorage_;          // made by the first setTappedSlot
+    std::atomic<TapRing*> tap_{nullptr};           // the audio thread's way to it
 };
 
 }  // namespace sqlive::engine

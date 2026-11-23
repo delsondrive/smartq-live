@@ -69,9 +69,15 @@ public:
     // Sends what waits; what the engine's full queue refused waits for the next call.
     void send(engine::Engine&);
 
-    // The chain playing for that part of that song, or that output; nullptr when none does.
-    engine::EffectChain* partChain(std::uint64_t serial, const juce::String& partId) const;
-    engine::EffectChain* outputChain(const juce::String& outputId) const;
+    // The chain playing for that part of that song, or that output, shared (the effects window keeps it while it reads it), with,
+    // by the index of each effect of the part's or the output's, its slot in the chain (-1 for one the chain leaves out). A null
+    // chain when none plays.
+    struct Playing {
+        std::shared_ptr<engine::EffectChain> chain;
+        std::vector<int> slots;
+    };
+    Playing playingPart(std::uint64_t serial, const juce::String& partId) const;
+    Playing playingOutput(const juce::String& outputId) const;
     // How many dB the effect at that index of the part's or output's effects is turning the audio down now: 0 for one that
     // isn't in its chain, an EQ or a Width, or with no chain playing.
     float partReductionDb(std::uint64_t serial, const juce::String& partId, int index) const;
