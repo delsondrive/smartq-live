@@ -289,6 +289,12 @@ TEST_CASE("a chain from a file plays at most four effects, and one Limit on an o
     CHECK(std::get<smartq::dsp::LimitSettings>(outputChain[0]).ceilingDb == -1.0);
     CHECK(kindOf(outputChain[1]) == EffectKind::Eq);
     CHECK(kindOf(outputChain[2]) == EffectKind::Dynamic);
+
+    // Each effect's slot in those chains, -1 for one left out: what a card's meter reads.
+    CHECK(chainSlots(part, EffectPlace::Part, true) == std::vector<int>{-1, 0, 1, -1, 2, 3, -1, -1});
+    CHECK(chainSlots({first, defaultEffect("eq"), second, defaultEffect("dynamic")}, EffectPlace::Output, true)
+          == std::vector<int>{0, 1, -1, 2});
+    CHECK(chainSlots({defaultEffect("width"), defaultEffect("eq")}, EffectPlace::Output, false) == std::vector<int>{-1, 0});
 }
 
 TEST_CASE("an effect of a kind not known is kept as it is", "[effects]") {

@@ -217,6 +217,37 @@ TEST_CASE_METHOD(ShowFixture, "changing a part's effects loads the song again", 
     REQUIRE(cache.waitUntilIdle(20000));
     CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == raw(a, 0)->left);
 }
+TEST_CASE_METHOD(ShowFixture, "a song with no effect on is kept as it is between Edit and Show mode", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    a.parts[0].effects[0].on = false;                             // an effect, but off: nothing is prepared
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    cache.setWanted({wanted(a), wanted(b)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    const auto first = cache.loaded(a.id), second = cache.loaded(b.id);
+    cache.setWanted({show(a), show(b)});                          // the show starts: the same audio plays, so nothing loads
+    CHECK(cache.state(a.id) == SongCache::State::Ready);
+    CHECK(cache.loaded(a.id) == first);
+    CHECK(cache.loaded(b.id) == second);
+    a.parts[0].effects[0].on = true;                              // now it would sound different in the show
+    cache.setWanted({show(a), show(b)});
+    CHECK(cache.state(a.id) != SongCache::State::Ready);
+    CHECK(cache.loaded(b.id) == second);
+}
+TEST_CASE_METHOD(ShowFixture, "a part file changed while it is read is played, but not kept in the store", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    const auto file = folder.audioFile(a, a.parts[0]);
+    cache.onPartRead = [file](const juce::File& read) {         // a bandmate's new version lands just after the read
+        if (read == file) file.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::hours(1));
+    };
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    REQUIRE(cache.state(a.id) == SongCache::State::Ready);
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == expected(a, 0)->left);
+    CHECK(cache.problems(a.id).isEmpty());
+    CHECK(cache.partsPrepared() == 1);
+    CHECK(store.sizeBytes() == 0);                                // its key may not be what was read: nothing kept
+}
 TEST_CASE_METHOD(ShowFixture, "a song waiting to be prepared is Loading, and is not preparing once Ready", "[cache]") {
     a.parts[0].effects = {eqPlus6()};
     SongCache cache(SongCache::defaultBudgetBytes(), &store);

@@ -52,13 +52,23 @@ void makeOverview(LoadedSong& song, const model::SongDoc& doc) {
     }
 }
 
-// Whether two wanted songs would sound the same from the same files: for a showAudio song that includes each part's effects.
+bool anyOn(const std::vector<model::EffectDoc>& effects) {
+    return std::any_of(effects.begin(), effects.end(), [](const model::EffectDoc& e) { return e.on; });
+}
+
+// The effects a part of it is played prepared through: none unless it is a showAudio song and one of them is on.
+const std::vector<model::EffectDoc>& preparedEffects(const WantedSong& song, const model::PartDoc& part) {
+    static const std::vector<model::EffectDoc> none;
+    return song.showAudio && anyOn(part.effects) ? part.effects : none;
+}
+
+// Whether two wanted songs would sound the same from the same files: each part with what it is prepared through, if anything.
+// So a song with no effect on is the same in Edit and Show mode, and isn't loaded again when the show starts.
 bool sameSound(const WantedSong& a, const WantedSong& b) {
-    if (a.files != b.files || a.showAudio != b.showAudio) return false;
-    if (! a.showAudio) return true;
-    if (a.doc.parts.size() != b.doc.parts.size()) return false;
+    if (a.files != b.files || a.doc.parts.size() != b.doc.parts.size()) return false;
     for (std::size_t i = 0; i < a.doc.parts.size(); ++i)
-        if (a.doc.parts[i].id != b.doc.parts[i].id || a.doc.parts[i].effects != b.doc.parts[i].effects) return false;
+        if (a.doc.parts[i].id != b.doc.parts[i].id || preparedEffects(a, a.doc.parts[i]) != preparedEffects(b, b.doc.parts[i]))
+            return false;
     return true;
 }
 
@@ -298,8 +308,7 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
         }
         // A part with an effect on, in a show song, is played prepared: found in the store, or else read, played through its
         // effects once and put there. Found in the store, the file itself isn't read.
-        const bool wantsEffects = job.song.showAudio && std::any_of(part.effects.begin(), part.effects.end(),
-                                                                    [](const model::EffectDoc& e) { return e.on; });
+        const bool wantsEffects = ! preparedEffects(job.song, part).empty();
         // The share of this part's slice of the progress, from `from` to `to`.
         const auto within = [&](double from, double to) {
             return [&, from, to](double p) { return reportProgress(job, ((double) i + from + (to - from) * p) / count); };
@@ -313,6 +322,10 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
         }
         if (audio == nullptr) {
             audio = model::loadPartAudio(file->second, job.sampleRate, within(0.0, wantsEffects ? 0.5 : 1.0));
+            if (onPartRead) onPartRead(file->second);
+            // The file changed while it was read (a bandmate's new version arriving): what was read may not be what the
+            // key names, so it is played but not kept in the store.
+            const bool keyStillHolds = key.isNotEmpty() && PreparedStore::keyFor(file->second, part.effects, job.sampleRate) == key;
             if (! reportProgress(job, (double) (i + (wantsEffects ? 0.5 : 1.0)) / count)) return nullptr;
             if (audio == nullptr) {
                 song->problems.add(part.name + ": the audio file couldn't be read.");
@@ -328,7 +341,7 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
                 if (prepared == nullptr) return nullptr;               // abandoned meanwhile
                 ++partsPrepared_;
                 audio = std::move(prepared);
-                if (store_ != nullptr) {
+                if (store_ != nullptr && keyStillHolds) {
                     if (store_->write(key, *audio)) store_->trim();
                     else song->problems.add("Prepared audio for " + part.name + " couldn't be saved on this computer.");
                 }

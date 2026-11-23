@@ -46,6 +46,8 @@ engine::ModuleSettings settingsOf(const EffectDoc&, EffectPlace);
 // unless stereo, and no kind not known), as settingsOf gives it; on an output, only its first Limit; and at most the first
 // kMaxEffects of those, as a file may hold more than the commands allow.
 std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>&, EffectPlace, bool stereo);
+// Where each effect plays in chainOf's chain, by its index in the effects: its slot, or -1 for one chainOf leaves out.
+std::vector<int> chainSlots(const std::vector<EffectDoc>&, EffectPlace, bool stereo);
 
 // The reverse of settingsOf: the effect with the settings' kind and every value of them (a band for each enabled one), keeping
 // its `on` and `extra` (the settings' bypass is not written: that is `on`). An effect of a kind not known is given back as it

@@ -31,14 +31,17 @@ constexpr double kFolderPollMs = 2000.0;                         // Edit mode's 
 
 bool sameWanted(const std::vector<WantedSong>& a, const std::vector<WantedSong>& b) {
     return std::equal(a.begin(), a.end(), b.begin(), b.end(),
-                      [](const WantedSong& x, const WantedSong& y) { return x.doc == y.doc && x.files == y.files; });
+                      [](const WantedSong& x, const WantedSong& y) {
+                          return x.doc == y.doc && x.files == y.files && x.showAudio == y.showAudio;
+                      });
 }
 
 }  // namespace
 
 Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudgetBytes)
     : settings_(settings), folder_(std::move(bandRoot)), arrangement_(std::make_unique<ShowArrangement>()),
-      cache_(cacheBudgetBytes) {
+      prepared_store_(settings.file().getParentDirectory().getChildFile("Prepared audio"), settings.preparedLimitBytes()),
+      cache_(cacheBudgetBytes, &prepared_store_) {
     load_report_ = folder_.load(model_);
     model::registerCoreCommands(commands_);
     model::registerEffectCommands(commands_);
@@ -189,6 +192,7 @@ void Session::setDevice(double sampleRate, int outputChannels) {
     cue_ = {};
     engine_.setFollowOn(follow_on_);
     device_stopped_ = false;                                     // a device runs again: what it lets go of from now isn't the stop's
+    live_effects_.deviceStarted();                               // the output effects too, made again at the engine's rate
     refreshMix(true);
     refresh();
 }
@@ -576,6 +580,7 @@ void Session::refresh() {
     refreshMix(false);
     refreshPlayingLevels();
     refreshTransport();
+    refreshEffects();
     rememberShow();
     tellLevelChecker();
     if (level_checker_ != nullptr) level_checker_->noteChanges();   // measured again 2 s after the last change, if any
@@ -640,8 +645,9 @@ std::shared_ptr<const Session::Prepared> Session::preparedFor(const juce::String
     }
     auto heard = tonight_.apply(*doc);
     // The cue clips are built into it too: one of its own that arrived, changed or went since builds it again.
+    // The parts' effects aren't built into it (LiveEffects plays them, or the cache prepared them): a change of them alone keeps it.
     if (const auto found = prepared_.find(key); found != prepared_.end() && found->second->loaded == loaded
-                                                && found->second->doc == heard && sameClips(*found->second))
+                                                && sameApartFromEffects(found->second->doc, heard) && sameClips(*found->second))
         return found->second;
 
     auto prepared = std::make_shared<Prepared>();
@@ -725,7 +731,7 @@ void Session::refreshWanted() {
     std::vector<WantedSong> wanted;
     for (const auto& id : ids) {
         const auto& doc = *model_.song(id);
-        WantedSong song{doc, {}};
+        WantedSong song{doc, {}, mode_ == Mode::Show};           // a show plays the parts with effects prepared
         for (const auto& part : doc.parts) song.files[part.id] = folder_.audioFile(doc, part);
         wanted.push_back(std::move(song));
     }
@@ -742,7 +748,8 @@ void Session::refreshMix(bool force) {
     mix_rig_ = std::move(rigDoc);
     mix_band_ = std::move(band);
     mix_channels_ = output_channels_;
-    engine_.setMix(model::buildMixSetup(mix_band_, mix_rig_, mix_channels_));
+    mix_ = model::buildMixSetup(mix_band_, mix_rig_, mix_channels_);
+    engine_.setMix(mix_);
 }
 
 void Session::refreshPlayingLevels() {

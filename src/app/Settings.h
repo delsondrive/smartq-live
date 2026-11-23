@@ -45,6 +45,7 @@ public:
 
     // <user app data>/Smart Q Live/settings.json
     static juce::File defaultFile();
+    juce::File file() const { return file_; }                           // where these are kept: this computer's own folder
 
     juce::String computerName() const;                                  // "This computer" when the system gives no name
 

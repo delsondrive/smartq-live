@@ -287,16 +287,24 @@ engine::ModuleSettings settingsOf(const EffectDoc& effect, EffectPlace) {
     return settings;
 }
 
-std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>& effects, EffectPlace place, bool stereo) {
+std::vector<int> chainSlots(const std::vector<EffectDoc>& effects, EffectPlace place, bool stereo) {
     const auto kinds = effectKindsFor(place, stereo);
-    std::vector<ModuleSettings> chain;
+    std::vector<int> slots;
+    int used = 0;
     bool limited = false;
     for (auto& effect : effects) {
-        if ((int) chain.size() == kMaxEffects) break;
-        if (! kinds.contains(effect.kind) || (effect.kind == "limit" && limited)) continue;
-        limited = limited || effect.kind == "limit";
-        chain.push_back(settingsOf(effect, place));
+        const bool plays = used < kMaxEffects && kinds.contains(effect.kind) && ! (effect.kind == "limit" && limited);
+        limited = limited || (plays && effect.kind == "limit");
+        slots.push_back(plays ? used++ : -1);
     }
+    return slots;
+}
+
+std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>& effects, EffectPlace place, bool stereo) {
+    const auto slots = chainSlots(effects, place, stereo);
+    std::vector<ModuleSettings> chain;
+    for (size_t i = 0; i < effects.size(); ++i)
+        if (slots[i] >= 0) chain.push_back(settingsOf(effects[i], place));
     return chain;
 }
 

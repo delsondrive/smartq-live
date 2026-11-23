@@ -201,8 +201,12 @@ void AudioHost::publishAnchor(bool valid, std::int64_t streamTime, double wallSe
     anchor_valid_.store(valid, std::memory_order_relaxed);
     anchor_stream_time_.store(streamTime, std::memory_order_relaxed);
     anchor_wall_seconds_.store(wallSeconds, std::memory_order_relaxed);
-    anchor_rate_.store(device_rate_.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    anchor_latency_seconds_.store(device_latency_seconds_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    const double rate = device_rate_.load(std::memory_order_relaxed);
+    anchor_rate_.store(rate, std::memory_order_relaxed);
+    // The output effects hold every output back (Engine::outputEffectsLatency): MIDI is sent that much later too, so it
+    // lands with the audio it goes with.
+    const double effects = rate > 0.0 ? engine_.outputEffectsLatency() / rate : 0.0;
+    anchor_latency_seconds_.store(device_latency_seconds_.load(std::memory_order_relaxed) + effects, std::memory_order_relaxed);
     anchor_device_starts_.store(device_starts_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     anchor_seq_.store(seq + 2, std::memory_order_release);         // even: done
 }

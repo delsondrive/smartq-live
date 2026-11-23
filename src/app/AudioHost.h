@@ -56,8 +56,8 @@ public:
     std::function<void()> onChanged;                              // message thread
 
     // Any thread; written by the audio callback: the stream time of the last block's first sample, the moment the device
-    // asked for it, and the device's rate and output latency. Not valid before a device's first block: none has run yet,
-    // or the one that ran was another device's.
+    // asked for it, and the device's rate and output latency (its own, plus the output effects' delay as of the block before).
+    // Not valid before a device's first block: none has run yet, or the one that ran was another device's.
     StreamAnchor anchor() const noexcept;
 
     // What the device callback does: records the anchor, then the engine's output, then the test tone. Public for tests.

@@ -66,7 +66,9 @@ public:
 
     void setSampleRate(double);                                   // a change drops everything loaded (and loads it again at the new rate)
     // Copies: the loader never reads the model or the BandFolder. A kept song handed over with the same files as before
-    // keeps what is loaded; with different files it loads again.
+    // keeps what is loaded; with different files it loads again, and so it does when what it plays prepared changes: its
+    // showAudio, or the effects of a part with an effect on while showAudio is (a song with none on sounds the same in
+    // Edit and Show mode, and is kept).
     void setWanted(std::vector<WantedSong> inPriorityOrder);
     void setPaused(bool);                                         // for tests and screenshots: while paused the loader starts nothing,
                                                                   // and a kept song that isn't Ready reports Loading at progress 0
@@ -84,6 +86,8 @@ public:
 
     std::function<void(const juce::String& songId)> onChanged;    // message thread; once per song whose state or progress changed
     bool waitUntilIdle(int timeoutMs);                            // for tests; also delivers pending onChanged calls
+    // For tests, set before setWanted: called on the loader thread just after a part's audio file has been read.
+    std::function<void(const juce::File&)> onPartRead;
 
 private:
     struct Entry {                                                 // a kept song the loader has been asked for

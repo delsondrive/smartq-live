@@ -2,6 +2,7 @@
 #include <cmath>
 
 #include "app/PreparedStore.h"
+#include "app/Settings.h"
 #include "model/Effects.h"
 #include "tests/support/TempDir.h"
 
@@ -110,6 +111,13 @@ TEST_CASE("the store trims the files used longest ago", "[store]") {
     CHECK(store.has("a"));  CHECK_FALSE(store.has("b"));  CHECK(store.has("c"));
     store.trim();                                                              // under the limit: nothing more goes
     CHECK(store.has("a"));  CHECK(store.has("c"));
+    store.setLimit(one + one / 2);                                             // a new limit (Setup): room for one
+    store.trim();
+    CHECK(store.has("a"));  CHECK_FALSE(store.has("c"));
+}
+
+TEST_CASE("the store's own folder is next to the settings file", "[store]") {
+    CHECK(PreparedStore::defaultFolder() == sqlive::app::Settings::defaultFile().getParentDirectory().getChildFile("Prepared audio"));
 }
 
 TEST_CASE("a store that can't be written says so and leaves nothing", "[store]") {

@@ -6,6 +6,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_cryptography/juce_cryptography.h>
 
+#include "app/Settings.h"
 #include "model/Effects.h"
 
 namespace sqlive::app {
@@ -17,10 +18,9 @@ constexpr int kBlockFrames = 65536;
 
 PreparedStore::PreparedStore(juce::File folder, std::int64_t limitBytes) : folder_(std::move(folder)), limit_(limitBytes) {}
 
-juce::File PreparedStore::defaultFolder() {
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("Smart Q Live").getChildFile("Prepared audio");
-}
+juce::File PreparedStore::defaultFolder() { return Settings::defaultFile().getParentDirectory().getChildFile("Prepared audio"); }
+
+void PreparedStore::setLimit(std::int64_t bytes) { limit_.store(bytes); }
 
 juce::String PreparedStore::keyFor(const juce::File& partFile, const std::vector<model::EffectDoc>& effects, double sampleRate) {
     juce::String text;
@@ -116,7 +116,7 @@ void PreparedStore::trim() {
     }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.used < b.used; });
     for (const auto& item : items) {
-        if (total <= limit_) break;
+        if (total <= limit_.load()) break;
         if (item.file.deleteFile()) total -= item.size;
     }
 }

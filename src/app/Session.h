@@ -13,9 +13,11 @@
 
 #include "app/CueLibrary.h"
 #include "app/FolderWatch.h"
+#include "app/LiveEffects.h"
 #include "app/MeterReader.h"
 #include "app/MidiEcho.h"
 #include "app/OutsideChanges.h"
+#include "app/PreparedStore.h"
 #include "app/Settings.h"
 #include "app/SongCache.h"
 #include "app/Tonight.h"
@@ -219,8 +221,29 @@ public:
     void setSolo(const juce::String& songId, const juce::String& partId, bool);
     bool soloed(const juce::String& songId, const juce::String& partId) const;
     juce::StringArray soloedParts(const juce::String& songId) const;   // in the song's order; only parts it still has
+    // Effects (SessionEffects.cpp; LiveEffects): a chain on a part of a song or on an output of a rig. Each change is a
+    // command (model/EffectCommands.h) named in the user's words ("add EQ on Keys", "EQ on Keys", "switch off EQ on Keys"),
+    // a setting's coalesced by gestureId so one drag is one undo step; in Show mode each is refused (false) or ignored, and
+    // nothing runs. In Edit mode the song played (and its cue) plays its parts through live chains, a setting heard at once
+    // in the chain that plays; in Show mode the parts play the cache's prepared audio, and no part chain plays. The rig's
+    // output chains play in both, sent again whenever their effects or the mix's buses change and after a device starts.
+    std::vector<model::EffectDoc> effects(const EffectsTarget&) const;   // in playing order; none for a place that isn't
+    bool addEffect(const EffectsTarget&, const juce::String& kind);
+    bool removeEffect(const EffectsTarget&, int index);
+    bool moveEffect(const EffectsTarget&, int from, int to);
+    bool switchEffect(const EffectsTarget&, int index, bool on);
+    void setEffect(const EffectsTarget&, int index, const model::EffectDoc&, const juce::String& gestureId);
+    // While held, that chain plays its input at the loudness its effects would give (EffectChain::setHeldWithoutEffects): a
+    // part of the song playing in Edit mode, or an output of the rig chosen now. Ignored otherwise.
+    void holdWithoutEffects(const EffectsTarget&, bool held);
+    // How many dB that effect is turning the audio down now, from the chain that plays: a part of the song playing in Edit
+    // mode, or an output's in either mode. 0 otherwise, and for an effect that turns nothing down.
+    float effectReductionDb(const EffectsTarget&, int index) const;
+    int outputEffectsDelaySamples() const;                      // how late every output leaves for its effects (and MIDI with it)
+    const engine::EffectChain* liveChain(const EffectsTarget&) const;   // for tests: the chain playing there now; nullptr for none
+    std::uint64_t partEffectsSent() const;                       // for tests: how many PartEffects the engine has taken
     bool hasTonightChanges() const;
-    int tonightChangeCount() const;                              // how many levels and pans were changed tonight (Tonight::count)
+    int tonightChangeCount() const;                             // how many levels and pans were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,
     // and the answer says how many, in plain words ("2 changes couldn't be kept: …"); "" when all of it was kept.
     juce::String keepTonightChanges();
@@ -381,6 +404,13 @@ private:
     void assertSolos(bool force);
     // "Keys on Headphones" for a Mix target, from the band's role and the chosen rig's output; "" when either is gone.
     juce::String roleOnOutputWords(const LevelTarget&) const;
+    // Effects (SessionEffects.cpp). refreshEffects: every live chain brought up to the documents (refresh). cueEffects: a
+    // song just given to the engine in Edit mode gets fresh chains, sent with it. runEffects: an effects command on that
+    // place with these parameters too, unless in Show mode.
+    void refreshEffects();
+    void cueEffects(std::uint64_t serial, const Prepared&);
+    bool runEffects(const juce::String& command, const EffectsTarget&, std::initializer_list<std::pair<const char*, juce::var>>,
+                    const juce::String& verb, int index, const juce::String& gestureId = {});
     void snapshotOnOpening();                                   // Edit mode: the automatic "Opened the folder" snapshot
 
     // The voice being made (SessionVoice.cpp): its thread, what it may write, and its callbacks.
@@ -438,6 +468,8 @@ private:
     std::uint64_t prepared_builds_ = 0;                          // preparedBuilds()
 
     bool mix_built_ = false;
+    std::shared_ptr<const engine::MixSetup> mix_;                // the last mix sent: the output effects follow its buses
+    LiveEffects live_effects_;
     model::BandDoc mix_band_;
     model::RigDoc mix_rig_;
     int mix_channels_ = 0;
@@ -472,6 +504,8 @@ private:
     std::shared_ptr<VoiceJob> voice_job_;                        // the voice being made; nullptr when none is
     juce::StringArray voice_clips_after_show_;                   // clips a voice stopped by the show may have made: forgotten after it
 
+    // The parts prepared for a show, next to the settings file (this computer's own folder); the cache reads and writes it.
+    PreparedStore prepared_store_;
     // Last: their loader threads stop first, and their onChanged reach into the members above.
     CueLibrary cues_{folder_, sample_rate_};
     SongCache cache_;

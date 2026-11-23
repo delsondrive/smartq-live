@@ -10,7 +10,8 @@ namespace sqlive::app {
 
 // Where the engine's stream is against the wall clock: the stream time of a block's first sample and the moment
 // (juce::Time::getMillisecondCounterHiRes, in seconds) the device asked for that block, with the device's rate and output
-// latency. deviceStarts counts the devices started so far: a new count says a device has started since. Not valid while
+// latency: the device's own, plus the delay the output effects hold every output back by (Engine::outputEffectsLatency),
+// so MIDI lands with the audio it goes with. deviceStarts counts the devices started so far: a new count says a device has started since. Not valid while
 // a device that has started hasn't run its first block yet, or before any device has started.
 struct StreamAnchor {
     bool valid = false;

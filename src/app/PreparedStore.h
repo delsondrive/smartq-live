@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -21,7 +22,7 @@ class PreparedStore {
 public:
     PreparedStore(juce::File folder, std::int64_t limitBytes);
 
-    // <user app data>/Smart Q Live/Prepared audio
+    // "Prepared audio" next to the settings file (Settings::defaultFile): <user app data>/Smart Q Live/Prepared audio
     static juce::File defaultFolder();
 
     // SHA-256 (hex) over the audio file's full path, size and modification time, the effects (effectsKey), the sample rate and
@@ -39,12 +40,13 @@ public:
     std::int64_t sizeBytes() const;
     void clear();                                                       // deletes every prepared file
     void trim();                                                        // deletes the files used longest ago until sizeBytes() <= the limit
+    void setLimit(std::int64_t bytes);                                  // any thread; the next trim keeps to it
 
 private:
     juce::File fileFor(const juce::String& key) const;
 
     juce::File folder_;
-    std::int64_t limit_;
+    std::atomic<std::int64_t> limit_;
 };
 
 }  // namespace sqlive::app

@@ -119,6 +119,7 @@ void Session::playSong(const juce::String& songId, double fromSeconds, const juc
     if (serial == 0) return;                                     // the queue is full: nothing was cued
     noteMidi(serial, prepared);
     if (solos_.count(songId) > 0) sendSolo(serial, *prepared);   // heard from its first sample
+    cueEffects(serial, *prepared);                               // and its live chains, fresh for this play
     const auto& song = *prepared->song;
     // A place within a millisecond of the song's start is its start: the editor's cursor at the top, rounded from
     // seconds, can land a sample after it. From its start, the engine sends each device bar 1's state before the count-in.
@@ -288,6 +289,7 @@ engine::FollowOn Session::followOn() const {
 
 void Session::refreshTransport(bool force) {
     assertSolos(false);                                          // a solo the engine's full queue dropped goes again
+    live_effects_.send(engine_);                                 // and part or output effects it refused
     const auto follow = followOn();
     if (follow.kind != follow_on_.kind || follow.gapSeconds != follow_on_.gapSeconds) {
         if (engine_.setFollowOn(follow)) follow_on_ = follow;    // not taken: the next tick tries again
@@ -312,6 +314,7 @@ void Session::refreshTransport(bool force) {
     // all in the few microseconds until the next line: effectively never.
     noteMidi(serial, wanted.prepared);
     if (solos_.count(wanted.prepared->doc.id) > 0) sendSolo(serial, *wanted.prepared);   // heard from its first sample
+    cueEffects(serial, *wanted.prepared);                        // and its live chains (Edit mode), kept with the cue
     cue_sent_this_tick_ = true;
     wanted.serial = serial;
     cue_ = wanted;
