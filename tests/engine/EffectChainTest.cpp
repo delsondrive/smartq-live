@@ -60,10 +60,11 @@ std::vector<ModuleSettings> splitChain() {
     return {bell(6.0), dynamic, transient};
 }
 
-// Plays the noise through a new chain in blocks cycling through `blocks`, with `change` given before sample `changeAt`.
-Stereo play(const Stereo& in, const std::vector<int>& blocks, int changeAt = -1, const ModuleSettings* change = nullptr) {
+// Plays the noise through a new chain in blocks cycling through `blocks`, with `change` given before sample `changeAt`. The chain
+// is made for blocks of maxBlock frames, or of the whole noise with 0.
+Stereo play(const Stereo& in, const std::vector<int>& blocks, int changeAt = -1, const ModuleSettings* change = nullptr, int maxBlock = 0) {
     const auto settings = splitChain();
-    auto chain = EffectChain::make(settings, kRate, (int) in.left.size(), true);
+    auto chain = EffectChain::make(settings, kRate, maxBlock > 0 ? maxBlock : (int) in.left.size(), true);
     Stereo out = in;
     const int frames = (int) in.left.size();
     for (int at = 0, b = 0; at < frames; ++b) {
@@ -105,16 +106,24 @@ TEST_CASE("an effect chain gives the same bits whatever the block split", "[fx]"
     const auto changedWhole = play(in, {48000}, 24000, &louder);
     CHECK_FALSE(sameBits(changedWhole, whole));
     CHECK(sameBits(play(in, {1, 31, 32, 33, 500, 512}, 24000, &louder), changedWhole));
+
+    // made for blocks of 64: in calls of 64, and in one call it plays in pieces of 64
+    CHECK(sameBits(play(in, {64}, -1, nullptr, 64), whole));
+    CHECK(sameBits(play(in, {48000}, -1, nullptr, 64), whole));
 }
 
 TEST_CASE("part effects add no delay; a Limit on an output does", "[fx]") {
     using sqlive::model::EffectPlace;
-    std::vector<sqlive::model::EffectDoc> part;
-    for (auto* kind : {"eq", "dynamic", "deess", "width", "transient"}) part.push_back(sqlive::model::defaultEffect(kind));
-    part[1].values.set("lookahead", 8.0);
-    const auto partChain = sqlive::model::chainOf(part, EffectPlace::Part, true);
-    REQUIRE(partChain.size() == 5);
-    CHECK(EffectChain::make(partChain, kRate, 512, true)->latencySamples() == 0);
+    // every part kind, in two chains of at most four, with a Dynamic asking for 8 ms of lookahead in each
+    for (auto kinds : {std::vector<const char*>{"eq", "dynamic", "deess"}, std::vector<const char*>{"dynamic", "width", "transient"}}) {
+        std::vector<sqlive::model::EffectDoc> part;
+        for (auto* kind : kinds) part.push_back(sqlive::model::defaultEffect(kind));
+        for (auto& effect : part)
+            if (effect.kind == "dynamic") effect.values.set("lookahead", 8.0);
+        const auto partChain = sqlive::model::chainOf(part, EffectPlace::Part, true);
+        REQUIRE(partChain.size() == kinds.size());
+        CHECK(EffectChain::make(partChain, kRate, 512, true)->latencySamples() == 0);
+    }
 
     auto limit = sqlive::model::defaultEffect("limit");
     limit.values.set("true_peak", true);
@@ -150,7 +159,9 @@ TEST_CASE("a settings change reaches the chain without rebuilding it", "[fx]") {
 TEST_CASE("held without effects, the chain plays the input at a matched level", "[fx]") {
     const int frames = 5 * 48000;
     const auto in = pinkNoise(frames);
-    const std::vector<ModuleSettings> settings{bell(6.0, 0.3)};   // a wide +6 dB, which changes the waveform as well as the level
+    EqSettings eq = bell(6.0, 0.3);   // a wide +6 dB, which changes the waveform as well as the level
+    eq.outputGainDb = 3.0;
+    const std::vector<ModuleSettings> settings{eq};
     auto wetChain = EffectChain::make(settings, kRate, 512, true);
     auto heldChain = EffectChain::make(settings, kRate, 512, true);
     heldChain->setHeldWithoutEffects(true);
@@ -162,6 +173,8 @@ TEST_CASE("held without effects, the chain plays the input at a matched level", 
     }
     const size_t from = 3 * 48000;   // the last 2 s
     REQUIRE(correlation(wet.left, in.left, from) < 0.99);              // the EQ is heard when not held
+    REQUIRE(20.0 * std::log10(rms(wet.left, from) / rms(in.left, from)) > 1.0);    // and is louder, so the match has work to do
+    REQUIRE(20.0 * std::log10(rms(wet.right, from) / rms(in.right, from)) > 1.0);
     CHECK(std::abs(20.0 * std::log10(rms(held.left, from) / rms(wet.left, from))) < 1.0);
     CHECK(std::abs(20.0 * std::log10(rms(held.right, from) / rms(wet.right, from))) < 1.0);
     CHECK(correlation(held.left, in.left, from) > 0.99);

@@ -269,3 +269,33 @@ TEST_CASE("a chain keeps only what its place plays", "[effects]") {
     CHECK(output[1].index() == (size_t) EffectKind::Limit);
     CHECK(output[2].index() == (size_t) EffectKind::Width);
 }
+
+TEST_CASE("a chain from a file plays at most four effects, and one Limit on an output", "[effects]") {
+    using namespace sqlive::engine;
+    std::vector<EffectDoc> part;
+    for (auto* k : {"reverb", "eq", "dynamic", "limit", "deess", "width", "transient", "eq"}) part.push_back(defaultEffect(k));
+    const auto partChain = chainOf(part, EffectPlace::Part, true);   // the reverb and the limit skipped, then the first four
+    REQUIRE(partChain.size() == 4);
+    CHECK(kindOf(partChain[0]) == EffectKind::Eq);
+    CHECK(kindOf(partChain[1]) == EffectKind::Dynamic);
+    CHECK(kindOf(partChain[2]) == EffectKind::DeEss);
+    CHECK(kindOf(partChain[3]) == EffectKind::Width);
+
+    auto first = defaultEffect("limit"), second = defaultEffect("limit");
+    first.values.set("ceiling", -1.0);
+    second.values.set("ceiling", -6.0);
+    const auto outputChain = chainOf({first, defaultEffect("eq"), second, defaultEffect("dynamic")}, EffectPlace::Output, true);
+    REQUIRE(outputChain.size() == 3);
+    CHECK(std::get<smartq::dsp::LimitSettings>(outputChain[0]).ceilingDb == -1.0);
+    CHECK(kindOf(outputChain[1]) == EffectKind::Eq);
+    CHECK(kindOf(outputChain[2]) == EffectKind::Dynamic);
+}
+
+TEST_CASE("an effect of a kind not known is kept as it is", "[effects]") {
+    auto reverb = defaultEffect("reverb");
+    reverb.values.set("size", 0.8);
+    reverb.extra.set("plugin", "room");
+    reverb.on = false;
+    CHECK(withSettings(reverb, sqlive::engine::EqSettings{}) == reverb);
+    CHECK(withSettings(reverb, settingsOf(defaultEffect("limit"), EffectPlace::Output)) == reverb);
+}

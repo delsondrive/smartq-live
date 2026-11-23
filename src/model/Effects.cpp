@@ -287,12 +287,19 @@ engine::ModuleSettings settingsOf(const EffectDoc& effect, EffectPlace) {
 std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>& effects, EffectPlace place, bool stereo) {
     const auto kinds = effectKindsFor(place, stereo);
     std::vector<ModuleSettings> chain;
-    for (auto& effect : effects)
-        if (kinds.contains(effect.kind)) chain.push_back(settingsOf(effect, place));
+    bool limited = false;
+    for (auto& effect : effects) {
+        if ((int) chain.size() == kMaxEffects) break;
+        if (! kinds.contains(effect.kind) || (effect.kind == "limit" && limited)) continue;
+        limited = limited || effect.kind == "limit";
+        chain.push_back(settingsOf(effect, place));
+    }
     return chain;
 }
 
 EffectDoc withSettings(EffectDoc effect, const engine::ModuleSettings& settings) {
+    const auto known = [&effect](const char* k) { return effect.kind == k; };
+    if (std::none_of(kKindNames.begin(), kKindNames.end(), known)) return effect;   // kept as it was
     const juce::String kind = kKindNames[settings.index()];
     if (effect.kind != kind) effect.values.clear();   // another kind's values mean nothing here
     effect.kind = kind;

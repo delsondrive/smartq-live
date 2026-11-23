@@ -36,11 +36,13 @@ juce::String effectWords(const juce::String& verb, const juce::String& kind, con
 engine::ModuleSettings settingsOf(const EffectDoc&, EffectPlace);
 
 // The engine's chain for a part's or an output's effects, in order: each effect the place plays (effectKindsFor; so no Width
-// unless stereo, and no kind not known), as settingsOf gives it.
+// unless stereo, and no kind not known), as settingsOf gives it; on an output, only its first Limit; and at most the first
+// kMaxEffects of those, as a file may hold more than the commands allow.
 std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>&, EffectPlace, bool stereo);
 
 // The reverse of settingsOf: the effect with the settings' kind and every value of them (a band for each enabled one), keeping
-// its `on` and `extra` (the settings' bypass is not written: that is `on`).
+// its `on` and `extra` (the settings' bypass is not written: that is `on`). An effect of a kind not known is given back as it
+// was.
 EffectDoc withSettings(EffectDoc, const engine::ModuleSettings&);
 
 }  // namespace sqlive::model
