@@ -2,7 +2,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "app/LevelChecker.h"
 #include "app/PreShowCheck.h"
+#include "model/Effects.h"
+#include "model/LevelMeasure.h"
 #include "tests/support/DemoSession.h"
 #include "tests/support/FileHold.h"
 #include "tests/support/Params.h"
@@ -127,4 +130,79 @@ TEST_CASE("the section cues an entry's arrangement announces are checked; a miss
     REQUIRE(find(items, "cues") != nullptr);
     CHECK(find(items, "cues")->title == "The cue voice hasn't been made");
     CHECK(find(items, "cues")->detail.startsWith("Sections won't be announced (Intro.wav, Verse.wav, Chorus.wav"));
+}
+
+// ---- Effects: every setlist song prepared, and a Limit working hard (the effects plan, Task 9) ----
+
+namespace {
+sqlive::model::EffectDoc gainEq(double db) {
+    auto e = sqlive::model::defaultEffect("eq");
+    e.values.set("output_gain", db);
+    return e;
+}
+}  // namespace
+
+TEST_CASE("Show mode can't start until every setlist song is prepared", "[preshow]") {
+    DemoSession d; auto& s = *d.session;
+    s.preparer().setPaused(true);                                 // nothing is prepared in the background meanwhile
+    CHECK(find(runPreShowCheck(s, good()), "effects") == nullptr);   // no song has effects
+    for (int i = 0; i < 3; ++i) {
+        const auto& song = *s.model().song(d.setlist().entries[(std::size_t) i].songId);
+        const EffectsTarget keys{song.id, song.parts[0].id, {}, {}};
+        REQUIRE(s.addEffect(keys, "eq"));
+        s.setEffect(keys, 0, gainEq(3.0 + i), "gain");
+    }
+    auto items = runPreShowCheck(s, good());
+    const auto* item = find(items, "effects");
+    REQUIRE(item != nullptr);
+    CHECK(item->level == CheckItem::Level::Blocker);
+    CHECK(item->title == "3 songs need their effects prepared.");
+    CHECK(item->fixLabel == "Prepare now");
+    CHECK_FALSE(mayEnterShow(items));
+
+    s.preparer().setPaused(false);
+    s.prepareForShow();
+    CHECK(s.preparingForShow());
+    const auto* preparing = find(runPreShowCheck(s, good()), "effects");
+    REQUIRE(preparing != nullptr);                                // still a blocker while it works, with how far it has got
+    CHECK(preparing->level == CheckItem::Level::Blocker);
+    CHECK(preparing->title.startsWith(juce::String::fromUTF8("Preparing effects\xe2\x80\xa6 ")));
+    CHECK(preparing->fixLabel.isEmpty());
+    for (int i = 0; i < 400 && s.preparingForShow(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    REQUIRE_FALSE(s.preparingForShow());
+    items = runPreShowCheck(s, good());
+    CHECK(find(items, "effects") == nullptr);
+    CHECK(mayEnterShow(items));
+}
+TEST_CASE("the pre-show check names a Limit working hard", "[preshow]") {
+    sqlive::model::OutputPeak peak;
+    peak.outputId = "foh";  peak.limitDb = 4.47f;  peak.limitBar = 97;
+    CHECK(sqlive::model::describeLimit(peak, "FOH", "Hold The Line") == "FOH's Limit takes 4.5 dB in Hold The Line at bar 97.");
+
+    DemoSession d; auto& s = *d.session;
+    const auto& rig = *s.model().rig(s.rigId());
+    const EffectsTarget out{{}, {}, rig.id, rig.outputs[0].id};
+    const auto outName = rig.outputs[0].name;
+    s.levelChecker().checkSetlist();  REQUIRE(s.levelChecker().waitUntilIdle(30000));
+    const auto limits = [&] {
+        std::vector<CheckItem> found;
+        for (auto& i : runPreShowCheck(s, good()))
+            if (i.id == "levels" && i.title.contains("'s Limit takes")) found.push_back(i);
+        return found;
+    };
+    CHECK(limits().empty());                                      // no Limit
+    REQUIRE(s.addEffect(out, "limit"));                           // as it starts: a ceiling of 0 dB, nothing pushed into it
+    auto limit = s.effects(out)[0];
+    s.levelChecker().checkSetlist();  REQUIRE(s.levelChecker().waitUntilIdle(30000));
+    CHECK(limits().empty());
+    limit.values.set("input_gain", 18.0);                         // pushed 18 dB into it
+    s.setEffect(out, 0, limit, "in");
+    s.levelChecker().checkSetlist();  REQUIRE(s.levelChecker().waitUntilIdle(30000));
+    const auto found = limits();
+    REQUIRE(found.size() == 3);                                   // one per song, on that output
+    const auto first = s.model().song(d.setlist().entries[0].songId)->title;
+    CHECK(found[0].level == CheckItem::Level::Warning);
+    CHECK(found[0].title.startsWith(outName + "'s Limit takes "));
+    CHECK(found[0].title.contains(" dB in " + first + " at bar "));
+    CHECK(mayEnterShow(runPreShowCheck(s, good())));              // a warning: the band's call
 }

@@ -15,6 +15,8 @@ namespace {
 
 using Level = CheckItem::Level;
 
+constexpr float kLimitHardDb = 3.0f;                             // "a few dB": a Limit taking more is named
+
 juce::String kilohertz(double hertz) {
     const double khz = hertz / 1000.0;
     return juce::String(khz, std::abs(khz - std::round(khz)) < 0.0005 ? 0 : 1);
@@ -182,6 +184,37 @@ void addFiles(std::vector<CheckItem>& items, const Session& session, const model
     }
 }
 
+// Each output whose Limit takes more than kLimitHardDb in a song, one warning per output and song: a limiter working hard
+// is heard, and the band should know before the show, not on stage.
+void addLimits(std::vector<CheckItem>& items, const Session& session) {
+    for (const auto& sentence : session.levelChecker().limitSentences(kLimitHardDb))
+        items.push_back(item(Level::Warning, "levels", sentence, {}));
+}
+
+// The setlist's songs with a part not prepared for the show (Session::effectsState): a blocker with "Prepare now" until each
+// is; while Prepare now works, a blocker that says how far it has got.
+void addEffects(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
+    if (session.preparingForShow()) {
+        const auto percent = juce::String(juce::roundToInt(100.0 * session.prepareForShowProgress())) + "%";
+        items.push_back(item(Level::Blocker, "effects", juce::String::fromUTF8("Preparing effects\xe2\x80\xa6 ") + percent,
+                             "The show can start once every song is prepared."));
+        return;
+    }
+    if (setlist == nullptr) return;
+    juce::StringArray seen;
+    int changed = 0;
+    for (const auto& entry : setlist->entries) {
+        if (seen.contains(entry.songId)) continue;
+        seen.add(entry.songId);
+        if (session.effectsState(entry.songId) != EffectsPreparer::State::Prepared) ++changed;
+    }
+    if (changed > 0)
+        items.push_back(item(Level::Blocker, "effects",
+                             changed == 1 ? juce::String("1 song needs its effects prepared.")
+                                          : juce::String(changed) + " songs need their effects prepared.",
+                             {}, "Prepare now"));
+}
+
 }  // namespace
 
 std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs& in) {
@@ -189,11 +222,13 @@ std::vector<CheckItem> runPreShowCheck(const Session& session, const CheckInputs
     items.push_back(audioItem(session, in));
     addRouting(items, session, in);
     addLevels(items, session);
+    addLimits(items, session);
     addMidi(items, session);
     const auto* setlist = session.model().setlist(session.setlistId());
     const auto clips = clipProblems(session, setlist);
     addCues(items, clips.missing);
     addFiles(items, session, setlist, clips.inCloud);
+    addEffects(items, session, setlist);
     if (setlist == nullptr || setlist->entries.empty())
         items.push_back(item(Level::Blocker, "setlist", "This setlist is empty", "Add songs to it first."));
     else

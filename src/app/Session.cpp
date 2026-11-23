@@ -61,6 +61,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
     });
     commands_.onChanged = [this](const std::vector<model::DocKey>& keys) {
         autosaver_.noteChanged(keys);
+        noteEffectsEdits(keys);                                  // prepared again for the show 2 s after the last
         outside_->followReloadSteps();
         last_change_ms_ = juce::Time::getMillisecondCounterHiRes();
         refresh();
@@ -100,12 +101,14 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
 
     level_checker_ = std::make_unique<LevelChecker>(*this);
     level_checker_->onChanged = [this] { changed(); };
+    startPreparing();
     refresh();
     startTimerHz(kTimerHz);
 }
 
 Session::~Session() {
     level_checker_.reset();                                      // its thread stops, and nothing of it reaches back here
+    preparer_.reset();                                           // and the preparer's
     stopVoice(true);                                             // its onDone never reaches a session that has gone
     stopTimer();
     cache_.onChanged = nullptr;
@@ -175,6 +178,7 @@ void Session::chooseSetlist(const juce::String& setlistId) {
     setlist_id_ = setlistId;
     rememberChoices();
     setNext(entryIdAt(0));
+    prepareSetlist();
     refresh();
 }
 
@@ -184,6 +188,7 @@ void Session::setDevice(double sampleRate, int outputChannels) {
         sample_rate_ = sampleRate;
         cache_.setSampleRate(sample_rate_);                      // loads everything again at the new rate
         cues_.setSampleRate(sample_rate_);                       // and the cue clips, as they are asked for
+        preparer_->setSampleRate(sample_rate_);                  // and what is prepared for the show
         prepared_.clear();
     }
     // The device has just prepared the engine, which dropped every command it hadn't taken (and, at another rate, its cue):
@@ -595,6 +600,7 @@ void Session::tellLevelChecker() {
     // The gap between two songs counts too: the next song is about to start, and the cache may be readying it.
     const bool showPlays = playing_.active() || (engine_.status().inGap && !interrupted_ && deviceMayPlay());
     level_checker_->holdBack(mode_ == Mode::Show && showPlays);
+    tellPreparer(showPlays);
 }
 
 bool Session::ensureChoices() {

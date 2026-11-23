@@ -14,6 +14,7 @@
 #include "ui/InterruptedBanner.h"
 #include "ui/MainWindow.h"
 #include "ui/PreShowDialog.h"
+#include "ui/ShowState.h"
 #include "ui/Theme.h"
 
 using namespace sqlive;
@@ -234,4 +235,42 @@ TEST_CASE("while the red banner shows, the show view sits under it, dimmed", "[s
     host.deviceStarting(48000.0, 512);  host.deviceBack(48000.0, 2);  s.perform(Action::Start);  s.advanceWithoutDevice(4800);  d.settle();
     REQUIRE_FALSE(shell.showingInterruptedBanner());
     CHECK(stagePtr->getY() == 62);  CHECK(stagePtr->getAlpha() == 1.0f);
+}
+
+// ---- Preparing effects for the show (the effects plan, Task 9) ----
+
+TEST_CASE("a show song's card says Preparing effects, then Ready", "[show][showflow]") {
+    DemoSession d; auto& s = *d.session;
+    const auto song = *s.model().song(d.setlist().entries[0].songId);
+    const EffectsTarget keys{song.id, song.parts[0].id, {}, {}};
+    REQUIRE(s.addEffect(keys, "eq"));
+    auto eq = s.effects(keys)[0];
+    eq.values.set("output_gain", 6.0);
+    s.setEffect(keys, 0, eq, "gain");
+    d.settle();
+
+    // The show starts before the background has prepared it: the cache plays the Keys through the EQ as it loads, and is
+    // stopped there until the test has looked.
+    juce::WaitableEvent inside, goOn;
+    s.cache().onPreparing = [&](const juce::String&) { inside.signal(); goOn.wait(20000); };
+    s.enterShow();
+    REQUIRE(inside.wait(20000));
+    REQUIRE(s.cache().preparingEffects(song.id));
+    auto st = makeShowState(s);
+    REQUIRE(st.cards.size() == 3);
+    CHECK(st.cards[0].kind == ShowState::Card::Kind::Next);
+    CHECK(st.cards[0].note == "Preparing effects");
+    CHECK(st.cards[0].preparing);                                 // the card's progress bar
+    CHECK(st.readiness == Readiness::Loading);                    // it can't be started yet
+    CHECK(st.pill.startsWith("PREPARING EFFECTS "));
+    CHECK(st.action == juce::String::fromUTF8("Preparing effects for ") + song.title + juce::String::fromUTF8("\xe2\x80\xa6"));
+    CHECK(st.nextLabel.contains("PREPARING EFFECTS"));
+
+    goOn.signal();
+    d.settle();
+    s.cache().onPreparing = nullptr;
+    st = makeShowState(s);
+    CHECK(st.cards[0].note == juce::String::fromUTF8("\xe2\x9c\x93 Ready"));
+    CHECK_FALSE(st.cards[0].preparing);
+    CHECK(st.readiness == Readiness::Ready);
 }

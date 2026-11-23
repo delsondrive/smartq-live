@@ -88,6 +88,9 @@ public:
     bool waitUntilIdle(int timeoutMs);                            // for tests; also delivers pending onChanged calls
     // For tests, set before setWanted: called on the loader thread just after a part's audio file has been read.
     std::function<void(const juce::File&)> onPartRead;
+    // For tests, set before setWanted: called on the loader thread once a part is being played through its effects
+    // (preparingEffects is true), just before applyEffects runs.
+    std::function<void(const juce::String& partId)> onPreparing;
 
 private:
     struct Entry {                                                 // a kept song the loader has been asked for

@@ -336,6 +336,7 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
             if (wantsEffects && std::any_of(chain.begin(), chain.end(), [](const engine::ModuleSettings& s) {
                                                  return ! std::visit([](const auto& settings) { return settings.bypassed; }, s); })) {
                 setPreparing(job, true);
+                if (onPreparing) onPreparing(part.id);
                 auto prepared = engine::applyEffects(audio, chain, job.sampleRate, within(0.5, 1.0));
                 setPreparing(job, false);
                 if (prepared == nullptr) return nullptr;               // abandoned meanwhile

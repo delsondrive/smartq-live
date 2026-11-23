@@ -23,10 +23,10 @@ namespace sqlive::ui {
 // bar's place; while → (or Go to the next song now's key) is held toward the next song, "Keep holding to go to the next
 // song" takes it in ember (ShowController::nextSongHoldProgress()), with no ring. Between songs: "UP NEXT", the title,
 // its BPM, key (when it has one) and length; the call to action (Start's key, what it does and the pill) on a mint panel
-// when the song is ready, a grey one with a progress bar while it loads, a red one when it can't play; the song's section
-// tiles, quiet, each with its number; the row of songs around it; the hints. After a song was cut off (the device went
-// away): "PAUSED · 1 OF 3" in mint, the title and the bar it reached, and nothing else (the mockup's screen 5; the
-// shell's box says what Space does).
+// when the song is ready, a grey one with a progress bar while it loads or its effects are being prepared ("Preparing
+// effects for …"), a red one when it can't play; the song's section tiles, quiet, each with its number; the row of songs
+// around it; the hints. After a song was cut off (the device went away): "PAUSED · 1 OF 3" in mint, the title and the bar
+// it reached, and nothing else (the mockup's screen 5; the shell's box says what Space does).
 // Once the last song has ended: the setlist's name and "That was the last song." Cues and the pad are left out.
 //
 // Everything is drawn at the mockup's sizes for a 1280 x 698 area, scaled by min(width / 1280, height / 698).

@@ -12,7 +12,8 @@ namespace sqlive::ui {
 // The mockup's .setstrip: the setlist as a row of cards across the top of the main view, 168 px wide and 8 px apart.
 // Each card: its number, its title (shortened with "…" to fit), its length and its note. Played cards at 45%; the
 // playing card with the mint outline, the "NOW" tag and a 3 px mint bar along its bottom for how far it has played; the
-// next card with a dashed ember outline and the "NEXT" tag. With no songs it says "No songs yet".
+// next card with a dashed ember outline and the "NEXT" tag, and while its effects are being prepared ("Preparing effects") a
+// grey bar along its bottom for how far that has got. With no songs it says "No songs yet".
 //
 // It scrolls sideways by itself, to keep the playing and the next card in view whenever either changes (or its size
 // does), and with the mouse wheel. A click on a card makes it the next song (Session::chooseNext). It never takes the

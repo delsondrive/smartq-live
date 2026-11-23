@@ -166,6 +166,13 @@ void SetlistStrip::paintCard(juce::Graphics& g, const ShowState::Card& card, int
         juce::PathStrokeType(1.0f).createDashedStroke(dashed, cardOutline(r.reduced(0.5f)), dashes, 2);
         g.setColour(theme::ember);
         g.fillPath(dashed);
+        if (card.preparing) {                                     // its effects being prepared: the playing card's bar, grey
+            const float progress = static_cast<float>(std::clamp(card.progress, 0.0, 1.0));
+            juce::Graphics::ScopedSaveState state(g);
+            g.reduceClipRegion(cardOutline(r));
+            g.setColour(theme::dim);
+            g.fillRect(r.getX(), r.getBottom() - kBarHeight, r.getWidth() * progress, kBarHeight);
+        }
     } else {
         g.setColour(theme::hairline);
         g.drawRoundedRectangle(r.reduced(0.5f), kCardRadius, 1.0f);

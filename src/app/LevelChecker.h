@@ -45,6 +45,11 @@ class Session;
 // read, as reading it would start a download: it is CantMeasure, still in the cloud. So is one none of whose parts' audio
 // can be read. Either is left out of total().
 //
+// Part effects: in Edit mode a part with an effect on (EffectsPreparer::hasEffectOn) is measured as Show mode plays it, from
+// its prepared audio: the session's PreparedStore's when it has it, else read from its file, played through its effects here
+// and put in the store for the show (never the cache's audio, which plays it live). The fingerprint counts each part's
+// effects. In Show mode the cache's audio is already prepared, and is measured as it is.
+//
 // In Show mode (showRuns) the audio is the cache's only: no part file is read, so the show keeps the disk and the memory
 // budget to itself. A song the cache doesn't hold at the rate isn't queued, and one the cache let go of before its turn
 // is passed over: it stays Unknown ("not checked yet") until the cache takes it (noteChanges sees that) or Edit mode. What
@@ -88,6 +93,9 @@ public:
     // same sentence once.
     std::vector<juce::String> clipSentences() const;
     int clippingOutputs() const;                                   // how many of the rig's outputs clip in any setlist song
+    // model::describeLimit for each output whose Limit takes more than overDb in a setlist song, song by song in setlist
+    // order, each song's in the rig's order: one per output and song, the most over its arrangements.
+    std::vector<juce::String> limitSentences(float overDb) const;
 
     std::function<void()> onChanged;                               // message thread: a song's result, or what is measuring
     bool waitUntilIdle(int timeoutMs);                             // for tests: nothing waits or is measured; delivers onChanged
@@ -112,6 +120,7 @@ private:
         juce::String songId, arrangementId, rigId;
         std::uint64_t song = 0, band = 0, rig = 0, tonight = 0;
         double sampleRate = 0.0;
+        juce::String effects;                                      // each part's effects (model::effectsKey), as prepared
         std::vector<FileStamp> files;                              // each part's, in part order
         bool operator==(const Fingerprint&) const = default;
     };
@@ -125,6 +134,7 @@ private:
         std::map<juce::String, juce::File> files;                  // each part's audio file by part id
         bool inCloud = false;                                      // a part's file is still in the cloud: not read
         Clips clips;                                               // the cue and click clips it asked for, as CueLibrary gave them
+        PreparedStore* store = nullptr;                            // Edit mode: where its parts' prepared audio is kept
     };
     struct Result {
         Fingerprint print;

@@ -45,4 +45,8 @@ float clipOverDb(const OutputPeak&);
 // "PA clips in Hold The Line at bar 97, by 1.4 dB."
 juce::String describeClip(const OutputPeak&, const juce::String& outputName, const juce::String& songTitle);
 
+// "FOH's Limit takes 4.5 dB in Hold The Line at bar 97.": how hard an output's Limit works in a song (limitDb, to a tenth of a
+// dB, and limitBar).
+juce::String describeLimit(const OutputPeak&, const juce::String& outputName, const juce::String& songTitle);
+
 }  // namespace sqlive::model

@@ -21,8 +21,9 @@ namespace sqlive::ui {
 // a mint link after them; and a footer with the legend "✕ must be fixed · ! is your call", "Back to Edit" and "Go to Show
 // mode" (primary, enabled only when app::mayEnterShow says so).
 //
-// The check runs again every second while the dialog is open, so a problem fixed meanwhile clears by itself. The one
-// link there is, "Download now", works the files out again (app::partFileProblems for each song of the setlist, and
+// The check runs again every second while the dialog is open, so a problem fixed meanwhile clears by itself. "Prepare
+// now" (the effects line) starts app::Session::prepareForShow, and the line then says how far it has got until every song
+// is prepared. "Download now" works the files out again (app::partFileProblems for each song of the setlist, and
 // app::clipFileProblems for each entry's cue and click sounds) and asks
 // for each one still in the cloud with model::startDownload. A view: it never writes the band folder.
 class PreShowDialog : public juce::Component, private juce::Timer {

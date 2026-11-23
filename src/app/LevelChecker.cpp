@@ -4,9 +4,13 @@
 #include <set>
 #include <utility>
 
+#include "app/EffectsPreparer.h"
 #include "app/PartFiles.h"
+#include "app/PreparedStore.h"
 #include "app/Session.h"
+#include "engine/ApplyEffects.h"
 #include "model/CloudFiles.h"
+#include "model/Effects.h"
 #include "model/SongAudio.h"
 
 namespace sqlive::app {
@@ -88,6 +92,9 @@ LevelChecker::Fingerprint LevelChecker::fingerprintOf(const Wanted& w) const {
     f.rig = model.revision({model::DocKind::Rig, f.rigId});
     f.tonight = session_.tonightRevision();
     f.sampleRate = session_.sampleRate();
+    if (const auto* song = model.song(w.songId))
+        for (const auto& part : song->parts)
+            if (!part.effects.empty()) f.effects << part.id << '|' << sqlive::model::effectsKey(part.effects) << '\n';
     if (const auto found = stamps_.find(w.songId); found != stamps_.end()) f.files = found->second;
     return f;
 }
@@ -210,6 +217,7 @@ void LevelChecker::checkSetlist() {
         for (const auto& part : doc.parts) job.files[part.id] = session_.folder().audioFile(doc, part);
         job.inCloud = std::any_of(job.print.files.begin(), job.print.files.end(), [](const FileStamp& s) { return !s.here; });
         for (const auto& path : clipsNeeded(job.doc, band, w.arrangementId)) job.clips[path] = session_.cues().clip(path);
+        if (!show) job.store = &session_.preparedStore();
         jobs.push_back(std::move(job));
     }
     {
@@ -378,6 +386,33 @@ std::vector<juce::String> LevelChecker::clipSentences() const {
     return sentences;
 }
 
+std::vector<juce::String> LevelChecker::limitSentences(float overDb) const {
+    std::vector<std::pair<juce::String, model::OutputPeak>> worst;   // by song, then output, in the order first met
+    for (const auto& w : wanted()) {
+        if (!w.counted || stateOf(w) != State::Done) continue;
+        const juce::ScopedLock sl(lock_);
+        const auto found = results_.find({w.songId, w.arrangementId});
+        if (found == results_.end()) continue;
+        for (const auto& peak : found->second.levels.outputs) {
+            if (peak.limitDb <= overDb) continue;
+            const auto same = std::find_if(worst.begin(), worst.end(), [&](const auto& seen) {
+                return seen.first == w.songId && seen.second.outputId == peak.outputId;
+            });
+            if (same == worst.end()) worst.emplace_back(w.songId, peak);
+            else if (peak.limitDb > same->second.limitDb) same->second = peak;   // the most over its arrangements
+        }
+    }
+    std::vector<juce::String> sentences;
+    const auto rig = session_.rigAsHeard();
+    for (const auto& [songId, peak] : worst) {
+        const auto out = std::find_if(rig.outputs.begin(), rig.outputs.end(),
+                                      [&](const model::OutputDoc& o) { return o.id == peak.outputId; });
+        sentences.push_back(model::describeLimit(peak, out != rig.outputs.end() ? out->name : juce::String(),
+                                                 session_.model().song(songId)->title));
+    }
+    return sentences;
+}
+
 int LevelChecker::clippingOutputs() const {
     std::set<juce::String> outputs;
     for (const auto& w : wanted()) {
@@ -446,6 +481,9 @@ std::optional<LevelChecker::Result> LevelChecker::measure(const Job& job) {
     };
     if (job.inCloud) return cantMeasure(true);                     // reading it would start a download
 
+    // Edit mode: a part with an effect on is measured from its prepared audio (below), not read here.
+    const bool prepareHere = job.store != nullptr && !show_;
+    const auto preparedHere = [&](const model::PartDoc& part) { return prepareHere && EffectsPreparer::hasEffectOn(part); };
     std::map<juce::String, std::shared_ptr<const engine::PartAudio>> audio;
     if (const auto cached = job.cached.lock(); cached != nullptr && cached->sampleRate == rate) {
         audio = cached->audio;                                     // the parts alone, for this song only
@@ -454,13 +492,37 @@ std::optional<LevelChecker::Result> LevelChecker::measure(const Job& job) {
     } else {
         for (const auto& part : job.doc.parts) {
             const auto file = job.files.find(part.id);
-            if (file == job.files.end() || !file->second.existsAsFile()) continue;
+            if (preparedHere(part) || file == job.files.end() || !file->second.existsAsFile()) continue;
             if (!model::isOnThisComputer(file->second)) return cantMeasure(true);   // gone to the cloud since
             ++files_read_;
             auto loaded = model::loadPartAudio(file->second, rate, keepGoing);
             if (!keepGoing(0.0)) return std::nullopt;
             if (loaded != nullptr) audio[part.id] = std::move(loaded);
         }
+    }
+    // As Show mode plays it: the store's prepared audio, else the file read, played through its effects and kept in the store
+    // for the show. Never the cache's audio, which Edit mode plays live (and which, just after a show, may still be prepared).
+    for (const auto& part : job.doc.parts) {
+        if (!preparedHere(part)) continue;
+        audio.erase(part.id);
+        const auto file = job.files.find(part.id);
+        if (file == job.files.end() || !file->second.existsAsFile()) continue;
+        if (!model::isOnThisComputer(file->second)) return cantMeasure(true);   // gone to the cloud since
+        const auto key = PreparedStore::keyFor(file->second, part.effects, rate);
+        auto prepared = job.store->read(key, keepGoing);
+        if (!keepGoing(0.0)) return std::nullopt;
+        if (prepared == nullptr) {
+            ++files_read_;
+            const auto raw = model::loadPartAudio(file->second, rate, keepGoing);
+            if (!keepGoing(0.0)) return std::nullopt;
+            if (raw == nullptr) continue;
+            const bool keyStillHolds = PreparedStore::keyFor(file->second, part.effects, rate) == key;   // the file didn't change
+            const auto chain = model::chainOf(part.effects, model::EffectPlace::Part, !raw->right.empty());
+            prepared = engine::applyEffects(raw, chain, rate, keepGoing);
+            if (prepared == nullptr) return std::nullopt;
+            if (keyStillHolds && job.store->write(key, *prepared)) job.store->trim();
+        }
+        audio[part.id] = std::move(prepared);
     }
     if (audio.empty()) return cantMeasure(false);
 

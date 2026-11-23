@@ -28,9 +28,10 @@ struct SongReadiness {
     Readiness readiness = Readiness::None;
     double progress = 0.0;
     juce::StringArray problems;
+    bool preparing = false;                                        // Loading, and the cache is playing a part through its effects
 };
 
-SongReadiness readinessAt(const app::Session& session, const app::NowPlaying& now, int index, const juce::String& songId) {
+SongReadiness readinessOf(const app::Session& session, const app::NowPlaying& now, int index, const juce::String& songId) {
     if (index == now.nextIndex) return {now.nextReadiness, now.nextProgress, now.nextProblems};
     const auto& cache = session.cache();
     switch (cache.state(songId)) {
@@ -42,7 +43,13 @@ SongReadiness readinessAt(const app::Session& session, const app::NowPlaying& no
     return {Readiness::Loading, cache.progress(songId), {}};
 }
 
-// The card's note for the next song: "✓ Ready", "Loading 62%", "Can't play".
+SongReadiness readinessAt(const app::Session& session, const app::NowPlaying& now, int index, const juce::String& songId) {
+    auto r = readinessOf(session, now, index, songId);
+    r.preparing = r.readiness == Readiness::Loading && session.cache().preparingEffects(songId);
+    return r;
+}
+
+// The card's note for the next song: "✓ Ready", "Loading 62%", "Preparing effects" (its bar shows how far), "Can't play".
 juce::String readinessNote(const SongReadiness& r) {
     switch (r.readiness) {
     case Readiness::Ready: return utf8("\xe2\x9c\x93 Ready");
@@ -50,10 +57,11 @@ juce::String readinessNote(const SongReadiness& r) {
     case Readiness::None:
     case Readiness::Loading: break;
     }
+    if (r.preparing) return "Preparing effects";
     return "Loading " + percent(r.progress);
 }
 
-// The same, in capitals, for the pills and labels: "✓ READY", "LOADING 62%", "CAN'T PLAY".
+// The same, in capitals, for the pills and labels: "✓ READY", "LOADING 62%", "PREPARING EFFECTS 62%", "CAN'T PLAY".
 juce::String readinessPill(const SongReadiness& r) {
     switch (r.readiness) {
     case Readiness::Ready: return utf8("\xe2\x9c\x93 READY");
@@ -61,6 +69,7 @@ juce::String readinessPill(const SongReadiness& r) {
     case Readiness::None:
     case Readiness::Loading: break;
     }
+    if (r.preparing) return "PREPARING EFFECTS " + percent(r.progress);
     return "LOADING " + percent(r.progress);
 }
 
@@ -380,6 +389,8 @@ ShowState makeShowState(const app::Session& session) {
             card.note = readinessNote(next);
             card.noteGood = next.readiness == Readiness::Ready;
             card.noteBad = next.readiness == Readiness::Failed;
+            card.preparing = next.preparing;
+            if (next.preparing) card.progress = next.progress;
         } else {
             card.note = transitionNote(*list, static_cast<std::size_t>(i));
         }
@@ -447,7 +458,7 @@ ShowState makeShowState(const app::Session& session) {
             break;
         case Readiness::None:
         case Readiness::Loading:
-            st.action = "Loading " + st.upTitle + utf8("\xe2\x80\xa6");
+            st.action = (next.preparing ? "Preparing effects for " : "Loading ") + st.upTitle + utf8("\xe2\x80\xa6");
             st.actionDetail = keys.startWords(true) + " will work as soon as this says Ready.";
             break;
         }

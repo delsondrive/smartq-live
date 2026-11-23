@@ -12,6 +12,7 @@
 #include <juce_events/juce_events.h>
 
 #include "app/CueLibrary.h"
+#include "app/EffectsPreparer.h"
 #include "app/FolderWatch.h"
 #include "app/LiveEffects.h"
 #include "app/MeterReader.h"
@@ -244,6 +245,19 @@ public:
     const engine::EffectChain* liveChain(const EffectsTarget&) const;   // for tests: the chain playing there now; nullptr for none
     std::uint64_t partEffectsSent() const;                       // for tests: how many PartEffects the engine has taken
     std::uint64_t outputEffectsSent() const;                     // for tests: and OutputEffects
+    // Preparing for the show (SessionPrepare.cpp; EffectsPreparer): each part with an effect on, played through its effects
+    // once and kept in preparedStore(), so the show finds it there. In Edit mode, 2 s after the last change to a song's
+    // effects (or its parts' files), that song is prepared in the background; on opening the band, choosing a setlist and
+    // leaving Show mode, the setlist's songs are. Never while a show's song plays or between two; in Show mode, nothing.
+    // effectsState: the song as the model has it now (Changed: a part with an effect on isn't prepared, nor waiting to be).
+    EffectsPreparer::State effectsState(const juce::String& songId) const;
+    double effectsProgress(const juce::String& songId) const;   // 0..1 while it is being prepared
+    // The pre-show check's "Prepare now": every song of the setlist, first. Edit mode only.
+    void prepareForShow();
+    bool preparingForShow() const;                               // until it is done
+    double prepareForShowProgress() const;                       // 0..1 over the setlist's songs
+    EffectsPreparer& preparer();                                 // for tests: setPaused, waitUntilIdle
+    PreparedStore& preparedStore();                              // where prepared parts are kept on this computer
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                             // how many levels and pans were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,
@@ -414,6 +428,15 @@ private:
     bool runEffects(const juce::String& command, const EffectsTarget&, std::initializer_list<std::pair<const char*, juce::var>>,
                     const juce::String& verb, int index, const juce::String& gestureId = {});
     void snapshotOnOpening();                                   // Edit mode: the automatic "Opened the folder" snapshot
+    // Preparing for the show (SessionPrepare.cpp). startPreparing: made as the band opens, wanting the setlist's songs.
+    // noteEffectsEdits: the commands' changed documents; a song whose effects or part files changed is prepared 2 s after
+    // the last such change (tellPreparer hands it over, on the timer). tellPreparer also says whether a show runs or plays.
+    void startPreparing();
+    void noteEffectsEdits(const std::vector<model::DocKey>&);
+    void tellPreparer(bool showPlays);
+    void prepareSetlist();                                      // the setlist's songs, after the songs edited since opening
+    WantedSong songToPrepare(const juce::String& songId) const;   // a copy of the song and its part files
+    juce::StringArray setlistSongIds() const;                    // each once, in setlist order
 
     // The voice being made (SessionVoice.cpp): its thread, what it may write, and its callbacks.
     struct VoiceJob;
@@ -513,6 +536,14 @@ private:
     SongCache cache_;
     // After them, so it goes first: its thread works only from copies, but its timer and callbacks reach the session.
     std::unique_ptr<LevelChecker> level_checker_;
+    // The same for the preparer, which writes to prepared_store_. What it was told, and the edits waiting for their 2 s.
+    std::unique_ptr<EffectsPreparer> preparer_;
+    std::map<juce::String, juce::String> effects_seen_;          // by song id: its parts' files and effects, as last seen
+    juce::StringArray effects_edited_;                           // songs whose effects changed since opening, latest first
+    juce::StringArray effects_pending_;                          // changed less than 2 s ago
+    double effects_due_ms_ = 0.0;
+    bool preparer_show_ = false;
+    std::optional<double> show_prepare_;                         // prepareForShow's progress while it runs
 };
 
 }  // namespace sqlive::app

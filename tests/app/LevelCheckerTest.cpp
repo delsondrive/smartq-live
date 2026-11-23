@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <tuple>
@@ -467,4 +468,27 @@ TEST_CASE("an output's live meter falls 1.5 dB a frame and its clip light stays 
     CHECK(meter.clipLit());
     meter.tick(2100.0);
     CHECK_FALSE(meter.clipLit());
+}
+
+// ---- Part effects (the effects plan, Task 9) ----
+
+TEST_CASE("the level check counts part effects", "[levels][levelcheck]") {
+    DemoSession d; auto& s = *d.session;
+    const auto song = *s.model().song(d.setlist().entries[0].songId);
+    REQUIRE(song.parts[0].name == "Keys");
+    for (std::size_t i = 1; i < song.parts.size(); ++i) s.setMute(song.id, song.parts[i].id, true);   // the Keys alone
+    s.setLevel({LevelTarget::Kind::BandClick, {}, {}, {}, {}}, -60.0f, "click");
+    measureAll(s);
+    const auto before = s.levelChecker().levels(song.id)->outputs[0].peakDb;
+
+    const EffectsTarget keys{song.id, song.parts[0].id, {}, {}};
+    REQUIRE(s.addEffect(keys, "eq"));
+    auto eq = s.effects(keys)[0];
+    eq.values.set("output_gain", 6.0);
+    s.setEffect(keys, 0, eq, "gain");
+    CHECK(s.levelChecker().state(song.id) == LevelChecker::State::Unknown);   // an effects change puts it out of date
+    measureAll(s);
+    CHECK(s.levelChecker().levels(song.id)->outputs[0].peakDb == Catch::Approx(before + 6.0f).margin(0.5f));
+    const auto& doc = *s.model().song(song.id);                   // measured from its prepared audio, kept for the show
+    CHECK(s.preparedStore().has(PreparedStore::keyFor(s.folder().audioFile(doc, doc.parts[0]), doc.parts[0].effects, 48000.0)));
 }

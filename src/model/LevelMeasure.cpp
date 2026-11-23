@@ -208,4 +208,9 @@ juce::String describeClip(const OutputPeak& peak, const juce::String& outputName
     return outputName + " clips in " + songTitle + " at bar " + juce::String(peak.bar) + ", by " + juce::String(clipOverDb(peak), 1) + " dB.";
 }
 
+juce::String describeLimit(const OutputPeak& peak, const juce::String& outputName, const juce::String& songTitle) {
+    return outputName + "'s Limit takes " + juce::String(peak.limitDb, 1) + " dB in " + songTitle + " at bar "
+           + juce::String(peak.limitBar) + ".";
+}
+
 }  // namespace sqlive::model

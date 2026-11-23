@@ -238,6 +238,7 @@ void PreShowDialog::downloadNow() {
 
 void PreShowDialog::fix(const app::CheckItem& item) {
     if (item.id == "files") downloadNow();
+    else if (item.id == "effects") session_.prepareForShow();   // the line then says how far it has got, every second
     recheck();
 }
 

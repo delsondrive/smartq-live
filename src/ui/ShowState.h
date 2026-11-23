@@ -49,13 +49,15 @@ StepSpans stepSpansOf(const std::vector<app::StepView>&);
 struct ShowState {
     // A setlist card. Done: before the one playing (or, between songs, before the next); Playing: the one playing; Next:
     // the next; Later: the rest. The note says what follows the song ("→ stop", "→ gap 4 s", "→ seamless", "end"); the
-    // next card's says whether it can play instead ("✓ Ready", "Loading 62%", "Can't play").
+    // next card's says whether it can play instead ("✓ Ready", "Loading 62%", "Preparing effects", "Can't play").
     struct Card {
         enum class Kind { Done, Playing, Next, Later };
         int number = 0;
         juce::String title, length, note;
         Kind kind = Kind::Later;
-        double progress = 0.0;                                     // the playing card's, 0..1
+        double progress = 0.0;                                     // the playing card's, 0..1; the next card's while preparing
+        bool preparing = false;                                    // the next card's song: its effects are being prepared (the cache
+                                                                   // plays a part through them as it loads it); a bar shows progress
         bool noteGood = false, noteBad = false;
         bool operator==(const Card&) const = default;
     };
