@@ -532,7 +532,7 @@ Segmented* levelsForIn(juce::Component& root) {
 
 }  // namespace
 
-TEST_CASE("a real press anywhere outside the typing field sets what was typed; a press inside it doesn't", "[mixerkeys]") {
+TEST_CASE("a real press anywhere outside the typing field sets what was typed; a press inside it doesn't", "[mixerkeys][.window]") {
     DemoSession d; auto& s = *d.session;
     ScopedLook look;
     MixerPage page(s);
