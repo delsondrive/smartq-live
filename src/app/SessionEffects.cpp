@@ -147,5 +147,6 @@ float Session::effectReductionDb(const EffectsTarget& target, int index) const {
 int Session::outputEffectsDelaySamples() const { return engine_.outputEffectsLatency(); }
 
 std::uint64_t Session::partEffectsSent() const { return live_effects_.partEffectsSent(); }
+std::uint64_t Session::outputEffectsSent() const { return live_effects_.outputEffectsSent(); }
 
 }  // namespace sqlive::app

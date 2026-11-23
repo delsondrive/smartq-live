@@ -234,7 +234,8 @@ public:
     bool switchEffect(const EffectsTarget&, int index, bool on);
     void setEffect(const EffectsTarget&, int index, const model::EffectDoc&, const juce::String& gestureId);
     // While held, that chain plays its input at the loudness its effects would give (EffectChain::setHeldWithoutEffects): a
-    // part of the song playing in Edit mode, or an output of the rig chosen now. Ignored otherwise.
+    // part of the song playing in Edit mode, or an output of the rig chosen now. Ignored otherwise. Entering Show mode lets
+    // go of every hold.
     void holdWithoutEffects(const EffectsTarget&, bool held);
     // How many dB that effect is turning the audio down now, from the chain that plays: a part of the song playing in Edit
     // mode, or an output's in either mode. 0 otherwise, and for an effect that turns nothing down.
@@ -242,6 +243,7 @@ public:
     int outputEffectsDelaySamples() const;                      // how late every output leaves for its effects (and MIDI with it)
     const engine::EffectChain* liveChain(const EffectsTarget&) const;   // for tests: the chain playing there now; nullptr for none
     std::uint64_t partEffectsSent() const;                       // for tests: how many PartEffects the engine has taken
+    std::uint64_t outputEffectsSent() const;                     // for tests: and OutputEffects
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                             // how many levels and pans were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,

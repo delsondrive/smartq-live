@@ -36,9 +36,10 @@ bool sameApartFromEffects(model::SongDoc, model::SongDoc);
 // (EffectChain::setSettings: heard at once, with no rebuild and no click) and a chain is made again only when its kinds or
 // their order change. What the engine then needs (a song's new PartEffects, new OutputEffects) waits here until send.
 //
-// A part's chain plays while one of its effects is on; with all of them off the part plays as it is, as in a show, where
-// such a part isn't prepared. The same for an output. Each song the engine holds has chains of its own, by its serial,
-// never shared with another (a song crossfading into itself included).
+// A part's or an output's chain is kept while it has effects, all of them off included (every slot bypassed: a part plays as
+// it is, bit for bit, as a show plays such a part unprepared), so switching an effect is a setting, never a cold chain or a
+// change in the outputs' delay; it goes only when its effects do. Each song the engine holds has chains of its own, by its
+// serial, never shared with another (a song crossfading into itself included).
 class LiveEffects {
 public:
     // A song the engine holds that plays live (Edit mode): its serial, its document as the model has it now, and what the
@@ -79,8 +80,11 @@ public:
     // while held. Nothing when no chain plays there.
     void holdPart(std::uint64_t serial, const juce::String& partId, bool held);
     void holdOutput(const juce::String& outputId, bool held);
+    void releaseHolds();                                         // every chain here plays its effects again
 
-    std::uint64_t partEffectsSent() const { return part_effects_sent_; }   // how many PartEffects the engine took
+    std::uint64_t partEffectsSent() const { return part_effects_sent_; }       // how many PartEffects the engine took (a
+                                                                               // clearing one included)
+    std::uint64_t outputEffectsSent() const { return output_effects_sent_; }   // and OutputEffects
 
 private:
     struct Chain {
@@ -112,6 +116,7 @@ private:
     std::map<std::uint64_t, SongChains> songs_;
     std::map<std::uint64_t, std::shared_ptr<engine::PartEffects>> unsent_parts_;   // null: clear the song's
     std::uint64_t part_effects_sent_ = 0;
+    std::uint64_t output_effects_sent_ = 0;
 
     std::map<juce::String, Output> outputs_;                     // by output id: those with a bus
     std::vector<std::pair<int, bool>> layout_;                   // the mix's buses: first channel, stereo

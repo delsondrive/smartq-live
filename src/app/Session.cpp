@@ -274,6 +274,7 @@ void Session::enterShow() {
     if (playing_.active() && playing_.single) perform(Action::Stop);
     stopVoice(false);                                            // and waited for: Show mode never writes the band folder
     mode_ = Mode::Show;
+    live_effects_.releaseHolds();                                // a hold on a chain would stick: a show can't let go of it
     cues_.setShowRunning(true);                                  // nor looks at the cue clips again: the show keeps its own
     solos_.clear();                                              // a show has no solo (SessionSolo.cpp): sent for sure
     assertSolos(true);

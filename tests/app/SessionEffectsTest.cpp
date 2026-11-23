@@ -155,21 +155,75 @@ TEST_CASE("moving a knob changes the sound without rebuilding the chain", "[sess
     CHECK(s.commands().undoWords() == "add EQ on Keys");
     CHECK(s.liveChain(k.keysFx) == chain);
 
-    REQUIRE(s.switchEffect(k.keysFx, 0, false));                               // the only effect off: no chain plays
+    REQUIRE(s.switchEffect(k.keysFx, 0, false));                               // the only effect off: the same chain, bypassed
     CHECK(s.commands().undoWords() == "switch off EQ on Keys");
-    CHECK(s.liveChain(k.keysFx) == nullptr);
+    CHECK(s.liveChain(k.keysFx) == chain);
     REQUIRE(s.switchEffect(k.keysFx, 0, true));
     CHECK(s.commands().undoWords() == "switch on EQ on Keys");
-    REQUIRE(s.liveChain(k.keysFx) != nullptr);
-    const auto* second = s.liveChain(k.keysFx);
+    CHECK(s.liveChain(k.keysFx) == chain);                                     // and back on: still a setting, nothing cold
+    CHECK(s.partEffectsSent() == sent);
     REQUIRE(s.addEffect(k.keysFx, "dynamic"));                                 // a new kind: a new chain
-    CHECK(s.liveChain(k.keysFx) != second);
+    CHECK(s.liveChain(k.keysFx) != chain);
     REQUIRE(s.moveEffect(k.keysFx, 1, 0));
     CHECK(s.commands().undoWords() == "move Dynamic on Keys");
     CHECK(s.effects(k.keysFx)[0].kind == "dynamic");
     REQUIRE(s.removeEffect(k.keysFx, 0));
     CHECK(s.commands().undoWords() == "remove Dynamic on Keys");
     CHECK(s.effects(k.keysFx).size() == 1);
+}
+
+TEST_CASE("a part whose only effect is off plays bit for bit as it would with none", "[session-fx]") {
+    KeysAlone k; auto& s = k.s;
+    constexpr int n = 48000;
+    playFrom(s, k.song.id, 0.1);
+    const auto none = capture(s, n);
+
+    REQUIRE(s.addEffect(k.keysFx, "eq"));
+    s.setEffect(k.keysFx, 0, bell(392.0, 12.0, 2.0), "keys");
+    REQUIRE(s.switchEffect(k.keysFx, 0, false));                               // as a show plays it: the part as it is
+    playFrom(s, k.song.id, 0.1);
+    REQUIRE(s.liveChain(k.keysFx) != nullptr);                                 // played through its chain, every slot bypassed
+    const auto off = capture(s, n);
+    CHECK(off.left == none.left);
+    CHECK(off.right == none.right);
+}
+
+TEST_CASE("switching an output's only Limit off and on keeps its delay and its chain", "[session-fx]") {
+    KeysAlone k; auto& s = k.s;
+    REQUIRE(s.addEffect(k.outFx, "limit"));
+    capture(s, 1024);
+    const int latency = s.engine().outputEffectsLatency();
+    REQUIRE(latency > 0);
+    const auto* chain = s.liveChain(k.outFx);
+    REQUIRE(chain != nullptr);
+    const auto sent = s.outputEffectsSent();
+    for (const bool on : {false, true, false, true}) {
+        INFO("on " << on);
+        REQUIRE(s.switchEffect(k.outFx, 0, on));
+        capture(s, 1024);
+        CHECK(s.engine().outputEffectsLatency() == latency);                   // every output stays where it was, and MIDI too
+        CHECK(s.liveChain(k.outFx) == chain);
+        CHECK(s.outputEffectsSent() == sent);                                  // a setting only: no new OutputEffects
+    }
+}
+
+TEST_CASE("entering Show mode lets go of every chain held without its effects", "[session-fx]") {
+    KeysAlone k; auto& s = k.s;
+    REQUIRE(s.addEffect(k.keysFx, "eq"));
+    REQUIRE(s.addEffect(k.outFx, "limit"));
+    s.perform(Action::Start);                                                   // a setlist song: it plays on into the show
+    s.advanceWithoutDevice(48000);
+    REQUIRE(s.now().playingSongId == k.song.id);
+    const auto* keys = s.liveChain(k.keysFx);
+    const auto* out = s.liveChain(k.outFx);
+    REQUIRE(keys != nullptr);  REQUIRE(out != nullptr);
+    s.holdWithoutEffects(k.keysFx, true);
+    s.holdWithoutEffects(k.outFx, true);
+    REQUIRE(keys->heldWithoutEffects());  REQUIRE(out->heldWithoutEffects());
+    s.enterShow();                                                              // the band hears the song with its effects again
+    REQUIRE(s.now().playing);
+    CHECK_FALSE(keys->heldWithoutEffects());
+    CHECK_FALSE(out->heldWithoutEffects());
 }
 
 TEST_CASE("Show mode plays prepared audio and sends no part effects", "[session-fx]") {

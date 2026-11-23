@@ -14,12 +14,6 @@ namespace sqlive::app {
 
 namespace {
 
-bool anyOn(const std::vector<engine::ModuleSettings>& chain) {
-    return std::any_of(chain.begin(), chain.end(), [](const engine::ModuleSettings& s) {
-        return !std::visit([](const auto& settings) { return settings.bypassed; }, s);
-    });
-}
-
 bool sameKinds(std::span<const engine::EffectKind> kinds, const std::vector<engine::ModuleSettings>& chain) {
     return std::equal(kinds.begin(), kinds.end(), chain.begin(), chain.end(),
                       [](engine::EffectKind kind, const engine::ModuleSettings& s) { return kind == engine::kindOf(s); });
@@ -40,7 +34,9 @@ bool LiveEffects::bringUp(Chain& c, const std::vector<model::EffectDoc>& effects
     const auto place = part ? model::EffectPlace::Part : model::EffectPlace::Output;
     auto wanted = model::chainOf(effects, place, stereo);
     c.slots = model::chainSlots(effects, place, stereo);
-    if (!anyOn(wanted)) {                                        // every effect off: the audio as it is, as a show plays it
+    // Kept while it has effects, all of them off included: a switch is a setting (every slot bypassed plays the audio as it
+    // is, bit for bit, as a show plays such a part), never a cold chain, nor a jump in an output's delay.
+    if (wanted.empty()) {
         const bool had = c.chain != nullptr;
         c.chain = nullptr;
         c.settings.clear();
@@ -198,6 +194,16 @@ float LiveEffects::outputReductionDb(const juce::String& outputId, int index) co
     return found != outputs_.end() ? reductionOf(found->second.chain, index) : 0.0f;
 }
 
+void LiveEffects::releaseHolds() {
+    const auto release = [](Chain& c) {
+        c.held = false;
+        if (c.chain != nullptr) c.chain->setHeldWithoutEffects(false);
+    };
+    for (auto& [serial, song] : songs_)
+        for (auto& part : song.parts) release(part);
+    for (auto& [id, out] : outputs_) release(out.chain);
+}
+
 void LiveEffects::holdOutput(const juce::String& outputId, bool held) {
     const auto found = outputs_.find(outputId);
     if (found == outputs_.end() || found->second.chain.chain == nullptr) return;
@@ -216,7 +222,10 @@ void LiveEffects::send(engine::Engine& engine) {
         ++part_effects_sent_;
         it = unsent_parts_.erase(it);
     }
-    if (unsent_outputs_.has_value() && engine.setOutputEffects(*unsent_outputs_)) unsent_outputs_.reset();
+    if (unsent_outputs_.has_value() && engine.setOutputEffects(*unsent_outputs_)) {
+        ++output_effects_sent_;
+        unsent_outputs_.reset();
+    }
 }
 
 }  // namespace sqlive::app

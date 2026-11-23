@@ -77,6 +77,7 @@ public:
     // Any thread. While held, the chain plays its input at the loudness of what its effects would play (Smart Q's
     // "Bypass & Match"), and fades between the two over 20 ms.
     void setHeldWithoutEffects(bool held) noexcept { held_.store(held, std::memory_order_relaxed); }
+    bool heldWithoutEffects() const noexcept { return held_.load(std::memory_order_relaxed); }
 
     // Audio thread. In place; right null for mono. A block longer than maxBlockFrames is played in pieces of it.
     void process(double* left, double* right, int frames) noexcept;
