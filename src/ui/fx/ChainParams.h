@@ -56,6 +56,10 @@ public:
     // that leaves the effect as it was (a field of an EQ band not in use) is not told.
     std::function<void(int index, const model::EffectDoc&, const juce::String& gestureId)> onEdited;
 
+    // Forgets every gesture still open, as one is when the page it was opened on goes mid-drag and so never closes it: the
+    // next change starts a new gesture, and so a new undo step, rather than joining that one.
+    void forgetGestures() noexcept { openGestures_ = 0; }
+
     // ---- juce::AudioProcessor: none of it is used; nothing is played here.
     const juce::String getName() const override { return "Smart Q Live effects"; }
     void prepareToPlay(double, int) override {}

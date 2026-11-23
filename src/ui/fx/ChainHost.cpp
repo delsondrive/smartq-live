@@ -116,10 +116,17 @@ dsp::Module* ChainHost::moduleOf(int slot) const noexcept {
 
 // ---- The tap ------------------------------------------------------------------------------------------------------------
 
+// What the tap heard of the slot shown before, and what the analyzer and the scope made of it, is that slot's, never the new one's:
+// it is passed over and forgotten, so a new page starts from nothing.
 void ChainHost::setShownSlot(int slot) {
     if (slot == shownSlot_) return;
     shownSlot_ = slot;
     tapShown();
+    if (playing_.chain != nullptr)
+        while (playing_.chain->readTap(tapPosition_, tapBefore_[0].data(), tapBefore_[1].data(), tapAfter_[0].data(),
+                                       tapAfter_[1].data(), kTapRead) > 0) {}
+    analyzer_.prepare(getSampleRate());
+    scopeWritten_ = 0;
 }
 
 void ChainHost::tapShown() {

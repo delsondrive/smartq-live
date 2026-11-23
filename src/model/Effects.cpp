@@ -42,6 +42,17 @@ juce::String effectName(const juce::String& kind) {
     return kind;
 }
 
+juce::String whyEffectCantBeAdded(const std::vector<EffectDoc>& chain, EffectPlace place, bool stereo, const juce::String& kind) {
+    if (! effectKindsFor(place, true).contains(kind)) return "That effect can't go there.";
+    if (kind == "width" && ! stereo)
+        return place == EffectPlace::Part ? "Width needs a stereo part." : "Width needs a stereo output.";
+    if ((int) chain.size() >= kMaxEffects) return "A chain holds up to " + juce::String(kMaxEffects) + " effects.";
+    if (kind == "limit")
+        for (const auto& e : chain)
+            if (e.kind == "limit") return "An output holds one Limit.";
+    return {};
+}
+
 EffectDoc defaultEffect(const juce::String& kind) {
     if (kind == "eq") {
         auto e = make("eq", {{"output_gain", 0.0}});

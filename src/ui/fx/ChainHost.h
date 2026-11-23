@@ -58,7 +58,8 @@ public:
     void step();
 
     // The slot whose page is on show, -1 for none: an EQ's or a De-Ess's is heard for the page analyzer, a Width's for its scope,
-    // and any other's is not heard (Smart Q's setShownSlot).
+    // and any other's is not heard (Smart Q's setShownSlot). Another slot starts from nothing: what the tap heard of the one
+    // before is passed over, and the page analyzer and the scope forget it.
     void setShownSlot(int slot);
 
     // ---- As SmartQProcessor's.

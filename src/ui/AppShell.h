@@ -20,6 +20,7 @@ class ShowController;
 
 namespace sqlive::ui {
 
+class EffectsWindow;
 class PreShowDialog;
 class Veil;
 
@@ -72,6 +73,10 @@ public:
     void openSnapshotsDialog();
     bool showingSnapshotsDialog() const;
     bool showingOutsideChangesBanner() const;                     // files changed on another computer wait for an answer
+    // Edit mode: the effects window over the content (under the top bar, the banners and any dialog), on that part's or
+    // output's chain at that effect (-1: its add menu open). Nothing while a dialog is up. It closes when Show mode starts.
+    void openEffects(const app::EffectsTarget&, int index);
+    EffectsWindow& effectsWindow() { return *effects_; }
 
     TopBar& topBar() { return topBar_; }
     std::function<void()> onOpenAnotherBand;                      // the About panel's "Open another band folder…"
@@ -113,6 +118,7 @@ private:
     ComesBackBox comesBack_;
     KeyboardBanner banner_;
     OutsideChangesBanner outside_;
+    std::unique_ptr<EffectsWindow> effects_;
     std::unique_ptr<Veil> preShow_, tonight_, files_, snapshots_;
     std::vector<std::unique_ptr<Veil>> closed_;                   // hidden, waiting to be deleted
     juce::ScopedMessageBox dialog_;

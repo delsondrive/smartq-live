@@ -14,7 +14,9 @@ namespace smartq {
 // has let go says nothing more. Message thread.
 //
 // It is drawn in its accent as the mockups have it: a rounded key, lit and pressed in while held.
-class HoldButton final : public juce::Component, public juce::SettableTooltipClient {
+//
+// Smart Q Live: not final, so that the effects window can draw one in its own look (paint) and keep the holding.
+class HoldButton : public juce::Component, public juce::SettableTooltipClient {
 public:
     explicit HoldButton(juce::String text);
     ~HoldButton() override;

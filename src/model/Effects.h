@@ -26,6 +26,11 @@ juce::StringArray effectKindsFor(EffectPlace, bool stereo);
 // "EQ", "Dynamic", "De-Ess", "Width", "Transient", "Limit"; a kind not known gives the kind itself.
 juce::String effectName(const juce::String& kind);
 
+// Why an effect of that kind can't be added to that chain, in the words the "effects.add" command refuses with (it asks this);
+// "" when it can: "That effect can't go there.", "Width needs a stereo part." (or output), "A chain holds up to 4 effects.",
+// "An output holds one Limit.", the first that applies, in that order.
+juce::String whyEffectCantBeAdded(const std::vector<EffectDoc>& chain, EffectPlace, bool stereo, const juce::String& kind);
+
 // What an effect of that kind starts as: Smart Q's defaults (a Dynamic changes nothing below 0 dBFS until it is set). An EQ has
 // no band in use ("bands" is an empty list). A kind not known gives an effect with no settings.
 EffectDoc defaultEffect(const juce::String& kind);

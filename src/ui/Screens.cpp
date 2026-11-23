@@ -27,6 +27,7 @@
 #include "model/JsonObject.h"
 #include "model/Snapshots.h"
 #include "ui/AppShell.h"
+#include "ui/EffectsWindow.h"
 #include "ui/MainView.h"
 #include "ui/MixerPage.h"
 #include "ui/NewComputerPage.h"
@@ -366,6 +367,29 @@ void dressOutputMix(app::Session& session, const juce::String& outputId) {
     }
 }
 
+juce::String partNamed(const app::Session& session, const juce::String& songId, const juce::String& name) {
+    if (const auto* song = session.model().song(songId))
+        for (const auto& part : song->parts)
+            if (part.name == name) return part.id;
+    return {};
+}
+
+// The mockup's EQ on Keys: a 12 dB per octave cut at 60 Hz, a dip of 3.5 dB at 310 Hz (Q 1.2), a shelf of +2.5 dB at 6 kHz.
+model::EffectDoc withKeysEq(model::EffectDoc eq) {
+    const auto band = [](int shape, double hz, double gainDb, double q) {
+        auto* b = new juce::DynamicObject();
+        b->setProperty("shape", shape);  b->setProperty("freq", hz);  b->setProperty("gain", gainDb);  b->setProperty("q", q);
+        b->setProperty("slope", 1);
+        return juce::var(b);
+    };
+    juce::Array<juce::var> bands;
+    bands.add(band(3, 60.0, 0.0, 0.71));                          // smartq::dsp::Shape: Bell 0, LowShelf 1, HighShelf 2, LowCut 3
+    bands.add(band(0, 310.0, -3.5, 1.2));
+    bands.add(band(2, 6000.0, 2.5, 0.71));
+    eq.values.set("bands", bands);
+    return eq;
+}
+
 juce::Image render(const juce::String& name, int width, int height) {
     Scene scene(name == "interrupted" || name == "new-computer" || name == "routing");
     if (!scene.ok()) return {};
@@ -506,6 +530,41 @@ juce::Image render(const juce::String& name, int width, int height) {
             mixer->tickMeters(juce::Time::getMillisecondCounterHiRes());   // the role meters on the output start from here
             playMeterFrames(session, [mixer](double now) { mixer->tickMeters(now); });
         }
+    } else if (name == "effects-window") {
+        // As the mockup's #chain: the first song's Keys with an EQ (cut below 60 Hz, a dip at 310 Hz, a lift above 6 kHz) and a
+        // Dynamic, played to bar 10, the window open on them with the add menu out, and the song not yet prepared again for
+        // the show (the preparer held, and a last touch just made).
+        const auto songId = scene.songIdAt(0);
+        const auto keys = partNamed(session, songId, "Keys");
+        auto* mixer = scene.page<MixerPage>(Page::Mixer);
+        if (mixer == nullptr || keys.isEmpty()) return {};
+        session.preparer().setPaused(true);
+        dressSongMix(session, songId);
+        mixer->openSong(songId);
+        const app::EffectsTarget target{songId, keys, {}, {}};
+        session.addEffect(target, "eq");
+        session.addEffect(target, "dynamic");
+        session.setEffect(target, 0, withKeysEq(session.effects(target)[0]), "screens eq");
+        const auto dynamic = [&](double thresholdDb) {
+            auto effect = session.effects(target)[1];
+            effect.values.set("threshold", thresholdDb);
+            return effect;
+        };
+        session.setEffect(target, 1, dynamic(-24.0), "screens dynamic");
+        session.playSong(songId, 0.0);
+        for (int i = 0; i < 6000 && session.now().seconds < 21.0; ++i) session.advanceWithoutDevice(kRate / 100);
+        pump();
+        shell.openEffects(target, -1);
+        auto& window = shell.effectsWindow();
+        shell.setBounds(0, 0, width, height);
+        session.setEffect(target, 1, dynamic(-25.0), "screens last");   // the last touch: changed, to be prepared again
+        pump();
+        for (int i = 0; i < 90; ++i) {                            // three seconds of the music: the spectrum, the history
+            session.advanceWithoutDevice(kRate / 30);
+            window.step(1.0 / 30.0);
+            mixer->tickMeters(juce::Time::getMillisecondCounterHiRes());
+        }
+        return shot();
     } else if (name == "remote-setup") {
         // The server on, one phone waiting and two let in, as the mockup's screen 14 has it. Nothing is started: the page
         // draws a state it is given, on an address that is not this computer's.
@@ -554,7 +613,7 @@ juce::Image render(const juce::String& name, int width, int height) {
 juce::StringArray screenNames() {
     return {"main-view", "stage-playing", "stage-looping", "stage-between", "stage-loading", "preshow-check", "interrupted",
             "welcome", "new-computer", "setlists", "new-song", "song-editor", "mixer-song", "mixer-output", "routing",
-            "midi-setup", "cue-voice", "snapshots", "remote-setup"};
+            "midi-setup", "cue-voice", "snapshots", "remote-setup", "effects-window"};
 }
 
 juce::Image renderScreen(const juce::String& name, int width, int height) {

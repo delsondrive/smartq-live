@@ -285,3 +285,46 @@ TEST_CASE("the shown effect's input and output reach its page", "[fx-ui]") {
     CHECK(frame.afterDb[bin] - frame.beforeDb[bin] == Catch::Approx(12.0).margin(0.5));
     host.setShownSlot(-1);
 }
+
+TEST_CASE("a page shown in another's place starts from nothing", "[fx-ui]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    constexpr double kRate = 48000.0;
+    auto loud = model::defaultEffect("eq");
+    loud.values.set("output_gain", 12.0);
+    const std::vector<model::EffectDoc> docs{loud, model::defaultEffect("eq")};
+    auto chain = engine::EffectChain::make(model::chainOf(docs, model::EffectPlace::Part, true), kRate, 512, true);
+    std::vector<double> left(512), right(512);
+    int block = 0;
+    const auto play = [&](int blocks) {
+        for (int b = 0; b < blocks; ++b, ++block) {
+            for (int i = 0; i < 512; ++i)
+                left[(size_t) i] = right[(size_t) i] = 0.1 * std::sin(2.0 * std::numbers::pi * 1000.0 * (block * 512 + i) / kRate);
+            chain->process(left.data(), right.data(), 512);
+        }
+    };
+
+    ChainParams params(docs);
+    ChainHost host(params, true, [chain] { return ChainHost::Playing{chain, {0, 1}, kRate}; });
+    host.setShownSlot(params.slotOf(0));
+    smartq::DisplayFrame frame;
+    for (int b = 0; b < 40; ++b) {
+        play(1);
+        host.step();
+    }
+    REQUIRE(host.pageAnalyzer().readDisplay(frame));                    // the first EQ's, +12 dB
+    play(8);                                                            // heard of the first EQ, and not yet read
+
+    host.setShownSlot(params.slotOf(1));
+    CHECK_FALSE(host.pageAnalyzer().readDisplay(frame));                // nothing of the first EQ's is left
+    play(3);
+    host.step();
+    CHECK_FALSE(host.pageAnalyzer().readDisplay(frame));                // nor taken from the tap: 1536 samples aren't a frame
+    for (int b = 0; b < 40; ++b) {
+        play(1);
+        host.step();
+    }
+    REQUIRE(host.pageAnalyzer().readDisplay(frame));
+    const auto bin = (size_t) std::lround(1000.0 / (kRate / 8192.0));
+    CHECK(frame.afterDb[bin] - frame.beforeDb[bin] == Catch::Approx(0.0).margin(0.5));   // the second EQ's own
+    host.setShownSlot(-1);
+}

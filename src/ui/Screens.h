@@ -39,6 +39,9 @@ namespace sqlive::ui {
 //   cue-voice      Setup's cue voice page, the voice made by a stand-in that writes tones, Solo announced by the band's
 //                  own recording, Breakdown by none
 //   snapshots      the Snapshots dialog, with "Before soundcheck" just saved
+//   remote-setup   Setup's phone remote page: the server on, one phone waiting and two let in
+//   effects-window the effects window over the Mixer, as the mockup's #chain: the first song's Keys with an EQ and a Dynamic,
+//                  played to bar 10, the add menu out, and the song changed since it was last prepared for the show
 juce::StringArray screenNames();
 
 // The named screen at that size; an invalid Image for an unknown name, or when the demo band couldn't be made.

@@ -25,7 +25,7 @@ constexpr double kDrawnFloor = 0.008;
 TEST_CASE("every screen renders, and none is blank", "[screens]") {
     juce::ScopedJuceInitialiser_GUI gui;
     sqlive::test::ScopedLook look;
-    CHECK(ui::screenNames().size() == 19);
+    CHECK(ui::screenNames().size() == 20);
     // The window buttons as the window shows them: in Edit mode, at the bar's far right; none in Show mode, which is full
     // screen on stage. The close button's glyph is drawn in --mid (dimmed under a dialog's veil); in Show mode the EDIT/SHOW
     // switch's ember SHOW is there instead.
@@ -44,7 +44,7 @@ TEST_CASE("every screen renders, and none is blank", "[screens]") {
     }
     sqlive::test::TempDir t;
     REQUIRE(ui::renderScreens(t.dir()).wasOk());
-    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.png") == 19);
+    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.png") == 20);
     CHECK(t.dir().getNumberOfChildFiles(juce::File::findFiles, "*.part") == 0);
 }
 
@@ -75,4 +75,20 @@ TEST_CASE("the song editor's screen has the mixer under the tracks, a strip sele
     // Above the footer, right of the track headers and left of the inspector: the dock, its selected strip outlined in mint.
     CHECK(hasColour(image.getClippedImage({360, 760 - 32 - 200, 1280 - 360 - 290, 200}), theme::mint));
     CHECK(hasColour(image.getClippedImage({200, 760 - 31, 1280 - 200 - 290, 31}), theme::caution));   // "Solo: Perc"
+}
+
+TEST_CASE("the effects window's screen has the window over the mixer, its add menu open", "[screens]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    sqlive::test::ScopedLook look;
+    const auto image = ui::renderScreen("effects-window");
+    REQUIRE(image.isValid());
+    // The chain column at the panel's left: the shown card outlined in mint, the add menu's De-Ess square; the footer's
+    // "Changed · First Light will be prepared again for the show" in caution amber, along the panel's foot.
+    const auto column = image.getClippedImage({24, 62, 300, 760 - 62});
+    CHECK(hasColour(column, theme::mint));
+    CHECK(hasColour(column, theme::effectColour("deess"), 4));
+    CHECK(hasColour(image.getClippedImage({24, 600, 640, 760 - 600}), theme::caution, 4));
+    // The mixer behind is shaded: its top-left corner, under the top bar, is darker than the bare background.
+    const auto shade = image.getPixelAt(4, 70);
+    CHECK(shade.getBrightness() < theme::bg1.getBrightness() + 0.02f);
 }

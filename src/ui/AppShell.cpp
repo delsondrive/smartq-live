@@ -5,6 +5,7 @@
 
 #include "app/AudioHost.h"
 #include "app/ShowController.h"
+#include "ui/EffectsWindow.h"
 #include "ui/PreShowDialog.h"
 #include "ui/SnapshotsDialog.h"
 #include "ui/Theme.h"
@@ -103,6 +104,9 @@ AppShell::AppShell(app::Session& session, app::AudioHost* host)
     banner_.onClick = [this] { takeKeyboard(); };
     addChildComponent(banner_);
     addChildComponent(outside_);
+    effects_ = std::make_unique<EffectsWindow>(session_);
+    addChildComponent(*effects_);
+    raiseOverlays();
 
     session_.changes().addChangeListener(this);
     refresh();
@@ -122,6 +126,7 @@ void AppShell::setShowController(app::ShowController* controller) {
 void AppShell::showPage(Page page) {
     if (page == page_) return;
     page_ = page;
+    effects_->close();                                            // it was over the page that went
     refresh();
 }
 
@@ -197,6 +202,12 @@ bool AppShell::showingFilesDialog() const { return files_ != nullptr; }
 bool AppShell::showingSnapshotsDialog() const { return snapshots_ != nullptr; }
 bool AppShell::showingOutsideChangesBanner() const { return outside_.isVisible(); }
 
+void AppShell::openEffects(const app::EffectsTarget& target, int index) {
+    if (session_.mode() != Mode::Edit || preShow_ != nullptr || tonight_ != nullptr || files_ != nullptr || snapshots_ != nullptr) return;
+    effects_->show(target, index);
+    raiseOverlays();
+}
+
 void AppShell::answerTonightQuestion(bool keep) {
     if (tonight_ == nullptr || session_.mode() != Mode::Edit) return;
     close(tonight_);
@@ -251,6 +262,7 @@ void AppShell::resized() {
     if (interrupted_.isVisible()) area.removeFromTop(InterruptedBanner::height);
     banner_.setBounds(area.withHeight(KeyboardBanner::height));
     outside_.setBounds(area.withHeight(OutsideChangesBanner::height));   // Edit mode only: the two above are Show mode's
+    effects_->setBounds(getLocalBounds().withTrimmedTop(TopBar::height));
     for (auto* veil : {preShow_.get(), tonight_.get(), files_.get(), snapshots_.get()})
         if (veil != nullptr) veil->setBounds(getLocalBounds());
 }
@@ -318,6 +330,7 @@ void AppShell::followMode() {
         close(tonight_);
         close(files_);
         close(snapshots_);
+        effects_->close();                                        // lets go of whatever it held
         return;
     }
     // In Edit mode tonight's changes only come from a show that has ended (here, or before a restart), so whenever there
@@ -379,6 +392,7 @@ void AppShell::close(std::unique_ptr<Veil>& veil) {
 }
 
 void AppShell::raiseOverlays() {
+    if (effects_ != nullptr) effects_->toFront(false);           // over the pages, under the banners and the dialogs
     interrupted_.toFront(false);
     comesBack_.toFront(false);
     banner_.toFront(false);

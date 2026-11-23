@@ -23,6 +23,20 @@ inline const juce::Colour onAccent{0xff0e0c11};                  // text on a mi
 // danger, so a note never reads as "playing now".
 inline const juce::Colour badgeControl{0xffffc163}, badgeNote{0xff7f9dff}, badgeProgram{0xffd68cff};
 
+// The effects (docs/mockups/effects.html): each kind's colour, as its slot's bar and its add menu's square have it (EQ mint,
+// Dynamic --m-dyn, De-Ess --m-des, Width --m-wid, Transient --m-tra, Limit danger red; `mid` for a kind not known), and an
+// output's (--out), as its strip and the effects window's header dot have it.
+inline juce::Colour effectColour(const juce::String& kind) {
+    if (kind == "eq") return mint;
+    if (kind == "dynamic") return juce::Colour(0xffffc163);
+    if (kind == "deess") return juce::Colour(0xffff8fb8);
+    if (kind == "width") return juce::Colour(0xff8fb4ff);
+    if (kind == "transient") return juce::Colour(0xffe9d568);
+    if (kind == "limit") return danger;
+    return mid;
+}
+inline const juce::Colour outputColour{0xff8491ff};
+
 // A field under the mouse (Smart Q's), and the faint line between table rows (the mockup's td border).
 inline const juce::Colour fieldHover{0x20ffffff}, rowLine{0x0dffffff};
 

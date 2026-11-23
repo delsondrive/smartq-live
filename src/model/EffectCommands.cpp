@@ -30,12 +30,6 @@ EffectDoc& effectAt(Chain& chain, const Params& p, const char* key) {
     return chain.effects[(size_t) index];
 }
 
-void checkKind(const Chain& chain, const juce::String& kind) {
-    if (! effectKindsFor(chain.place, true).contains(kind)) refuse("That effect can't go there.");
-    if (kind == "width" && ! chain.stereo)
-        refuse(chain.place == EffectPlace::Part ? "Width needs a stereo part." : "Width needs a stereo output.");
-}
-
 }  // namespace
 
 void registerEffectCommands(CommandLayer& layer) {
@@ -44,11 +38,7 @@ void registerEffectCommands(CommandLayer& layer) {
     add("effects.add", [](BandModel& m, const Params& p) {
         auto chain = chainOf(m, p);
         const auto kind = p.text("kind");
-        checkKind(chain, kind);
-        if ((int) chain.effects.size() >= kMaxEffects) refuse("A chain holds up to " + juce::String(kMaxEffects) + " effects.");
-        if (kind == "limit")
-            for (auto& e : chain.effects)
-                if (e.kind == "limit") refuse("An output holds one Limit.");
+        if (const auto why = whyEffectCantBeAdded(chain.effects, chain.place, chain.stereo, kind); why.isNotEmpty()) refuse(why);
         const int at = p.given("at") ? p.whole("at", 0, kMaxEffects) : (int) chain.effects.size();
         chain.effects.insert(chain.effects.begin() + std::min(at, (int) chain.effects.size()), defaultEffect(kind));
         return CommandResult::success();
