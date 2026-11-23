@@ -170,3 +170,102 @@ TEST_CASE("effects commands are refused in Show mode", "[effects]") {
     CHECK(s.commands().run("effects.remove", params({{"songId", song}, {"partId", part}, {"index", 0}})).message == r.message);
     CHECK(s.model().song(song)->parts[0].effects.size() == 1);
 }
+
+TEST_CASE("the doc and the settings convert both ways", "[effects]") {
+    using namespace sqlive::engine;
+    namespace dsp = smartq::dsp;
+    for (auto* k : {"eq", "dynamic", "deess", "width", "transient", "limit"}) {
+        const auto doc = defaultEffect(k);
+        CHECK(withSettings(doc, settingsOf(doc, EffectPlace::Part)) == doc);
+        CHECK(withSettings(doc, settingsOf(doc, EffectPlace::Output)) == doc);
+    }
+    CHECK(std::get<dsp::DynamicSettings>(settingsOf(defaultEffect("dynamic"), EffectPlace::Part)) == dsp::DynamicSettings{});
+    CHECK(std::get<dsp::LimitSettings>(settingsOf(defaultEffect("limit"), EffectPlace::Output)) == dsp::LimitSettings{});
+    CHECK(std::get<EqSettings>(settingsOf(defaultEffect("eq"), EffectPlace::Part)) == EqSettings{});
+
+    // off is bypassed, and withSettings keeps `on` and `extra`
+    auto off = defaultEffect("deess");
+    off.on = false;
+    off.extra.set("later", 1);
+    CHECK(std::get<dsp::DeEssSettings>(settingsOf(off, EffectPlace::Part)).bypassed);
+    CHECK(withSettings(off, settingsOf(off, EffectPlace::Part)) == off);
+
+    // a part dynamic with lookahead 8 ms plays none; so does an output's
+    auto dynamic = defaultEffect("dynamic");
+    dynamic.values.set("lookahead", 8.0);
+    CHECK(std::get<dsp::DynamicSettings>(settingsOf(dynamic, EffectPlace::Part)).lookaheadMs == 0.0);
+    CHECK(std::get<dsp::DynamicSettings>(settingsOf(dynamic, EffectPlace::Output)).lookaheadMs == 0.0);
+
+    // a band goes both ways, its choices as indexes and its slope as one of Smart Q's eight
+    auto eq = defaultEffect("eq");
+    auto* band = new juce::DynamicObject();
+    for (auto& [field, value] : std::initializer_list<std::pair<const char*, juce::var>>{
+             {"shape", 3}, {"freq", 80.0}, {"gain", 0.0}, {"q", 0.7}, {"slope", 3}, {"channel", 4}, {"dynamic", true},
+             {"threshold", -20.0}, {"range", -4.0}, {"attack", 5.0}, {"release", 80.0}, {"listen", 1}, {"bypass", false}})
+        band->setProperty(field, value);
+    eq.values.set("bands", juce::var(juce::Array<juce::var>{juce::var(band)}));
+    const auto eqSettings = std::get<EqSettings>(settingsOf(eq, EffectPlace::Part));
+    CHECK(eqSettings.bands[0].enabled);
+    CHECK(eqSettings.bands[0].shape == dsp::Shape::LowCut);
+    CHECK(eqSettings.bands[0].slopeDbPerOct == 24);
+    CHECK(eqSettings.bands[0].channel == dsp::ChannelMode::Side);
+    CHECK(eqSettings.bands[0].listen == dsp::ListenTo::Sidechain);
+    CHECK_FALSE(eqSettings.bands[1].enabled);
+    CHECK(withSettings(eq, eqSettings) == eq);
+}
+
+TEST_CASE("settings from a doc are held to Smart Q's ranges", "[effects]") {
+    using namespace sqlive::engine;
+    namespace dsp = smartq::dsp;
+    auto dynamic = defaultEffect("dynamic");
+    dynamic.values.set("ratio", 100.0);
+    dynamic.values.set("threshold", -200.0);
+    dynamic.values.set("detection", 7);
+    dynamic.values.set("channel", -2);
+    dynamic.values.remove("attack");                 // missing: the default
+    dynamic.values.set("release", "slow");           // not a number: the default
+    const auto d = std::get<dsp::DynamicSettings>(settingsOf(dynamic, EffectPlace::Part));
+    CHECK(d.ratio == 20.0);
+    CHECK(d.thresholdDb == -60.0);
+    CHECK(d.rms);
+    CHECK(d.channel == dsp::ChannelMode::Stereo);
+    CHECK(d.attackMs == 12.0);
+    CHECK(d.releaseMs == 120.0);
+
+    auto limit = defaultEffect("limit");
+    limit.values.set("lookahead", 9.0);
+    limit.values.set("input_gain", -3.0);
+    const auto l = std::get<dsp::LimitSettings>(settingsOf(limit, EffectPlace::Output));
+    CHECK(l.lookaheadMs == 5.0);
+    CHECK(l.inputGainDb == 0.0);
+
+    auto eq = defaultEffect("eq");
+    auto* band = new juce::DynamicObject();
+    band->setProperty("freq", 1.0);
+    band->setProperty("gain", 99.0);
+    band->setProperty("slope", 12);
+    eq.values.set("bands", juce::var(juce::Array<juce::var>{juce::var(band)}));
+    eq.values.set("output_gain", -50.0);
+    const auto e = std::get<EqSettings>(settingsOf(eq, EffectPlace::Part));
+    CHECK(e.bands[0].frequencyHz == 10.0);
+    CHECK(e.bands[0].gainDb == 30.0);
+    CHECK(e.bands[0].slopeDbPerOct == 96);
+    CHECK(e.bands[0].q == 1.0);                      // missing: the band's default
+    CHECK(e.outputGainDb == -30.0);
+}
+
+TEST_CASE("a chain keeps only what its place plays", "[effects]") {
+    using namespace sqlive::engine;
+    std::vector<EffectDoc> docs{defaultEffect("eq"), defaultEffect("limit"), defaultEffect("reverb"), defaultEffect("width"),
+                                defaultEffect("transient")};
+    docs[0].on = false;
+    const auto part = chainOf(docs, EffectPlace::Part, false);       // a mono part: no limit, no reverb, no width
+    REQUIRE(part.size() == 2);
+    CHECK(part[0].index() == (size_t) EffectKind::Eq);
+    CHECK(std::get<EqSettings>(part[0]).bypassed);
+    CHECK(part[1].index() == (size_t) EffectKind::Transient);
+    const auto output = chainOf(docs, EffectPlace::Output, true);    // a stereo output: eq, limit, width
+    REQUIRE(output.size() == 3);
+    CHECK(output[1].index() == (size_t) EffectKind::Limit);
+    CHECK(output[2].index() == (size_t) EffectKind::Width);
+}

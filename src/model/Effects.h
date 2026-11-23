@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+
+#include "engine/EffectChain.h"
 #include "model/Documents.h"
 
 namespace sqlive::model {
@@ -24,5 +27,20 @@ EffectDoc defaultEffect(const juce::String& kind);
 // effectWords("add", "eq", "Keys") is "add EQ on Keys"; effectWords("switch off", "eq", "Keys") is "switch off EQ on Keys";
 // effectWords({}, "eq", "Keys") is "EQ on Keys". where is the part's or the output's name.
 juce::String effectWords(const juce::String& verb, const juce::String& kind, const juce::String& where);
+
+// What the engine plays for an effect. Every value is held to Smart Q's range for it (ModuleControls.h, ParameterRanges.h), as
+// a file's values are only type-checked; a value missing, or not a number or a switch, is the kind's default. A Choice is its
+// index, rounded and held to the choices; a band's slope is one of Smart Q's eight (6 to 96 dB per octave) by its index, and at
+// most the first 24 bands are used. on false is bypassed. A Dynamic plays no lookahead, on a part or an output: Smart Q Live's
+// effects add no delay but a Limit's. A kind not known gives an EQ that does nothing (chainOf leaves it out).
+engine::ModuleSettings settingsOf(const EffectDoc&, EffectPlace);
+
+// The engine's chain for a part's or an output's effects, in order: each effect the place plays (effectKindsFor; so no Width
+// unless stereo, and no kind not known), as settingsOf gives it.
+std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>&, EffectPlace, bool stereo);
+
+// The reverse of settingsOf: the effect with the settings' kind and every value of them (a band for each enabled one), keeping
+// its `on` and `extra` (the settings' bypass is not written: that is `on`).
+EffectDoc withSettings(EffectDoc, const engine::ModuleSettings&);
 
 }  // namespace sqlive::model
