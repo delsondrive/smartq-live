@@ -134,7 +134,10 @@ int EditorMixerDock::clampPanel(int height) const { return juce::jlimit(minimumP
 int EditorMixerDock::heightFor(int room) {
     room_ = std::max(0, room);
     if (folded_) return splitterHeight;
-    const int wanted = chosen_ > 0 ? chosen_ : std::min(defaultPanelHeight, (room_ - splitterHeight) / 2);
+    // Never sized by hand: 440 px or half the room, but tall enough for the strips' Effects box at least as its slim line
+    // when the room allows it (clampPanel: the tracks keep their ruler and two lanes).
+    const int effects = mixer_.minimumHeightWithEffects() + kDockTop + kDockFoot;
+    const int wanted = chosen_ > 0 ? chosen_ : std::max(std::min(defaultPanelHeight, (room_ - splitterHeight) / 2), effects);
     return splitterHeight + clampPanel(wanted);
 }
 

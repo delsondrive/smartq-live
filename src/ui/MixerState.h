@@ -65,16 +65,6 @@ struct MixerState {
     // trim on the fader (LevelTarget::Kind::OutputTrim), its bus's meter (what leaves for the interface, after its effects),
     // the footer "output · trim", and in Edit mode its Effects box. nullopt on "This song".
     std::optional<Strip> outputStrip;
-    // The side panel's effects cards (the mockup's), in Edit mode only. "This song": "EFFECTS · THIS SONG", "IN A SLOT" (with
-    // the kinds' colour bars) and "FOR THE SHOW" (the song's preparation, a glowing dot in its colour); an output: "THE
-    // OUTPUT'S OWN EFFECTS" and, with a Limit on, "LIMIT · FOH" with its ceiling.
-    struct Card {
-        juce::String title, text, note, status;                   // text in mid, note in dim, status with its dot
-        juce::Colour statusColour;
-        juce::StringArray legendKinds, legendWords;               // IN A SLOT: a colour bar per kind, and its words
-        bool operator==(const Card&) const = default;
-    };
-    std::vector<Card> effectsCards;
     // The side panel's heading, drawn as the mockup's "DRUMMER · [In-ears] OUT 3/4": the output's name in capitals, its
     // label as the label pill (panelLabelKind gives the pill its colours), and its channels; then the sentence. For
     // "This song": "THIS SONG", "", "", and "How loud each part is in this song, and where it sits, for everyone."
@@ -107,5 +97,19 @@ struct MixerState {
 // the one playing (and the click and cues with them); a role on an output whenever that output has a bus. In Edit mode each
 // part strip has its Effects box and an output view's own strip (outputStrip) its chain's; never in Show mode.
 MixerState makeMixerState(const app::Session&, const juce::String& songId, const juce::String& outputId);
+
+// The Mixer page's effects cards (docs/mockups/effects.html's side panel), for Edit mode. "This song": "EFFECTS · THIS SONG",
+// "IN A SLOT" (with the part kinds' colour bars) and "FOR THE SHOW" (the song's preparation, a glowing dot in its colour);
+// an output: "THE OUTPUT'S OWN EFFECTS" and, with a Limit on, "LIMIT · FOH" with its ceiling. Not part of MixerState: it asks
+// Session::effectsState, which looks at every part's file, so only the page asks, and only when Session::effectsRevision
+// (or the song, the output, the mode) changed. keep: which go first when the side panel is short (the lowest).
+struct EffectsCard {
+    juce::String title, text, note, status;                       // text in mid, note in dim, status with its dot
+    juce::Colour statusColour;
+    juce::StringArray legendKinds, legendWords;                   // IN A SLOT: a colour bar per kind, and its words
+    int keep = 0;                                                 // IN A SLOT 0, the explanations 1, the show and the Limit 2
+    bool operator==(const EffectsCard&) const = default;
+};
+std::vector<EffectsCard> makeEffectsCards(const app::Session&, const juce::String& songId, const juce::String& outputId);
 
 }  // namespace sqlive::ui

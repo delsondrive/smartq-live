@@ -83,6 +83,12 @@ void MixerPanel::show(const juce::String& songId, const juce::String& outputId) 
 void MixerPanel::setCompact(bool compact) {
     if (compact == compact_) return;
     compact_ = compact;
+    if (state_.outputStrip) {                                     // the output strip comes or goes: the strips are made again
+        strips_.clear();
+        shown_.clear();
+        state_ = {};
+        refresh(true);
+    }
     for (std::size_t i = 0; i < strips_.size(); ++i)
         strips_[i]->set(shown_[i], compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full);
     resized();
@@ -94,6 +100,10 @@ const juce::Viewport& MixerPanel::viewport() const { return viewport_; }
 int MixerPanel::minimumHeight() const {
     const auto size = compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full;
     return ChannelStrip::minimumHeight(size) + 2 * kPad + (compact_ ? kCompactTop - kPad : 0) + viewport_.getScrollBarThickness();
+}
+
+int MixerPanel::minimumHeightWithEffects() const {
+    return minimumHeight() + (boxRow_ && !compact_ ? ChannelStrip::effectsRoom(0) : 0);
 }
 
 ChannelStrip* MixerPanel::stripAt(int index) {
@@ -155,7 +165,7 @@ void MixerPanel::moveEffect(int stripIndex, int from, int to) {
 }
 
 bool MixerPanel::pinned(int stripIndex) const {
-    return state_.outputStrip.has_value() && stripIndex == static_cast<int>(state_.strips.size());
+    return state_.outputStrip.has_value() && !compact_ && stripIndex == static_cast<int>(state_.strips.size());
 }
 
 // A press starts a gesture and a release ends it; neither is a level of its own (a fader that isn't sent reports -60
@@ -272,7 +282,7 @@ void MixerPanel::refresh(bool force) {
     if (!stateChanged && strips_.size() == shown_.size()) return;
 
     auto nextShown = next.strips;
-    if (next.outputStrip) nextShown.push_back(*next.outputStrip);
+    if (next.outputStrip && !compact_) nextShown.push_back(*next.outputStrip);   // a compact row (the main view) has none
     const bool sameStrips = nextShown.size() == strips_.size() && nextShown.size() == shown_.size()
                             && std::equal(nextShown.begin(), nextShown.end(), shown_.begin(),
                                           [](const MixerState::Strip& a, const MixerState::Strip& b) {
@@ -362,7 +372,7 @@ void MixerPanel::layoutRow() {
     auto rowArea = area_;
     juce::Rectangle<int> pinArea;
     pinnedDivider_ = -1;
-    const bool hasPinned = state_.outputStrip.has_value() && static_cast<int>(strips_.size()) == count + 1;
+    const bool hasPinned = pinned(count) && static_cast<int>(strips_.size()) == count + 1;
     if (hasPinned) {
         const int pinWidth = std::min(rowArea.getWidth(), compact_ ? width : ChannelStrip::outputStripWidth);
         const int divider = 2 * kStripGap + kDividerWidth;

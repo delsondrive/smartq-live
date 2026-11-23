@@ -59,8 +59,9 @@ juce::TextLayout sentenceLayout(const juce::String& text, float width, const juc
 // dim), the kinds' colour bars with their words (.side's legend: 3 x 14 bars, 8 px to the words, a line every 20 px, 10 px
 // above), and the status with its glowing 8 px dot (.ready, 10 px above).
 constexpr int kNoteGap = 8, kLegendTop = 10, kLegendLine = 20, kStatusTop = 10, kStatusHeight = 18;
+constexpr int kKeysKeep = 3;                                       // the keys box stays longer than any effects card
 
-int cardHeight(const MixerState::Card& card, int innerWidth) {
+int cardHeight(const EffectsCard& card, int innerWidth) {
     const float width = static_cast<float>(innerWidth);
     int height = kBoxPadY + kTitleHeight + kTitleGap;
     if (card.text.isNotEmpty()) height += ceilToInt(sentenceLayout(card.text, width).getHeight());
@@ -71,7 +72,7 @@ int cardHeight(const MixerState::Card& card, int innerWidth) {
     return height + kBoxPadY;
 }
 
-void paintCard(juce::Graphics& g, const MixerState::Card& card, juce::Rectangle<int> box) {
+void paintCard(juce::Graphics& g, const EffectsCard& card, juce::Rectangle<int> box) {
     theme::paintPanel(g, box.toFloat());
     auto inner = box.reduced(kBoxPadX, kBoxPadY);
     const float width = static_cast<float>(inner.getWidth());
@@ -419,6 +420,7 @@ void MixerPage::refresh(bool force) {
     // changes, comes back through applyPanelState.
     if (force || !wasFresh || songId_ != panel_.songId() || outputId_ != panel_.outputId()) panel_.show(songId_, outputId_);
     if (trim_->set(outputId_)) layOut = true;
+    if (refreshCards()) layOut = true;
     if (layOut) layOutAgain();
 }
 
@@ -432,9 +434,10 @@ void MixerPage::applyPanelState() {
                              || state.panelLabelKind != shownSide_.panelLabelKind || state.panelChannels != shownSide_.panelChannels
                              || state.panelText != shownSide_.panelText
                              || state.outputLines != shownSide_.outputLines || state.outputLinesNote != shownSide_.outputLinesNote
-                             || state.bus != shownSide_.bus || state.effectsCards != shownSide_.effectsCards
+                             || state.bus != shownSide_.bus
                              || keysWanted() != keysWanted_;
-    if (options == options_ && state.chosen == shownChosen_ && !sideChanged) return;   // only the strips changed: the panel's own
+    const bool cardsChanged = refreshCards();
+    if (options == options_ && state.chosen == shownChosen_ && !sideChanged && !cardsChanged) return;   // only the strips changed: the panel's own
 
     if (options != options_) {                                    // setItems forgets the hovered segment: only when they change
         options_ = options;
@@ -453,10 +456,28 @@ void MixerPage::applyPanelState() {
     shownSide_.outputLines = state.outputLines;
     shownSide_.outputLinesNote = state.outputLinesNote;
     shownSide_.bus = state.bus;
-    shownSide_.effectsCards = state.effectsCards;
     keysWanted_ = keysWanted();
     trim_->set(outputId_);
     layOutAgain();
+}
+
+// The cards ask Session::effectsState, which looks at every part's file: made again only when what they say may have changed,
+// never on the session's 30 ticks a second while a song plays.
+bool MixerPage::refreshCards() {
+    const auto& state = panel_.state();
+    const auto outputId = juce::isPositiveAndBelow(state.chosen, static_cast<int>(state.options.size()))
+                              ? state.options[static_cast<std::size_t>(state.chosen)].id
+                              : juce::String();
+    const bool edit = session_.mode() == app::Mode::Edit;
+    const auto key = songId_ + "|" + outputId + "|" + session_.rigId() + "|" + (edit ? "edit" : "show") + "|"
+                     + juce::String(static_cast<juce::int64>(session_.effectsRevision()));
+    if (key == cardsFor_) return false;
+    cardsFor_ = key;
+    ++cards_made_;
+    auto cards = makeEffectsCards(session_, songId_, outputId);
+    if (cards == cards_) return false;
+    cards_ = std::move(cards);
+    return true;
 }
 
 // The keys box is for "This song" in Edit mode: in Show mode the mixer never takes the keyboard.
@@ -468,6 +489,12 @@ void MixerPage::tickMeters(double nowMs) {
 }
 
 float MixerPage::playingNowDb(int side) const { return playingNow_->levelDb(side); }
+
+bool MixerPage::cardShown(int index) const {
+    return juce::isPositiveAndBelow(index, static_cast<int>(cardBoxes_.size())) && !cardBoxes_[static_cast<std::size_t>(index)].isEmpty();
+}
+
+bool MixerPage::keysShown() const { return keys_->isVisible(); }
 
 void MixerPage::layOutAgain() {
     resized();
@@ -541,14 +568,44 @@ void MixerPage::layoutSide() {
         closingBox_ = below.removeFromTop(std::min(below.getHeight(), ceilToInt(closing.getHeight()) + 2 * kBoxPadY));
         below.removeFromTop(std::min(below.getHeight(), kSideGap));
     }
-    cards_.clear();
-    for (const auto& card : shownSide_.effectsCards) {
-        const int cardH = cardHeight(card, innerWidth);
-        cards_.push_back(below.getHeight() >= cardH ? below.removeFromTop(cardH) : juce::Rectangle<int>());
-        if (!cards_.back().isEmpty()) below.removeFromTop(std::min(below.getHeight(), kSideGap));
+    // Then the effects cards and the keys box, in that order. When they don't all fit, the ones that say least go first:
+    // IN A SLOT, then the explanations, then the show's and the Limit's; the keys box last. What is left goes in whole or
+    // not at all.
+    struct Item {
+        int height, keep;
+        bool shown = true;
+    };
+    std::vector<Item> items;
+    for (const auto& card : cards_) items.push_back({cardHeight(card, innerWidth), card.keep});
+    if (keysWanted_) items.push_back({KeysCard::idealHeight(), kKeysKeep});
+    const auto needed = [&items] {
+        int total = 0;
+        for (const auto& item : items)
+            if (item.shown) total += item.height + kSideGap;
+        return total - kSideGap;
+    };
+    while (needed() > below.getHeight()) {
+        auto least = items.end();
+        for (auto it = items.begin(); it != items.end(); ++it)
+            if (it->shown && (least == items.end() || it->keep < least->keep)) least = it;
+        if (least == items.end()) break;
+        least->shown = false;
     }
-    keys_->setVisible(keysWanted_ && below.getHeight() >= KeysCard::idealHeight());
-    if (keys_->isVisible()) keys_->setBounds(below.removeFromTop(KeysCard::idealHeight()));
+    cardBoxes_.clear();
+    keys_->setVisible(false);
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        juce::Rectangle<int> box;
+        if (items[i].shown && below.getHeight() >= items[i].height) {
+            box = below.removeFromTop(items[i].height);
+            below.removeFromTop(std::min(below.getHeight(), kSideGap));
+        }
+        if (i < cards_.size()) {
+            cardBoxes_.push_back(box);
+        } else if (!box.isEmpty()) {
+            keys_->setBounds(box);
+            keys_->setVisible(true);
+        }
+    }
 
     auto inner = side_.reduced(kBoxPadX, kBoxPadY);
     sideTitle_ = inner.removeFromTop(kTitleHeight);
@@ -613,8 +670,8 @@ void MixerPage::paint(juce::Graphics& g) {
         g.setFont(bodyFont());
         g.drawText("Overall level", trimLabel_, juce::Justification::centredLeft, true);
     }
-    for (std::size_t i = 0; i < cards_.size() && i < shownSide_.effectsCards.size(); ++i)
-        if (!cards_[i].isEmpty()) paintCard(g, shownSide_.effectsCards[i], cards_[i]);
+    for (std::size_t i = 0; i < cardBoxes_.size() && i < cards_.size(); ++i)
+        if (!cardBoxes_[i].isEmpty()) paintCard(g, cards_[i], cardBoxes_[i]);
     paintLevels(g);
 }
 

@@ -20,8 +20,10 @@ namespace sqlive::ui {
 // change, Shift for fine steps, double-click for 0 dB; one Session::setLevel gesture per drag), and "Playing now": the
 // output's own meter, left and right, with its level in dB (its own MeterReader on the output's bus). Under it, for the
 // song, the level check's box, "WHAT EACH OUTPUT GETS · LOUDEST MOMENT" (MixerState::outputLines) and the mockup's closing
-// sentence, then in Edit mode the effects cards (MixerState::effectsCards, docs/mockups/effects.html's side panel) and, on
-// "This song", the keys box ("KEYS · SELECTED STRIP"), each whole or not at all.
+// sentence, then in Edit mode the effects cards (makeEffectsCards, docs/mockups/effects.html's side panel; made again only
+// when the song, the output, the rig, the mode or Session::effectsRevision changes, never on a meter tick) and, on "This
+// song", the keys box ("KEYS · SELECTED STRIP"), each whole or not at all; when they don't all fit, IN A SLOT goes first,
+// then the explanations (EFFECTS · THIS SONG, THE OUTPUT'S OWN EFFECTS), then FOR THE SHOW and the Limit's, the keys box last.
 // While it is shown, its song is measured even outside the setlist (LevelChecker::alsoMeasure); hidden, it is forgotten.
 //
 // It changes nothing itself: levels go through Session::setLevel and setMute, which decide (a command in Edit mode,
@@ -41,6 +43,10 @@ public:
     juce::Rectangle<int> headerBounds() const { return header_; }   // for tests
     juce::Rectangle<int> sideBounds() const { return side_; }       // for tests: the side panel's box
     int layoutsDone() const { return layouts_done_; }             // for tests: how many times the page was laid out
+    int cardsMade() const { return cards_made_; }                 // for tests: how many times the effects cards were made
+    const std::vector<EffectsCard>& effectsCards() const { return cards_; }
+    bool cardShown(int index) const;                              // for tests: that card has room in the side panel
+    bool keysShown() const;                                       // for tests: the keys box has room
     void tickMeters(double nowMs);                                // a frame of the strips' and "Playing now"'s meters (the screenshots)
     float playingNowDb(int side) const;                           // for tests: what "Playing now" shows on that side
 
@@ -61,6 +67,7 @@ private:
     void layoutSide();
     void paintLevels(juce::Graphics&);                            // the level check's box and the closing sentence
     bool keysWanted() const;
+    bool refreshCards();                                          // made again only when cardsFor_ changes; true when they did
 
     app::Session& session_;
     juce::String songId_, outputId_;
@@ -70,6 +77,7 @@ private:
     MixerState shownSide_;                                        // its panel* fields as last laid out
     bool fresh_ = false;
     int layouts_done_ = 0;
+    int cards_made_ = 0;
 
     MixerPanel panel_;
     Segmented levelsFor_;
@@ -81,7 +89,9 @@ private:
 
     // Laid out by resized(), drawn by paint().
     juce::Rectangle<int> header_, levelsForLabel_, side_, sideTitle_, sideText_, trimLabel_, levelsBox_, closingBox_;
-    std::vector<juce::Rectangle<int>> cards_;                     // each of shownSide_.effectsCards; empty: no room for it
+    std::vector<EffectsCard> cards_;                              // the effects cards (makeEffectsCards), kept while cardsFor_ holds
+    juce::String cardsFor_;                                       // the song, output, rig, mode and Session::effectsRevision they are for
+    std::vector<juce::Rectangle<int>> cardBoxes_;                 // each card's box; empty: no room for it
 };
 
 }  // namespace sqlive::ui

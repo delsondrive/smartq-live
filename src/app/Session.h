@@ -260,6 +260,10 @@ public:
     bool preparingForShow() const;                               // until it is done
     double prepareForShowProgress() const;                       // 0..1 over the setlist's songs
     EffectsPreparer& preparer();                                 // for tests: setPaused, waitUntilIdle
+    // A new one each time something that effectsState or effectsProgress reads may have changed: an edit (any command), a
+    // song handed to the preparer, the preparer beginning, moving on or finishing, "Prepare now" moving on. So a view can keep
+    // what effectsState said (it looks at every part's file) until this changes.
+    std::uint64_t effectsRevision() const { return effects_revision_; }
     PreparedStore& preparedStore();                              // where prepared parts are kept on this computer
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                             // how many levels and pans were changed tonight (Tonight::count)
@@ -507,6 +511,7 @@ private:
     std::uint64_t solo_started_ = 0;                             // the playing serial whose start asserted its solo
     Tonight tonight_;
     std::uint64_t tonight_revision_ = 0;                         // tonightRevision()
+    std::uint64_t effects_revision_ = 0;                         // effectsRevision()
     // The playing song's levels as last sent to the engine, for the song with this serial.
     std::uint64_t levels_serial_ = 0;
     model::SongDoc levels_doc_;

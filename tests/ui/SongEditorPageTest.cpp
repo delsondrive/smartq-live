@@ -177,7 +177,10 @@ TEST_CASE("the song editor marks a missing file and lays out 30 parts and a long
         auto image = snapshot(page, w, h);
         CHECK(childrenInside(page));
         CHECK(fractionNotBackground(image) > 0.02);              // no waveforms: the headers, the words and the ticks
-        // A missing file says so in caution, in the lane area.
+        // A missing file says so in caution, in the lane area. (At the smallest window the mixer under the tracks leaves them
+        // the ruler and two lanes, the song's own: the first part is scrolled to.)
+        page.timeline().scrollToPart("p0");
+        image = snapshot(page, w, h);
         CHECK(hasColour(image.getClippedImage({350, 0, w - 350 - 290, h}), theme::caution));
     }
     snapshot(page, 1100, 618);

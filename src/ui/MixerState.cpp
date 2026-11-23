@@ -139,27 +139,26 @@ const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");   // " · "
 juce::String withTrueMinus(const juce::String& text) { return text.replace("-", juce::String::fromUTF8("\xe2\x88\x92")); }
 
 // "This song"'s effects cards: what a part's effects are, how a slot works, and whether the song is prepared for the show.
-void addSongCards(MixerState& state, const app::Session& session, const juce::String& songId) {
+void addSongCards(std::vector<EffectsCard>& cards, const app::Session& session, const juce::String& songId) {
     const auto* song = session.model().song(songId);
     if (song == nullptr || song->parts.empty()) return;
-    using Card = MixerState::Card;
-    state.effectsCards.push_back({"EFFECTS" + kDot + "THIS SONG",
-                                  "Each part's effects are this song's: another song's " + song->parts.front().name
-                                      + " has its own. They are heard everywhere the part goes, before its fader.",
-                                  {}, {}, {}, {}, {}});
+    cards.push_back({"EFFECTS" + kDot + "THIS SONG",
+                     "Each part's effects are this song's: another song's " + song->parts.front().name
+                         + " has its own. They are heard everywhere the part goes, before its fader.",
+                     {}, {}, {}, {}, {}, 1});
 
-    Card slot{"IN A SLOT", {}, "Click a module to open it. Click the dot to switch it off and on. Drag to reorder. Up to 4 per part.",
-              {}, {}, {}, {}};
+    EffectsCard slot{"IN A SLOT", {}, "Click a module to open it. Click the dot to switch it off and on. Drag to reorder. Up to 4 per part.",
+                     {}, {}, {}, {}, 0};
     for (const auto& kind : model::effectKindsFor(model::EffectPlace::Part, true)) {
         slot.legendKinds.add(kind);
         slot.legendWords.add(kind == "dynamic" ? juce::String("Dynamic, with how much it's turning down") : model::effectName(kind));
     }
-    state.effectsCards.push_back(slot);
+    cards.push_back(slot);
 
-    Card show{"FOR THE SHOW", {},
-              "When this song is loaded for a show, each part is played through its effects once and kept ready, so the stage "
-              "plays finished audio.",
-              {}, theme::dim, {}, {}};
+    EffectsCard show{"FOR THE SHOW", {},
+                     "When this song is loaded for a show, each part is played through its effects once and kept ready, so the "
+                     "stage plays finished audio.",
+                     {}, theme::dim, {}, {}, 2};
     const bool anyOn = std::any_of(song->parts.begin(), song->parts.end(), [](const model::PartDoc& part) {
         return std::any_of(part.effects.begin(), part.effects.end(), [](const model::EffectDoc& e) { return e.on; });
     });
@@ -182,24 +181,24 @@ void addSongCards(MixerState& state, const app::Session& session, const juce::St
             break;
         }
     }
-    state.effectsCards.push_back(show);
+    cards.push_back(show);
 }
 
 // An output view's: its own chain, and its Limit's ceiling when it has one on.
-void addOutputCards(MixerState& state, const app::Session& session, const model::OutputDoc& output) {
+void addOutputCards(std::vector<EffectsCard>& cards, const app::Session& session, const model::OutputDoc& output) {
     juce::StringArray offered;
     for (const auto& kind : model::effectKindsFor(model::EffectPlace::Output, output.stereo)) offered.add(model::effectName(kind));
-    state.effectsCards.push_back({"THE OUTPUT'S OWN EFFECTS",
-                                  "The " + output.name + " strip on the right holds this output's chain: after the mix, before the "
-                                      "interface. It belongs to the rig, so it's the same in every song.",
-                                  "Offered here: " + offered.joinIntoString(", ") + ".", {}, {}, {}, {}});
+    cards.push_back({"THE OUTPUT'S OWN EFFECTS",
+                     "The " + output.name + " strip on the right holds this output's chain: after the mix, before the "
+                         "interface. It belongs to the rig, so it's the same in every song.",
+                     "Offered here: " + offered.joinIntoString(", ") + ".", {}, {}, {}, {}, 1});
     for (const auto& effect : session.effects({{}, {}, session.rigId(), output.id})) {
         if (effect.kind != "limit" || !effect.on) continue;
         const double ceiling = static_cast<double>(effect.values.getWithDefault("ceiling", 0.0));
-        state.effectsCards.push_back({"LIMIT" + kDot + output.name.toUpperCase(), {},
-                                      "Ceiling " + withTrueMinus(juce::String(ceiling, 1)) + " dBFS. The level check and the pre-show "
-                                          "check count it, so a song that would hit it hard is named before the show.",
-                                      {}, {}, {}, {}});
+        cards.push_back({"LIMIT" + kDot + output.name.toUpperCase(), {},
+                         "Ceiling " + withTrueMinus(juce::String(ceiling, 1)) + " dBFS. The level check and the pre-show check "
+                             "count it, so a song that would hit it hard is named before the show.",
+                         {}, {}, {}, {}, 2});
         break;
     }
 }
@@ -332,7 +331,6 @@ juce::String addOutputStrips(MixerState& state, const app::Session& session, con
 MixerState makeMixerState(const app::Session& session, const juce::String& songId, const juce::String& outputId) {
     MixerState state;
     const auto& model = session.model();
-    const bool edit = session.mode() == app::Mode::Edit;
 
     state.options.push_back({{}, "This song"});
     const model::OutputDoc* output = nullptr;
@@ -349,7 +347,6 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
         state.panelTitle = "THIS SONG";
         state.panelText = "How loud each part is in this song, and where it sits, for everyone.";
         if (model.song(songId) != nullptr) addSongStrips(state, session, songId);
-        if (edit) addSongCards(state, session, songId);
     } else {
         state.panelTitle = output->name.toUpperCase();
         state.panelLabel = outputLabelName(output->label);
@@ -357,7 +354,6 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
         state.panelChannels = "OUT " + formatChannels(output->firstChannel, output->stereo);
         state.panelText = addOutputStrips(state, session, *output);
         state.outputStrip = outputStripOf(state, session, *output);
-        if (edit) addOutputCards(state, session, *output);
     }
 
     const auto finish = [&session](MixerState::Strip& strip) {
@@ -377,6 +373,18 @@ MixerState makeMixerState(const app::Session& session, const juce::String& songI
     if (state.outputStrip) finish(*state.outputStrip);
     addOutputLines(state, session, songId);
     return state;
+}
+
+std::vector<EffectsCard> makeEffectsCards(const app::Session& session, const juce::String& songId, const juce::String& outputId) {
+    std::vector<EffectsCard> cards;
+    if (session.mode() != app::Mode::Edit) return cards;
+    const model::OutputDoc* output = nullptr;
+    if (const auto* rig = session.model().rig(session.rigId()); rig != nullptr && outputId.isNotEmpty())
+        for (const auto& out : rig->outputs)
+            if (out.id == outputId) output = &out;
+    if (output != nullptr) addOutputCards(cards, session, *output);
+    else addSongCards(cards, session, songId);
+    return cards;
 }
 
 }  // namespace sqlive::ui

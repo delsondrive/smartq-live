@@ -60,6 +60,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
         return "Show mode never changes the band folder. Change it after the show.";
     });
     commands_.onChanged = [this](const std::vector<model::DocKey>& keys) {
+        ++effects_revision_;                                     // an edit may change what effectsState says
         autosaver_.noteChanged(keys);
         noteEffectsEdits(keys);                                  // prepared again for the show 2 s after the last
         outside_->followReloadSteps();

@@ -856,3 +856,52 @@ TEST_CASE("a short strip shows fewer slots and says how many more, then one slim
     CHECK(stripeffects::rowsFor(2, 1) == std::vector<Row>{{K::More, 0, 2}});
     CHECK(stripeffects::rowsFor(1, 1) == std::vector<Row>{{K::Effect, 0, 0}});
 }
+
+TEST_CASE("a slot let go outside its box, or whose rows went from under it, moves nothing", "[strip][strip-fx]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    ScopedLook look;
+    ChannelStrip strip;
+    std::vector<int> opened;
+    std::vector<std::pair<int, int>> moved;
+    strip.onEffectOpen = [&](int i) { opened.push_back(i); };
+    strip.onEffectMove = [&](int from, int to) { moved.emplace_back(from, to); };
+    strip.set(withEffects({slot("eq"), slot("dynamic"), slot("deess")}), ChannelStrip::Size::Full);
+    strip.setBounds(0, 0, 112, 620);
+    const auto from = strip.slotArea(0).getCentre().toFloat();
+    // Below the strip, above it, and over the next strip's box (6 px to its right): no move, and no open.
+    for (const auto to : {juce::Point<float>(from.x, 660.0f), juce::Point<float>(from.x, -30.0f),
+                          juce::Point<float>(112.0f + 6.0f + 40.0f, static_cast<float>(strip.slotArea(2).getCentreY()))}) {
+        INFO("let go at " << to.x << ", " << to.y);
+        strip.mouseDown(mouseAt(strip, from, from, false));
+        strip.mouseDrag(mouseAt(strip, strip.slotArea(2).getCentre().toFloat(), from, true));   // over the third: a line
+        const auto gap = strip.slotArea(1).withY(strip.slotArea(1).getBottom()).withHeight(3);
+        CHECK(hasColour(snapshot(strip, 112, 620).getClippedImage(gap), theme::mint, 20));
+        strip.mouseDrag(mouseAt(strip, to, from, true));                                      // then out: none
+        const auto image = snapshot(strip, 112, 620);
+        CHECK_FALSE(hasColour(image.getClippedImage(gap), theme::mint, 20));   // no insertion line
+        strip.mouseUp(mouseAt(strip, to, from, true));
+    }
+    CHECK(moved.empty());
+    CHECK(opened.empty());
+
+    // The strip made shorter mid-drag (fewer rows than the one carried): the drag is let go, nothing sent.
+    const auto third = strip.slotArea(2).getCentre().toFloat();
+    strip.mouseDown(mouseAt(strip, third, third, false));
+    strip.mouseDrag(mouseAt(strip, from, third, true));
+    strip.setBounds(0, 0, 112, ChannelStrip::minimumHeight(ChannelStrip::Size::Full) + stripeffects::boxHeight(1) + 7);
+    REQUIRE(strip.slotsShown() == 1);
+    strip.mouseDrag(mouseAt(strip, from.translated(0.0f, 2.0f), third, true));
+    strip.mouseUp(mouseAt(strip, from, third, true));
+    CHECK(moved.empty());
+    CHECK(opened.empty());
+
+    // The chain changed under it (an undo took an effect away): let go, nothing sent.
+    strip.setBounds(0, 0, 112, 620);
+    strip.mouseDown(mouseAt(strip, third, third, false));
+    strip.mouseDrag(mouseAt(strip, from, third, true));
+    strip.set(withEffects({slot("eq"), slot("dynamic")}), ChannelStrip::Size::Full);
+    strip.mouseDrag(mouseAt(strip, from.translated(0.0f, 2.0f), third, true));
+    strip.mouseUp(mouseAt(strip, from, third, true));
+    CHECK(moved.empty());
+    CHECK(opened.empty());
+}

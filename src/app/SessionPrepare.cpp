@@ -32,7 +32,10 @@ juce::String effectsSeen(const model::SongDoc& song) {
 
 void Session::startPreparing() {
     preparer_ = std::make_unique<EffectsPreparer>(prepared_store_, sample_rate_);
-    preparer_->onChanged = [this](const juce::String&) { changed(); };
+    preparer_->onChanged = [this](const juce::String&) {
+        ++effects_revision_;
+        changed();
+    };
     for (const auto& id : model_.songIds())
         if (const auto* song = model_.song(id)) effects_seen_[id] = effectsSeen(*song);
     preparer_show_ = mode_ == Mode::Show;
@@ -100,6 +103,7 @@ void Session::prepareSetlist() {
     std::vector<WantedSong> songs;
     for (const auto& id : ids) songs.push_back(songToPrepare(id));
     preparer_->want(std::move(songs));                           // nothing in a show: the preparer lets it be
+    ++effects_revision_;
 }
 
 EffectsPreparer::State Session::effectsState(const juce::String& songId) const {
@@ -117,10 +121,12 @@ void Session::prepareForShow() {
         songs,
         [this](double progress) {
             if (show_prepare_) show_prepare_ = progress;
+            ++effects_revision_;
             changed();
         },
         [this](bool) {
             show_prepare_.reset();
+            ++effects_revision_;
             changed();
         });
     show_prepare_ = 0.0;                                         // after: one it replaced has said it is done

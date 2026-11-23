@@ -20,8 +20,8 @@ namespace sqlive::ui {
 //    mint. A strip without a box in a row of strips with boxes (setEffectsRow: Click and Cues, an output view's roles) keeps
 //    its room empty, so every row below lines up. The box gives way before the fader does: while the fader keeps 120 px it
 //    has four slots; on a shorter strip three, two or one (the last "+N more" when the effects don't fit), then one slim 18 px
-//    line with a short bar per effect and the count; at the very smallest (minimumHeight, the Song editor's dock at the
-//    smallest window, where the tracks need every pixel) none, nor its room. Compact strips never have one;
+//    line with a short bar per effect and the count; at the very smallest (minimumHeight: a dock dragged as short as it
+//    goes) none, nor its room. Compact strips never have one;
 //  - (the output strip on an output view: the mockup's .strip.master, 124 px, a violet-tinted body);
 //  - the pan bar (96 px; 74 px beside the link button on an output view): "C", "L 40", "R 100", a faint fill from the centre
 //    to the value and a marker at it; "Follow" in a dashed outline while an output's role is linked. Left empty (the row
@@ -55,7 +55,8 @@ namespace sqlive::ui {
 // release without moving 4 px) on a slot opens it, onEffectOpen(index); on "+" or an empty slot, onEffectOpen(the first empty
 // slot); on "+N more", onEffectOpen(the first effect not shown); on the slim line, onEffectOpen(0). A slot dragged up or down
 // is lifted (drawn faint), a mint line shows where it would land, and its release calls onEffectMove(from, to) once (nothing
-// when let go in its place).
+// when let go in its place, or outside the box: above or below it, or over another strip, where no line shows). A drag whose
+// rows go from under it (the chain changed, the strip resized) is let go with nothing sent.
 //
 // Typing (the mixer decides whether it may, in Edit mode only): a press on the level box asks for a typed level,
 // onTypeRequest(Field::Level), at once; a click (a press and release without a move) on the pan bar's words asks for a
@@ -73,6 +74,7 @@ public:
     static int stripWidth(Size);                                  // 112, or 118 compact
     static constexpr int outputStripWidth = 124;                  // the output strip, full size (.strip.master)
     static int minimumHeight(Size);                               // every row, and a fader zone of 120 px (no Effects box)
+    static int effectsRoom(int rows);                             // what the Effects box takes above the pan (0 rows: the slim line)
 
     ChannelStrip();
 
@@ -162,6 +164,7 @@ private:
     void pressedInBox(juce::Point<int>);
     void releasedInBox();
     int slotTargetFor(int y) const;                               // where the slot carried would land
+    void cancelSlotDrag();
     void paintBox(juce::Graphics&);
     bool hasPanBar() const { return strip_.pan.has_value(); }
     bool showsLink() const { return hasPanBar() && strip_.linkable; }

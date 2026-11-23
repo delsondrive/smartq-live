@@ -58,10 +58,10 @@ namespace sqlive::ui {
 // Effects (docs/mockups/effects.html, #mixer and #output; Edit mode only, where the state gives boxes): every full strip of a
 // row with boxes keeps the box's room (ChannelStrip::setEffectsRow). A click on a slot asks the page for the effects window
 // (onOpenEffects, with the slot's index; -1 for "+", the window's add menu); the dot is one Session::switchEffect; a slot
-// dragged within its strip is one Session::moveEffect, on release. On an output view the output's own strip
-// (MixerState::outputStrip, 124 px) is held at the right, after a divider, while the roles' row scrolls beside it; its
-// index is the one after the roles' (stripAt, the keyboard), its fader the output's trim (Session::setLevel), its meter the
-// bus's.
+// dragged within its strip is one Session::moveEffect, on release. On an output view a full-size row (never a compact one: the
+// main view has none) has the output's own strip (MixerState::outputStrip, 124 px), after a divider: right after the roles when
+// they fit, else held at the right while the roles' row scrolls beside it. Its index is the one after the roles' (stripAt,
+// the keyboard), its fader the output's trim (Session::setLevel), its meter the bus's.
 //
 // It refreshes on Session::changes() while it and its parents are visible, and on show(). It keeps one MeterReader and,
 // while shown, gives every strip a frame of its meter 30 times a second (tickMeters). The first frame after it was
@@ -81,6 +81,8 @@ public:
     std::function<void(const app::EffectsTarget&, int index)> onOpenEffects;
     void setCompact(bool);
     int minimumHeight() const;                                    // a whole strip (a 120 px fader) and the row's scroll bar
+    // The height at which its strips show their Effects box as the slim line (minimumHeight when no strip has a box).
+    int minimumHeightWithEffects() const;
     bool compact() const { return compact_; }
 
     const MixerState& state() const { return state_; }

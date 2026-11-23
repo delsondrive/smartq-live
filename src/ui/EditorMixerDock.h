@@ -20,7 +20,11 @@ namespace sqlive::ui {
 // bar up or down makes the panel taller or shorter, within two limits: the tracks above keep the ruler and at least two
 // part lanes (minimumTracksHeight), and the panel stays tall enough for a whole strip with a 120 px fader
 // (minimumPanelHeight). When a window is too small for both, the strip wins. A panel never sized by hand is 440 px (the
-// mockup's on a 1080 screen), or half the room when that is less, but never less than the strip needs. Its height and its
+// mockup's on a 1080 screen: the strips' Effects box with its four slots), or half the room when that is less, but never
+// less than the strips need to show their Effects box as its slim line when the tracks can spare it (MixerPanel::
+// minimumHeightWithEffects, within maximumPanelHeight), and never less than a strip needs. So at 1920 x 1080 four slots, at
+// 1280 x 760 a slot or the slim line, and at the smallest window (1100 x 680) the slim line, the tracks keeping the ruler and
+// two lanes; the box gives way before the fader's 120 px (ChannelStrip). Its height and its
 // folded state are this computer's (Settings::editorMixerHeight / editorMixerFolded), written with the session's next
 // flush once a drag ends or the fold changes; folding keeps the height, so unfolding brings it back.
 //

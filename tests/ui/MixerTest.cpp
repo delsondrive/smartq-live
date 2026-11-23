@@ -12,12 +12,16 @@
 #include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
 #include "ui/AppShell.h"
+#include "ui/BarRuler.h"
+#include "ui/EditorMixerDock.h"
 #include "ui/EffectsChainColumn.h"
 #include "ui/EffectsWindow.h"
 #include "ui/Format.h"
+#include "ui/MainView.h"
 #include "ui/MixerPage.h"
 #include "ui/MixerPanel.h"
 #include "ui/Pages.h"
+#include "ui/PartLanes.h"
 #include "ui/SongEditorPage.h"
 #include "ui/Theme.h"
 
@@ -407,7 +411,8 @@ TEST_CASE("the mixer's state carries each part's effects, and an output view its
     const auto shown = makeMixerState(s, f.songId, f.outputId);
     REQUIRE(shown.outputStrip.has_value());
     CHECK_FALSE(shown.outputStrip->effects.has_value());
-    CHECK(shown.effectsCards.empty());
+    CHECK(makeEffectsCards(s, f.songId, f.outputId).empty());
+    CHECK(makeEffectsCards(s, f.songId, {}).empty());
 }
 
 TEST_CASE("a slot's reduction follows what the effect is turning down", "[mixer][mixer-fx]") {
@@ -430,36 +435,36 @@ TEST_CASE("a slot's reduction follows what the effect is turning down", "[mixer]
 TEST_CASE("the side panel's effects cards: this song's, and an output's own with its Limit", "[mixer][mixer-fx]") {
     WithEffects f; auto& s = f.s;
     const auto title = s.model().song(f.songId)->title;
-    const auto song = makeMixerState(s, f.songId, {});
-    REQUIRE(song.effectsCards.size() == 3);
-    CHECK(song.effectsCards[0].title == juce::String::fromUTF8("EFFECTS \xc2\xb7 THIS SONG"));
-    CHECK(song.effectsCards[0].text.contains("heard everywhere the part goes, before its fader"));
-    CHECK(song.effectsCards[1].title == "IN A SLOT");
-    CHECK(song.effectsCards[1].note == "Click a module to open it. Click the dot to switch it off and on. Drag to reorder. Up to 4 per part.");
-    CHECK(song.effectsCards[1].legendKinds == juce::StringArray{"eq", "dynamic", "deess", "width", "transient"});
-    CHECK(song.effectsCards[1].legendWords[1] == "Dynamic, with how much it's turning down");
-    CHECK(song.effectsCards[2].title == "FOR THE SHOW");
+    const auto song = makeEffectsCards(s, f.songId, {});
+    REQUIRE(song.size() == 3);
+    CHECK(song[0].title == juce::String::fromUTF8("EFFECTS \xc2\xb7 THIS SONG"));
+    CHECK(song[0].text.contains("heard everywhere the part goes, before its fader"));
+    CHECK(song[1].title == "IN A SLOT");
+    CHECK(song[1].note == "Click a module to open it. Click the dot to switch it off and on. Drag to reorder. Up to 4 per part.");
+    CHECK(song[1].legendKinds == juce::StringArray{"eq", "dynamic", "deess", "width", "transient"});
+    CHECK(song[1].legendWords[1] == "Dynamic, with how much it's turning down");
+    CHECK(song[2].title == "FOR THE SHOW");
     // Keys's EQ is on, so the song waits to be prepared (the preparer held); once it is, it says so in mint.
-    CHECK(song.effectsCards[2].status == title + juce::String::fromUTF8(" \xc2\xb7 not prepared yet"));
-    CHECK(song.effectsCards[2].statusColour == theme::caution);
+    CHECK(song[2].status == title + juce::String::fromUTF8(" \xc2\xb7 not prepared yet"));
+    CHECK(song[2].statusColour == theme::caution);
     s.preparer().setPaused(false);
     s.prepareForShow();
     for (int i = 0; i < 500 && s.preparingForShow(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
     REQUIRE(s.preparer().waitUntilIdle(20000));
     juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
-    const auto prepared = makeMixerState(s, f.songId, {});
-    CHECK(prepared.effectsCards[2].status == title + juce::String::fromUTF8(" \xc2\xb7 prepared"));
-    CHECK(prepared.effectsCards[2].statusColour == theme::mint);
+    const auto prepared = makeEffectsCards(s, f.songId, {});
+    CHECK(prepared[2].status == title + juce::String::fromUTF8(" \xc2\xb7 prepared"));
+    CHECK(prepared[2].statusColour == theme::mint);
 
-    const auto output = makeMixerState(s, f.songId, f.outputId);
-    REQUIRE(output.effectsCards.size() == 2);
-    CHECK(output.effectsCards[0].title == "THE OUTPUT'S OWN EFFECTS");
-    CHECK(output.effectsCards[0].text.startsWith("The Headphones strip on the right holds this output's chain"));
-    CHECK(output.effectsCards[0].note == "Offered here: EQ, Dynamic, Limit, Width.");
-    CHECK(output.effectsCards[1].title == juce::String::fromUTF8("LIMIT \xc2\xb7 HEADPHONES"));
-    CHECK(output.effectsCards[1].note.startsWith(juce::String::fromUTF8("Ceiling \xe2\x88\x92" "1.0 dBFS.")));
+    const auto output = makeEffectsCards(s, f.songId, f.outputId);
+    REQUIRE(output.size() == 2);
+    CHECK(output[0].title == "THE OUTPUT'S OWN EFFECTS");
+    CHECK(output[0].text.startsWith("The Headphones strip on the right holds this output's chain"));
+    CHECK(output[0].note == "Offered here: EQ, Dynamic, Limit, Width.");
+    CHECK(output[1].title == juce::String::fromUTF8("LIMIT \xc2\xb7 HEADPHONES"));
+    CHECK(output[1].note.startsWith(juce::String::fromUTF8("Ceiling \xe2\x88\x92" "1.0 dBFS.")));
     REQUIRE(s.switchEffect(f.headphones, 2, false));               // a Limit switched off: no card for it
-    CHECK(makeMixerState(s, f.songId, f.outputId).effectsCards.size() == 1);
+    CHECK(makeEffectsCards(s, f.songId, f.outputId).size() == 1);
 }
 
 TEST_CASE("the output strip sits at the right after a divider, with its trim fader and its own box", "[mixer][mixer-fx]") {
@@ -574,7 +579,6 @@ TEST_CASE("a strip's box opens the effects window from the Mixer page and from t
     CHECK(window.column().addMenuOpen());
     window.close();
 
-    shell.setBounds(0, 0, 1920, 1080);                            // a dock of its own height (at 760 it is at its smallest: no box)
     shell.showPage(Page::SongEditor);
     auto* editor = dynamic_cast<ui::SongEditorPage*>(shell.currentContent());
     REQUIRE(editor != nullptr);
@@ -587,43 +591,109 @@ TEST_CASE("a strip's box opens the effects window from the Mixer page and from t
     CHECK(window.title() == "Keys");
 }
 
-TEST_CASE("the Song editor's mixer at its smallest keeps a 120 px fader: the box gives way", "[mixer][mixer-fx]") {
-    // The page under the 62 px top bar at the smallest window, and at 1920 x 1080.
-    for (const auto& [w, h, rows] : {std::tuple{1100, 618, 0}, std::tuple{1920, 1018, 4}}) {
+namespace {
+
+// The splitter dragged by dy (the dock's own bar).
+void dragDock(EditorMixerDock& dock, int dy) {
+    auto& splitter = dock.splitter();
+    const juce::Point<float> from(static_cast<float>(splitter.getWidth() / 2), static_cast<float>(splitter.getHeight() / 2));
+    const auto to = from.translated(0.0f, static_cast<float>(dy));
+    const auto at = [&](juce::Point<float> p, juce::ModifierKeys mods, bool dragged) {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), p, mods, 1.0f, 0, 0, 0, 0, &splitter, &splitter, now,
+                                from, now, 1, dragged);
+    };
+    splitter.mouseDown(at(from, juce::ModifierKeys::leftButtonModifier, false));
+    splitter.mouseDrag(at(to, juce::ModifierKeys::leftButtonModifier, true));
+    splitter.mouseUp(at(to, {}, true));
+}
+
+}  // namespace
+
+TEST_CASE("the Song editor's mixer shows the Effects box at its own height: four slots at 1080, at least the slim line below", "[mixer][mixer-fx]") {
+    // The page under the 62 px top bar in 1920 x 1080, 1280 x 760 and 1100 x 680 windows (the smallest).
+    for (const auto& [w, h] : {std::pair{1920, 1018}, std::pair{1280, 698}, std::pair{1100, 618}}) {
         INFO(w << " x " << h);
         WithEffects f;
         sqlive::test::ScopedLook look;
         ui::SongEditorPage page(f.s);  page.openSong(f.songId);
         snapshot(page, w, h);
         auto& dock = page.mixerDock();
-        CHECK(dock.maximumPanelHeight() >= dock.minimumPanelHeight());   // the tracks keep their two lanes
         auto* keys = dock.mixer().stripAt(2);
         REQUIRE(keys != nullptr);
+        CHECK_FALSE(keys->effectsArea().isEmpty());                // the box, never sized by hand
+        if (w == 1920) CHECK(keys->slotsShown() == 4);
+        if (w == 1100) CHECK(keys->slotsShown() == 0);            // the slim line
         CHECK(keys->faderZoneArea().getHeight() >= 120);
         CHECK(keys->getLocalBounds().contains(keys->effectsArea()));
+        CHECK(page.timeline().getHeight() >= BarRuler::height + 2 * PartLane::height);   // the tracks keep two lanes
         CHECK(childrenInside(page));
-        if (rows == 4) {
-            CHECK(keys->slotsShown() == 4);                       // at 1080, four slots
-            continue;
-        }
-        // The smallest window: the dock as short as the tracks allow leaves no room for a box (the tracks need it all);
-        // dragged up as far as it goes, the box is its slim line.
-        CHECK(keys->effectsArea().isEmpty());
-        auto& splitter = dock.splitter();
-        const juce::Point<float> from(static_cast<float>(splitter.getWidth() / 2), static_cast<float>(splitter.getHeight() / 2));
-        const auto to = from.translated(0.0f, -500.0f);
-        const auto at = [&](juce::Point<float> p, juce::ModifierKeys mods, bool dragged) {
-            const auto now = juce::Time::getCurrentTime();
-            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), p, mods, 1.0f, 0, 0, 0, 0, &splitter, &splitter, now,
-                                    from, now, 1, dragged);
-        };
-        splitter.mouseDown(at(from, juce::ModifierKeys::leftButtonModifier, false));
-        splitter.mouseDrag(at(to, juce::ModifierKeys::leftButtonModifier, true));
-        splitter.mouseUp(at(to, {}, true));
-        REQUIRE(dock.panelHeight() == dock.maximumPanelHeight());
+        // Dragged as short as it goes: the fader keeps its 120 px, the box gives way altogether.
+        dragDock(dock, 5000);
+        REQUIRE(dock.panelHeight() == dock.minimumPanelHeight());
         keys = dock.mixer().stripAt(2);
-        CHECK_FALSE(keys->effectsArea().isEmpty());
-        CHECK(keys->slotsShown() == 0);                           // the slim line
+        CHECK(keys->effectsArea().isEmpty());
         CHECK(keys->faderZoneArea().getHeight() >= 120);
     }
+}
+
+TEST_CASE("the effects cards are made only when what they say may change, never on a meter tick", "[mixer][mixer-fx]") {
+    WithEffects f; auto& s = f.s;
+    sqlive::test::ScopedLook look;
+    ui::MixerPage page(s);  page.setBounds(0, 0, 1920, 1018);  page.setVisible(true);
+    page.openSong(f.songId);
+    REQUIRE(page.effectsCards().size() == 3);
+    s.playSong(f.songId, 0.0);                                    // 30 ticks a second while it plays
+    s.advanceWithoutDevice(4800);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    const int made = page.cardsMade();
+    for (int i = 0; i < 10; ++i) s.changes().sendSynchronousChangeMessage();
+    CHECK(page.cardsMade() == made);                              // ticks: nothing asked of the preparer
+    s.perform(app::Action::Stop);
+    REQUIRE(s.switchEffect(f.keys, 0, false));                    // an edit: made again
+    s.changes().sendSynchronousChangeMessage();
+    CHECK(page.cardsMade() > made);
+    page.chooseOutput(f.outputId);                                // another view: the output's cards
+    REQUIRE(page.effectsCards().size() == 2);
+    CHECK(page.effectsCards()[0].title == "THE OUTPUT'S OWN EFFECTS");
+}
+
+TEST_CASE("a short side panel keeps the keys box and FOR THE SHOW, and lets IN A SLOT go first", "[mixer][mixer-fx]") {
+    WithEffects f; auto& s = f.s;
+    sqlive::test::ScopedLook look;
+    ui::MixerPage page(s);  page.openSong(f.songId);
+    snapshot(page, 1280, 698);                                    // a 1280 x 760 window
+    REQUIRE(page.effectsCards().size() == 3);
+    CHECK(page.keysShown());
+    CHECK(page.cardShown(2));                                     // FOR THE SHOW
+    CHECK_FALSE(page.cardShown(1));                               // IN A SLOT goes first
+    snapshot(page, 1920, 1018);                                   // at 1080 every card has room
+    CHECK(page.keysShown());
+    for (int i = 0; i < 3; ++i) CHECK(page.cardShown(i));
+    CHECK(childrenInside(page));
+}
+
+TEST_CASE("a compact row (the main view) has no output strip", "[mixer][mixer-fx]") {
+    WithEffects f; auto& s = f.s;
+    sqlive::test::ScopedLook look;
+    ui::MixerPanel panel(s);
+    panel.show(f.songId, f.outputId);
+    snapshot(panel, 1700, 640);
+    const int roles = static_cast<int>(panel.state().strips.size());
+    REQUIRE(panel.stripAt(roles) != nullptr);                     // full size: the output strip
+    panel.setCompact(true);
+    snapshot(panel, 1700, 300);
+    CHECK(panel.stripAt(roles) == nullptr);
+    CHECK(panel.stripAt(roles - 1) != nullptr);
+    panel.setCompact(false);                                      // and back
+    snapshot(panel, 1700, 640);
+    CHECK(panel.stripAt(roles) != nullptr);
+
+    s.enterShow();                                                // the main view in Show mode, on an output
+    MainView view(s);
+    view.mixer().show(f.songId, f.outputId);
+    snapshot(view, 1280, 760);
+    REQUIRE(view.mixer().compact());
+    CHECK(view.mixer().stripAt(static_cast<int>(view.mixer().state().strips.size())) == nullptr);
+    CHECK(stripsIn(view).size() == view.mixer().state().strips.size());
 }

@@ -60,6 +60,8 @@ float ChannelStrip::fractionForDb(float db) {
 
 int ChannelStrip::stripWidth(Size size) { return size == Size::Compact ? kCompactWidth : kWidth; }
 
+int ChannelStrip::effectsRoom(int rows) { return stripeffects::boxHeight(rows) + kGap; }
+
 int ChannelStrip::minimumHeight(Size size) {
     const bool full = size == Size::Full;
     return 2 * kBorder + (full ? kPadTop : kCompactPadTop) + kPanHeight + kGap + kButtonHeight + kGap + (full ? kBoxHeight + kGap : 0) + kMinZone + kGap + kNameHeight + kPadBottom;
@@ -73,11 +75,8 @@ void ChannelStrip::set(const MixerState::Strip& strip, Size size) {
     if (strip == strip_ && size == size_) return;
     const bool reshaped = size != size_ || strip.canSolo != strip_.canSolo || strip.linkable != strip_.linkable
                           || strip.effects.has_value() != strip_.effects.has_value();
-    if (drag_ == Drag::Slot && (!strip.effects || static_cast<int>(strip.effects->size()) != effectCount())) {
-        drag_ = Drag::None;                                       // the chain changed under the slot carried: let it go
-        slotPressed_ = slotTarget_ = -1;
-        slotLifted_ = false;
-    }
+    if (drag_ == Drag::Slot && (!strip.effects || static_cast<int>(strip.effects->size()) != effectCount()))
+        cancelSlotDrag();                                         // the chain changed under the slot carried: let it go
     strip_ = strip;
     size_ = size;
     if (silent()) level_[0] = level_[1] = hold_[0] = hold_[1] = kMinDb;
@@ -182,9 +181,9 @@ void ChannelStrip::resized() {
     box_ = {};
     rows_ = 0;
     const int spare = getHeight() - minimumHeight(size_);
-    if (hasBoxRow() && spare >= stripeffects::boxHeight(0) + kGap) {
+    if (hasBoxRow() && spare >= effectsRoom(0)) {
         for (int rows = stripeffects::kMaxRows; rows >= 1 && rows_ == 0; --rows)
-            if (spare >= stripeffects::boxHeight(rows) + kGap) rows_ = rows;
+            if (spare >= effectsRoom(rows)) rows_ = rows;
         const int height = stripeffects::boxHeight(rows_);
         if (hasBox()) box_ = {x, y, width, height};
         y += height + kGap;
@@ -319,8 +318,17 @@ int ChannelStrip::rowAt(juce::Point<int> at) const {
 }
 
 // As many of the other effects shown as have their middles above the pointer (the effects window's column does the same).
+// The slot carried is let go with nothing sent: its line and its faint look go.
+void ChannelStrip::cancelSlotDrag() {
+    drag_ = Drag::None;
+    slotPressed_ = slotTarget_ = -1;
+    slotLifted_ = false;
+    repaint(box_);
+}
+
 int ChannelStrip::slotTargetFor(int y) const {
     const auto rows = slotRows();
+    if (!juce::isPositiveAndBelow(slotPressed_, static_cast<int>(rows.size()))) return -1;
     const int from = rows[static_cast<std::size_t>(slotPressed_)].index;
     int target = 0;
     for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
@@ -363,7 +371,7 @@ void ChannelStrip::releasedInBox() {
     const auto& r = rows[static_cast<std::size_t>(row)];
     if (lifted) {
         repaint(box_);
-        if (target >= 0 && target != r.index && onEffectMove) onEffectMove(r.index, target);
+        if (juce::isPositiveAndBelow(target, effectCount()) && target != r.index && onEffectMove) onEffectMove(r.index, target);
         return;
     }
     if (!onEffectOpen) return;
@@ -397,7 +405,7 @@ void ChannelStrip::paintBox(juce::Graphics& g) {
         case Kind::More: stripeffects::paintMoreSlot(g, area, r.more); break;
         }
     }
-    if (slotLifted_ && slotPressed_ >= 0 && slotTarget_ >= 0) {
+    if (slotLifted_ && juce::isPositiveAndBelow(slotPressed_, static_cast<int>(rows.size())) && juce::isPositiveAndBelow(slotTarget_, rows_)) {
         const int from = rows[static_cast<std::size_t>(slotPressed_)].index;
         if (slotTarget_ != from) {
             const auto at = slotArea(slotTarget_);                // effect rows are the first rows, in order
@@ -518,9 +526,15 @@ void ChannelStrip::mouseDrag(const juce::MouseEvent& e) {
         repaint();
         if (onPanDrag) onPanDrag(pan, false, false);
     } else if (drag_ == Drag::Slot && slotPressed_ >= 0) {
-        if (slotRows()[static_cast<std::size_t>(slotPressed_)].kind != stripeffects::Row::Kind::Effect) return;   // only effects move
+        const auto rows = slotRows();
+        if (!juce::isPositiveAndBelow(slotPressed_, static_cast<int>(rows.size()))) {   // the rows went under it (a resize, an undo)
+            cancelSlotDrag();
+            return;
+        }
+        if (rows[static_cast<std::size_t>(slotPressed_)].kind != stripeffects::Row::Kind::Effect) return;   // only effects move
         if (!slotLifted_ && e.getDistanceFromDragStart() <= kSlotDragThreshold) return;
-        const int target = slotTargetFor(e.y);
+        // Outside the box (below or above the strip, over another strip): nowhere to land, no line, and a release there moves nothing.
+        const int target = box_.contains(e.getPosition()) ? slotTargetFor(e.y) : -1;
         if (slotLifted_ && target == slotTarget_) return;
         slotLifted_ = true;
         slotTarget_ = target;
