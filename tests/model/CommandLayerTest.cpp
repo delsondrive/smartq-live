@@ -52,6 +52,19 @@ TEST_CASE("a drag is one step back", "[commands]") {
     c.undo();  CHECK(m.band().name == "0");
     CHECK_FALSE(c.canUndo());
 }
+TEST_CASE("a gesture that did more than its first command says can name its step again", "[commands]") {
+    BandModel m; m.editBand().name = "0"; CommandLayer c(m); addRename(c);
+    c.run("test.rename", params({{"name", "1"}}), "run-1", "rename once");
+    c.run("test.rename", params({{"name", "2"}}), "run-1", "rename twice");
+    CHECK(c.undoWords() == "rename once");                        // a coalesced step keeps its first words
+    CHECK_FALSE(c.nameLastStep("run-2", "both"));                 // not the last step's gesture: nothing changes
+    CHECK(c.undoWords() == "rename once");
+    CHECK(c.nameLastStep("run-1", "both"));
+    CHECK(c.undoWords() == "both");
+    c.undo();
+    CHECK(c.redoWords() == "both");
+    CHECK_FALSE(c.nameLastStep("", "none"));                      // a step without a gesture is never renamed
+}
 TEST_CASE("history is limited to 200 steps", "[commands]") {
     BandModel m; CommandLayer c(m); addRename(c);
     for (int i = 0; i < 250; ++i) c.run("test.rename", params({{"name", juce::String(i)}}));

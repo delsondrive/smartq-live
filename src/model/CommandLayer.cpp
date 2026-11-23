@@ -74,6 +74,12 @@ juce::String CommandLayer::redoName() const { return redo_stack_.empty() ? juce:
 juce::String CommandLayer::undoWords() const { return undo_stack_.empty() ? juce::String() : undo_stack_.back().words; }
 juce::String CommandLayer::redoWords() const { return redo_stack_.empty() ? juce::String() : redo_stack_.back().words; }
 
+bool CommandLayer::nameLastStep(const juce::String& coalesceKey, const juce::String& words) {
+    if (coalesceKey.isEmpty() || undo_stack_.empty() || undo_stack_.back().coalesceKey != coalesceKey) return false;
+    undo_stack_.back().words = words;
+    return true;
+}
+
 void CommandLayer::setGuard(Guard guard) { guard_ = std::move(guard); }
 
 CommandResult CommandLayer::undo() {

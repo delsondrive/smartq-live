@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -36,15 +37,17 @@ namespace sqlive::ui {
 //  - M: what its M does; S: what its S does (only where it has one);
 //  - Enter types its level, Shift+Enter its pan (a StripValueEditor over the level box or the pan bar, starting from what
 //    the box says); a press on the level box, or a click on the pan's words, does the same. Enter sets what was typed (one
-//    undo step), so does the keyboard going elsewhere; Esc leaves the value as it was. What model::parseDb or parsePan
-//    can't read leaves it too, and the box flashes danger red once; "off" (-inf, −∞) is read only on an output view,
-//    where it stops sending the role. Words not changed from what the box said change nothing (a linked pan starts at
+//    undo step), so do the keyboard going elsewhere and any press of the mouse outside the field (a global mouse
+//    listener, on only while typing), and so does choosing another output or song, before the strips change; Esc
+//    leaves the value as it was. What model::parseDb or parsePan can't read leaves it too (the field closes as on Esc),
+//    and the box flashes danger red once; "off" (-inf, −∞) is read only on an output view, where it stops sending the
+//    role. Words not changed from what the box said change nothing (a linked pan starts at
 //    "C" and stays linked);
 //  - Esc (not typing): no strip selected, and the keys go back where they went before.
 // A run of arrow presses on one strip is one gesture, so one undo step: it ends when another strip is selected, another
-// key or the mouse is used, the keyboard goes elsewhere, or a second passes without an arrow (clockMs). Every other key
-// (Space, Ctrl+Z, Ctrl+Y) goes on to the components around it. onStripSelected tells of every change of selection made
-// here (a press, Tab, Esc, entering Show mode, the strips made again without the selected one); selectStrip(), the
+// key or the mouse is used, the keyboard goes elsewhere, or a second passes without an arrow (clockMs). A run that moved
+// both the level and the pan is named for both ("level and pan Keys"). Every other key (Space, Ctrl+Z, Ctrl+Y) goes on
+// to the components around it. onStripSelected tells of every change of selection made here (a press, Tab, Esc, entering Show mode, the strips made again without the selected one); selectStrip(), the
 // tracks' way in, tells nothing back.
 //
 // Show mode: the mixer never takes the keyboard. Nothing is selected (not even by selectStrip), keyPressed() answers
@@ -81,6 +84,7 @@ public:
     bool takesKeys() const;                                       // Edit mode, and a strip selected; never in Show mode
     StripValueEditor* typing();                                   // the field being typed into; nullptr when none
     std::function<double()> clockMs = [] { return juce::Time::getMillisecondCounterHiRes(); };   // for the runs of arrows
+    bool watchingPresses() const { return watching_; }           // for tests: every mouse press is seen (while typing)
 
     bool keyPressed(const juce::KeyPress&) override;
     void focusLost(FocusChangeType) override;
@@ -90,6 +94,12 @@ public:
 
 private:
     class Row;
+    class PressWatcher;
+    struct Typed {                                                // what was typed, and where it goes
+        app::LevelTarget target;
+        ChannelStrip::Field field;
+        juce::String text;
+    };
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void timerCallback() override;
@@ -117,7 +127,11 @@ private:
     void stepPan(int stripIndex, int step);
     void startTyping(int stripIndex, ChannelStrip::Field);
     void finishTyping(bool keep);
-    void setTyped(int stripIndex, ChannelStrip::Field, const juce::String& text);
+    std::optional<Typed> closeTyping();
+    void setTyped(const Typed&);
+    void watchPresses(bool);
+    void pressedWhileTyping(const juce::MouseEvent&);
+    void nameRun(const app::LevelTarget&, const juce::String& name);
     juce::Rectangle<int> typingBox(ChannelStrip&, ChannelStrip::Field) const;
     void scrollTo(int stripIndex);
 
@@ -141,9 +155,13 @@ private:
     int runStrip_ = -1;                                           // the strip of the run of arrows going on; -1 none
     double runLastMs_ = 0.0;
     juce::String runGesture_;
+    bool runMovedLevel_ = false, runMovedPan_ = false;             // what this run has moved so far
     StripValueEditor editor_;
     int typingStrip_ = -1;                                        // the strip being typed on; -1 none
     juce::String typingFrom_;                                     // the words it started from
+    std::unique_ptr<PressWatcher> watcher_;
+    bool watching_ = false;
+    juce::Time openingPress_;                                     // the mouse press that opened the field, if one did
 };
 
 }  // namespace sqlive::ui

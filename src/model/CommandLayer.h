@@ -34,6 +34,9 @@ public:
     bool canUndo() const;  bool canRedo() const;
     juce::String undoName() const;  juce::String redoName() const;      // the command's name, "" when there is none
     juce::String undoWords() const; juce::String redoWords() const;     // the words run was given, "" when none (or no step)
+    // Names the last step again, in the user's words, when it is the one coalesced under that key: a gesture that turned out to
+    // do more than its first command said (a run of arrows that moved a level and a pan). False, and nothing changed, else.
+    bool nameLastStep(const juce::String& coalesceKey, const juce::String& words);
     CommandResult undo();  CommandResult redo();
     void clearHistory();
     void clearRedo();                                           // a step just undone that must never be redone

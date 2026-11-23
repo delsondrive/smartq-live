@@ -462,3 +462,147 @@ TEST_CASE("entering Show mode drops the selection and any typing", "[mixerkeys]"
     CHECK(*m.level(2) == start);                                  // nothing typed was set
     CHECK_FALSE(anyTakesKeyboardFocus(m.panel));
 }
+
+TEST_CASE("a run of level and pan arrows is one undo step named after both", "[mixerkeys]") {
+    {
+        Mixer m;
+        clickStrip(m.panel, 2);
+        m.press(key(K::rightKey));                                // pan first: its words would hide the level
+        m.press(key(K::upKey));
+        CHECK(m.s.commands().undoWords() == "level and pan Keys");
+        m.press(key(K::escapeKey));
+        clickStrip(m.panel, 2);
+        m.press(key(K::upKey));  m.press(key(K::upKey));          // level only: as the session names it
+        CHECK(m.s.commands().undoWords() != "level and pan Keys");
+    }
+    {
+        Mixer m(true);
+        clickStrip(m.panel, 2);
+        m.press(key(K::upKey));
+        m.press(key(K::leftKey));
+        CHECK(m.s.commands().undoWords() == "level and pan Keys on Headphones");
+        m.s.commands().undo();                                    // both back at once
+        CHECK(m.level(2) == std::optional<float>(0.0f));
+        CHECK_FALSE(m.s.pan(m.target(2)).has_value());
+    }
+}
+
+TEST_CASE("choosing another output or song sets what is being typed first", "[mixerkeys]") {
+    DemoSession d; auto& s = *d.session;
+    ScopedLook look;
+    MixerPage page(s);
+    const auto songId = d.setlist().entries[0].songId;
+    page.openSong(songId);
+    snapshot(page, 1280, 698);
+    auto& panel = page.panel();
+    clickStrip(panel, 2);
+    const auto keys = panel.state().strips[2].target;
+    panel.keyPressed(key(K::returnKey));
+    REQUIRE(panel.typing() != nullptr);
+    panel.typing()->setText("-5");
+    page.chooseOutput(s.model().rig(s.rigId())->outputs[0].id);   // the strips are made again
+    CHECK(panel.typing() == nullptr);
+    CHECK(s.level(keys) == std::optional<float>(-5.0f));
+    CHECK_FALSE(panel.watchingPresses());
+}
+
+namespace {
+
+// A press and release of the real mouse at a point of a component on the desktop, as the window's peer passes it on:
+// to the component under it, then to every global mouse listener.
+void realClick(juce::Component& onDesktop, juce::Component& target, juce::Point<int> at) {
+    auto* peer = onDesktop.getPeer();
+    REQUIRE(peer != nullptr);
+    const auto where = onDesktop.getLocalPoint(&target, at).toFloat();
+    static juce::int64 time = juce::Time::currentTimeMillis();
+    time += 1000;                                                 // never a double-click
+    peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, where, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier),
+                           juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation, time);
+    peer->handleMouseEvent(juce::MouseInputSource::InputSourceType::mouse, where, juce::ModifierKeys(),
+                           juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation, time + 50);
+}
+
+Segmented* levelsForIn(juce::Component& root) {
+    Segmented* found = nullptr;
+    forEachComponent(root, [&](juce::Component& c) {
+        if (auto* s = dynamic_cast<Segmented*>(&c); s != nullptr && found == nullptr && s->isVisible()) found = s;
+    });
+    return found;
+}
+
+}  // namespace
+
+TEST_CASE("a real press anywhere outside the typing field sets what was typed; a press inside it doesn't", "[mixerkeys]") {
+    DemoSession d; auto& s = *d.session;
+    ScopedLook look;
+    MixerPage page(s);
+    const auto songId = d.setlist().entries[0].songId;
+    page.openSong(songId);
+    page.setBounds(0, 0, 1280, 698);
+    // This needs a window on the desktop, which a test machine may not give.
+    page.setAlwaysOnTop(true);                                    // over every other window, foreground or not
+    page.addToDesktop(juce::ComponentPeer::windowIsTemporary);
+    page.setVisible(true);
+    page.toFront(false);
+    auto& panel = page.panel();
+    d.settle();
+    // The press goes to whatever is on top on the screen there (Windows is asked): another window over it means no test.
+    const auto onTop = [&](juce::Component& c, juce::Point<int> at) {
+        auto* found = juce::Desktop::getInstance().findComponentAt(c.localPointToGlobal(at));
+        return found != nullptr && (found == &page || page.isParentOf(found));
+    };
+    if (!page.isShowing() || panel.stripAt(2) == nullptr || !onTop(*panel.stripAt(2), panel.stripAt(2)->levelBoxArea().getCentre())) {
+        page.removeFromDesktop();
+        SKIP("this desktop doesn't show a test window on top");
+    }
+    REQUIRE(panel.state().strips.size() == 5);
+    const auto level = [&](int i) { return s.level(panel.state().strips[static_cast<std::size_t>(i)].target); };
+    const auto typeInto = [&](int i, const juce::String& text) {
+        auto& strip = *panel.stripAt(i);
+        realClick(page, strip, strip.levelBoxArea().getCentre());   // a press on the level box opens the field
+        REQUIRE(panel.typing() != nullptr);
+        CHECK(panel.watchingPresses());
+        panel.typing()->setText(text);
+    };
+
+    typeInto(2, "-4.5");
+    realClick(page, *panel.typing(), panel.typing()->getLocalBounds().getCentre());   // inside the field: still typing
+    REQUIRE(panel.typing() != nullptr);
+    CHECK(level(2) != std::optional<float>(-4.5f));
+    realClick(page, panel, {3, 3});                               // the panel's own background
+    CHECK(panel.typing() == nullptr);
+    CHECK_FALSE(panel.watchingPresses());
+    CHECK(level(2) == std::optional<float>(-4.5f));
+
+    typeInto(2, "-6");
+    const auto row = panel.stripAt(3)->getBounds();               // the gap between two strips
+    realClick(page, *panel.stripAt(3)->getParentComponent(), {row.getX() - 3, row.getCentreY()});
+    CHECK(panel.typing() == nullptr);
+    CHECK(level(2) == std::optional<float>(-6.0f));
+
+    typeInto(2, "-7");
+    realClick(page, *panel.stripAt(3), panel.stripAt(3)->nameArea().getCentre());   // another strip
+    CHECK(panel.typing() == nullptr);
+    CHECK(level(2) == std::optional<float>(-7.0f));
+    CHECK(panel.selectedStrip() == 3);
+
+    typeInto(2, "abc");                                           // can't be read: closes as Esc would, and flashes
+    realClick(page, panel, {3, 3});
+    CHECK(panel.typing() == nullptr);
+    CHECK(level(2) == std::optional<float>(-7.0f));
+    CHECK(panel.stripAt(2)->flashing() == ChannelStrip::Field::Level);
+
+    typeInto(2, "-8");                                            // "Levels for" Headphones: set before the switch
+    const auto keys = panel.state().strips[2].target;
+    auto* levelsFor = levelsForIn(page);
+    REQUIRE(levelsFor != nullptr);
+    realClick(page, *levelsFor, {levelsFor->getWidth() * 7 / 8, levelsFor->getHeight() / 2});
+    CHECK(page.panel().outputId().isNotEmpty());
+    CHECK(panel.typing() == nullptr);
+    CHECK(s.level(keys) == std::optional<float>(-8.0f));
+    CHECK_FALSE(panel.watchingPresses());
+
+    s.enterShow();  d.settle();                                   // never watching in a show
+    CHECK_FALSE(panel.watchingPresses());
+    page.removeFromDesktop();
+}
