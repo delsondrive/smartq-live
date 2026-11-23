@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "model/BandModel.h"
+#include "model/DocumentsJson.h"
 #include "model/SnapshotChanges.h"
 #include "model/Snapshots.h"
 #include "model/SongMidi.h"
@@ -222,4 +223,51 @@ TEST_CASE("pan changes are listed in the user's words", "[changes][pan]") {
     CHECK(has(lines, rigName, "Perc on " + outputName + ": own pan R 15, was L 20"));
     CHECK_FALSE(has(lines, title, "changed"));                                   // said already
     CHECK_FALSE(has(lines, rigName, "changed"));
+}
+
+TEST_CASE("snapshots list effects changes in words", "[effects]") {
+    DemoSession d(true); auto& s = *d.session; SnapshotStore store(s.folder());
+    auto song = d.setlist().entries[0].songId; auto title = s.model().song(song)->title;
+    const auto part = s.model().song(song)->parts[0].id;
+    const auto partName = s.model().song(song)->parts[0].name;
+    const auto rigId = s.model().rigIds()[0];
+    const auto outputId = s.model().rig(rigId)->outputs[0].id;
+    const auto outputName = s.model().rig(rigId)->outputs[0].name;
+    auto run = [&](const char* name, std::initializer_list<std::pair<const char*, juce::var>> items) {
+        REQUIRE(s.commands().run(name, params(items)).ok);
+    };
+    run("effects.add", {{"songId", song}, {"partId", part}, {"kind", "eq"}});
+    run("effects.add", {{"songId", song}, {"partId", part}, {"kind", "deess"}});
+    run("effects.add", {{"rigId", rigId}, {"outputId", outputId}, {"kind", "limit"}});
+    store.create(s.model(), "With effects", false);
+    auto id = store.list().front().id;
+    BandModel then; REQUIRE(store.load(id, then).wasOk());
+    CHECK(describeChanges(then, s.model()).empty());
+
+    run("effects.move", {{"songId", song}, {"partId", part}, {"from", 1}, {"to", 0}});
+    CHECK(has(describeChanges(then, s.model()), title, partName + ": effects reordered"));
+    CHECK(describeChanges(then, s.model()).size() == 1);
+    run("effects.move", {{"songId", song}, {"partId", part}, {"from", 1}, {"to", 0}});
+    CHECK(describeChanges(then, s.model()).empty());
+    run("effects.add", {{"songId", song}, {"partId", part}, {"kind", "dynamic"}});
+    run("effects.remove", {{"songId", song}, {"partId", part}, {"index", 1}});
+    auto lines = describeChanges(then, s.model());
+    CHECK(has(lines, title, partName + ": Dynamic added"));
+    CHECK(has(lines, title, partName + ": De-Ess removed"));
+    CHECK(lines.size() == 2);
+
+
+    auto changed = s.model().song(song)->parts[0].effects[0];                          // the EQ
+    changed.values.set("output_gain", 2.0);
+    run("effects.set", {{"songId", song}, {"partId", part}, {"index", 0}, {"effect", toVar(changed)}});
+    CHECK(has(describeChanges(then, s.model()), title, partName + ": EQ changed"));
+
+    run("effects.switch", {{"rigId", rigId}, {"outputId", outputId}, {"index", 0}, {"on", false}});
+    lines = describeChanges(then, s.model());
+    CHECK(has(lines, s.model().rig(rigId)->name, outputName + ": Limit switched off"));
+    CHECK_FALSE(hasWhat(lines, outputName + ": Limit changed"));
+    store.create(s.model(), "Off", false);
+    BandModel off; REQUIRE(store.load(store.list().front().id, off).wasOk());
+    run("effects.switch", {{"rigId", rigId}, {"outputId", outputId}, {"index", 0}, {"on", true}});
+    CHECK(has(describeChanges(off, s.model()), s.model().rig(rigId)->name, outputName + ": Limit switched on"));
 }

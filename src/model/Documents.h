@@ -108,9 +108,21 @@ struct ClickDoc {
     juce::NamedValueSet extra;
     bool operator==(const ClickDoc&) const = default;
 };
+// One effect in a chain. kind: "eq", "dynamic", "deess", "width", "transient" or "limit" (any other text is kept untouched, with
+// its keys in `extra`, and sounds as nothing). on: false is bypassed. values: every setting by Smart Q's field name (ModuleControls.h),
+// without its "bypass" (that is `on`); a Choice is its stored index (a whole number), a switch a bool, the rest numbers. An EQ's
+// "bands" is a list of band objects (only the bands in use), keyed by Smart Q's band fields: shape, freq, gain, q, slope,
+// channel, dynamic, threshold, range, attack, release, listen, bypass. Free of engine types: the engine converts it.
+struct EffectDoc {
+    juce::String kind; bool on = true; juce::NamedValueSet values;
+    juce::NamedValueSet extra;
+    // By content: a band is an object, which a var compares by identity.
+    bool operator==(const EffectDoc&) const;
+};
 struct PartDoc {
     juce::String id, name, file, roleId; float gainDb = 0.0f; bool mute = false; int channels = 2;
     int pan = 0;                                                   // -100 (left) to 100 (right); the song's, for every output
+    std::vector<EffectDoc> effects;                                // in playing order; up to kMaxEffects
     juce::NamedValueSet extra;
     bool operator==(const PartDoc&) const = default;
 };
@@ -150,6 +162,7 @@ struct OutputDoc {
     juce::String id, name; int firstChannel = 1; bool stereo = true; OutputLabel label = OutputLabel::Monitor;
     float trimDb = 0.0f; std::map<juce::String, float> mix;   // role id -> dB; absent = not sent. firstChannel is 1-based
     std::map<juce::String, int> pan;                          // role id -> its own pan here; absent = follows the song (linked)
+    std::vector<EffectDoc> effects;                           // in playing order; up to kMaxEffects
     juce::NamedValueSet extra;
     bool operator==(const OutputDoc&) const = default;
 };

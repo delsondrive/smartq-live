@@ -2,6 +2,7 @@
 
 #include "model/Documents.h"
 #include "model/DocumentsJson.h"
+#include "model/Effects.h"
 
 using namespace sqlive::model;
 
@@ -145,4 +146,52 @@ TEST_CASE("a pan that is wrong or too far is limited or left out, and noted", "[
     REQUIRE(fromJson(R"({"version":1,"outputs":[{"id":"o","label":"monitor","pan":7}]})", notAnObject, more));
     CHECK(notAnObject.outputs[0].pan.empty());
     CHECK(more.notes.joinIntoString(" ").contains("outputs[0].pan"));
+}
+
+TEST_CASE("effects round-trip through song.json and the rig", "[effects]") {
+    ParseNotes notes;
+    auto song = sampleSong();
+    auto eq = defaultEffect("eq");
+    {
+        juce::Array<juce::var> bands;
+        for (int i = 0; i < 2; ++i) {
+            auto* b = new juce::DynamicObject();
+            b->setProperty("shape", i); b->setProperty("freq", 100.0 * (i + 1)); b->setProperty("gain", -2.5 + i);
+            b->setProperty("q", 1.0); b->setProperty("slope", 1); b->setProperty("dynamic", false);
+            bands.add(juce::var(b));
+        }
+        eq.values.set("bands", juce::var(bands));
+    }
+    auto dyn = defaultEffect("dynamic"); dyn.on = false; dyn.values.set("threshold", -20.0); dyn.values.set("auto_release", true);
+    song.parts[0].effects = {eq, dyn};
+    SongDoc song2; REQUIRE(fromJson(toJson(song), song2, notes)); CHECK(song2 == song);
+    CHECK(song2.parts[0].effects[0].values["bands"].size() == 2);
+    CHECK(song2.parts[0].effects[1].on == false);
+    CHECK(song2.parts[1].effects.empty());
+
+    RigDoc rig; rig.id = "g"; rig.name = "Rig";
+    rig.outputs = {{"o1", "PA", 1, true, OutputLabel::Foh}};
+    rig.outputs[0].effects = {defaultEffect("limit")};
+    RigDoc rig2; REQUIRE(fromJson(toJson(rig), rig2, notes)); CHECK(rig2 == rig);
+    CHECK(notes.notes.isEmpty());
+
+    // a file from before effects has none, and writes none
+    CHECK(! toJson(sampleSong()).contains("effects"));
+    SongDoc old; REQUIRE(fromJson(toJson(sampleSong()), old, notes)); CHECK(old.parts[0].effects.empty());
+
+    // an unknown kind, and an unknown key, come back as they went in
+    auto text = juce::String(R"({"id":"s","title":"T","parts":[{"id":"p","name":"K","effects":[
+        {"kind":"reverb","on":false,"size":0.7,"nested":{"a":[1,2]}},
+        {"kind":"dynamic","ratio":4,"futureKnob":"x"}]}]})");
+    SongDoc loaded; REQUIRE(fromJson(text, loaded, notes));
+    auto& fx = loaded.parts[0].effects;
+    REQUIRE(fx.size() == 2);
+    CHECK(fx[0].kind == "reverb");  CHECK_FALSE(fx[0].on);  CHECK(fx[0].values.size() == 0);
+    CHECK((double) fx[0].extra["size"] == 0.7);
+    CHECK((double) fx[1].values["ratio"] == 4.0);
+    CHECK((double) fx[1].values["threshold"] == 0.0);                      // missing: its default
+    CHECK(fx[1].extra["futureKnob"] == "x");
+    SongDoc again; REQUIRE(fromJson(toJson(loaded), again, notes)); CHECK(again == loaded);
+    CHECK(again.parts[0].effects[0].extra["nested"]["a"].size() == 2);
+    CHECK(again.parts[0].effects[1].extra["futureKnob"] == "x");
 }

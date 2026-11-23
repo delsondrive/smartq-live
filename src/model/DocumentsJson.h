@@ -11,6 +11,8 @@ juce::var toVar(const BandDoc&);    bool fromVar(const juce::var&, BandDoc&, Par
 juce::var toVar(const SongDoc&);    bool fromVar(const juce::var&, SongDoc&, ParseNotes&);
 juce::var toVar(const SetlistDoc&); bool fromVar(const juce::var&, SetlistDoc&, ParseNotes&);
 juce::var toVar(const RigDoc&);     bool fromVar(const juce::var&, RigDoc&, ParseNotes&);
+// One effect on its own, read as inside a document: a setting of the wrong type is noted and takes its default.
+juce::var toVar(const EffectDoc&);   bool fromVar(const juce::var&, EffectDoc&, ParseNotes&);
 
 // The MIDI parts on their own, with the same limits as inside a document (commands, test builders and the MIDI import use
 // these and never parse or limit them again). fromVar returns false when the var isn't an object, or for a message, when

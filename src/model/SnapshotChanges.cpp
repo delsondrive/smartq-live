@@ -5,6 +5,7 @@
 #include <set>
 
 #include "model/DocumentsJson.h"
+#include "model/Effects.h"
 #include "model/SongMidi.h"
 #include "model/Words.h"
 
@@ -64,6 +65,34 @@ juce::String cueName(const CueMarkerDoc& cue) {
     return juce::File::createFileWithoutCheckingPath(cue.clip.replaceCharacter('\\', '/')).getFileNameWithoutExtension();
 }
 
+// What changed in one chain of effects, said of the part or output it is on: "Keys: EQ added", "Keys: De-Ess removed",
+// "Keys: effects reordered", "Keys: EQ changed", "FOH: Limit switched off". Effects are matched by kind, first to first.
+void describeEffects(Lines& out, const juce::String& where, const juce::String& who, const std::vector<EffectDoc>& then,
+                     const std::vector<EffectDoc>& now) {
+    if (then == now) return;
+    std::vector<int> pairedWith(now.size(), -1);                     // each effect now -> the one it was, or -1 when it is new
+    std::vector<bool> taken(then.size(), false);
+    for (std::size_t i = 0; i < now.size(); ++i)
+        for (std::size_t j = 0; j < then.size(); ++j)
+            if (! taken[j] && then[j].kind == now[i].kind) { taken[j] = true; pairedWith[i] = (int) j; break; }
+    int last = -1; bool reordered = false;
+    for (std::size_t i = 0; i < now.size(); ++i) {
+        if (pairedWith[i] < 0) { out.add(where, who + ": " + effectName(now[i].kind) + " added"); continue; }
+        if (pairedWith[i] < last) reordered = true;
+        last = pairedWith[i];
+    }
+    for (std::size_t j = 0; j < then.size(); ++j)
+        if (! taken[j]) out.add(where, who + ": " + effectName(then[j].kind) + " removed");
+    if (reordered) out.add(where, who + ": effects reordered");
+    for (std::size_t i = 0; i < now.size(); ++i) {
+        if (pairedWith[i] < 0) continue;
+        const auto& was = then[(std::size_t) pairedWith[i]];
+        if (was.on != now[i].on) out.add(where, who + ": " + effectName(now[i].kind) + (now[i].on ? " switched on" : " switched off"));
+        auto sameButOn = was; sameButOn.on = now[i].on;
+        if (! (sameButOn == now[i])) out.add(where, who + ": " + effectName(now[i].kind) + " changed");
+    }
+}
+
 void describeParts(Lines& out, const juce::String& where, const SongDoc& then, const SongDoc& now, const BandDoc& thenBand,
                    const BandDoc& nowBand) {
     for (const auto& part : now.parts) {
@@ -75,6 +104,7 @@ void describeParts(Lines& out, const juce::String& where, const SongDoc& then, c
         if (const auto level = levelChange(before->gainDb, part.gainDb); level.isNotEmpty()) out.add(where, part.name + " level " + level);
         if (before->mute != part.mute) out.add(where, part.name + (part.mute ? " muted" : " unmuted"));
         if (before->pan != part.pan) out.add(where, part.name + " pan " + formatPan(part.pan) + ", was " + formatPan(before->pan));
+        describeEffects(out, where, part.name, before->effects, part.effects);
         if (before->roleId != part.roleId)
             out.add(where, part.name + " role " + roleName(thenBand, before->roleId) + kArrow + roleName(nowBand, part.roleId));
     }
@@ -236,6 +266,7 @@ void describeRig(Lines& out, const BandDoc& thenBand, const BandDoc& nowBand, co
         }
         if (const auto trim = levelChange(was->trimDb, output.trimDb); trim.isNotEmpty()) out.add(where, output.name + " overall level " + trim);
         describeOwnPans(out, where, thenBand, nowBand, *was, output);
+        describeEffects(out, where, output.name, was->effects, output.effects);
     }
     for (const auto& output : then.outputs)
         if (byId(now.outputs, output.id) == nullptr) outputsChanged = true;

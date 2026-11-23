@@ -10,6 +10,7 @@
 #include "app/MidiPorts.h"
 #include "app/ShowArrangement.h"
 #include "model/CoreCommands.h"
+#include "model/EffectCommands.h"
 #include "model/DocumentSet.h"
 #include "model/MidiCommands.h"
 #include "model/SectionCommands.h"
@@ -40,6 +41,7 @@ Session::Session(Settings& settings, juce::File bandRoot, std::int64_t cacheBudg
       cache_(cacheBudgetBytes) {
     load_report_ = folder_.load(model_);
     model::registerCoreCommands(commands_);
+    model::registerEffectCommands(commands_);
     model::registerMidiCommands(commands_);
     model::registerSectionCommands(commands_);
     OutsideChanges::registerReloadCommand(commands_);

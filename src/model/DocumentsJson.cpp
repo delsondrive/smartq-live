@@ -5,6 +5,7 @@
 #include <set>
 
 #include "model/DocumentsJsonDetail.h"
+#include "model/Effects.h"
 #include "model/FileNames.h"
 #include "model/Units.h"
 
@@ -47,11 +48,18 @@ juce::var write(const ClickDoc& c) {
     put(o, "accentDownbeat", c.accentDownbeat);
     return finish(o, c.extra);
 }
+juce::var write(const EffectDoc& e) {
+    auto o = startObject();
+    put(o, "kind", e.kind); put(o, "on", e.on);
+    for (int i = 0; i < e.values.size(); ++i) put(o, e.values.getName(i).toString().toRawUTF8(), e.values.getValueAt(i));
+    return finish(o, e.extra);
+}
 juce::var write(const PartDoc& p) {
     auto o = startObject();
     put(o, "id", p.id); put(o, "name", p.name); put(o, "file", p.file); put(o, "roleId", p.roleId);
     put(o, "gainDb", (double) p.gainDb); put(o, "mute", p.mute); put(o, "channels", p.channels);
     if (p.pan != 0) put(o, "pan", p.pan);                          // centre is not written: a file from before pan stays as it was
+    if (! p.effects.empty()) put(o, "effects", arrayOf(p.effects, [](const EffectDoc& e) { return write(e); }));
     return finish(o, p.extra);
 }
 juce::var write(const Transition& t) {
@@ -72,6 +80,7 @@ juce::var write(const OutputDoc& d) {
     auto mix = startObject();
     for (auto& [role, db] : d.mix) mix->setProperty(juce::Identifier(role), (double) db);
     put(o, "mix", juce::var(mix.get()));
+    if (! d.effects.empty()) put(o, "effects", arrayOf(d.effects, [](const EffectDoc& e) { return write(e); }));
     if (! d.pan.empty()) {                                         // every role following the song is not written
         auto pan = startObject();
         for (auto& [role, value] : d.pan) pan->setProperty(juce::Identifier(role), value);
@@ -107,6 +116,35 @@ void read(Reader& r, ClickDoc& out) {
     out.subdivision = r.text("subdivision", "none"); out.accentDownbeat = r.flag("accentDownbeat", true);
     out.extra = r.rest();
 }
+// Every setting the kind has, as Smart Q defines it; a missing one is its default, a wrong one is noted and takes it. Anything else
+// (and all of an unknown kind) is kept in extra.
+void read(Reader& r, EffectDoc& out) {
+    out.kind = r.text("kind"); out.on = r.flag("on", true);
+    const auto known = defaultEffect(out.kind);
+    for (int i = 0; i < known.values.size(); ++i) {
+        const auto name = known.values.getName(i).toString();
+        const auto* key = name.toRawUTF8();
+        const auto& def = known.values.getValueAt(i);
+        if (name == "bands") {
+            juce::Array<juce::var> bands;
+            const auto given = r.value(key);
+            if (given.isArray())
+                for (int b = 0; b < given.size(); ++b) {
+                    if (given[b].getDynamicObject() != nullptr) bands.add(given[b]);
+                    else r.note(r.where(key) + "[" + juce::String(b) + "] is not an object, so it is dropped.");
+                }
+            else if (! given.isVoid()) r.note(r.where(key) + " is not a list, so no band is used.");
+            out.values.set(known.values.getName(i), juce::var(bands));
+        } else if (def.isBool()) {
+            out.values.set(known.values.getName(i), r.flag(key, (bool) def));
+        } else if (def.isInt()) {
+            out.values.set(known.values.getName(i), r.whole(key, (int) def, -1000000, 1000000));
+        } else {
+            out.values.set(known.values.getName(i), r.number(key, (double) def, -1.0e9, 1.0e9));
+        }
+    }
+    out.extra = r.rest();
+}
 void read(Reader& r, PartDoc& out, std::set<juce::String>& seen) {
     out.id = r.id(seen); out.name = r.text("name"); out.file = r.text("file"); out.roleId = r.text("roleId");
     if (out.file.isNotEmpty() && ! isPathInsideFolder(out.file)) {
@@ -115,6 +153,7 @@ void read(Reader& r, PartDoc& out, std::set<juce::String>& seen) {
     }
     out.gainDb = r.db("gainDb", 0.0f); out.mute = r.flag("mute", false); out.channels = r.whole("channels", 2, 1, 2);
     out.pan = r.whole("pan", 0, kMinPan, kMaxPan);
+    r.list("effects", out.effects, [](Reader& c, EffectDoc& e) { read(c, e); });
     out.extra = r.rest();
 }
 void read(Reader& r, Transition& out) {
@@ -133,6 +172,7 @@ void read(Reader& r, OutputDoc& out, std::set<juce::String>& seen) {
     if (! r.has("label")) r.note(r.where("label") + " is missing, so the output is marked as not used.");
     out.label = r.choice("label", OutputLabel::Unused, kLabels);
     out.trimDb = r.db("trimDb", 0.0f);
+    r.list("effects", out.effects, [](Reader& c, EffectDoc& e) { read(c, e); });
     r.members("mix", [&](const juce::String& role, const juce::var& v, const juce::String& at) {
         if (! isNumber(v)) { r.note(at + " is not a number, so it is left out."); return; }
         out.mix[role] = clampDb((float) (double) v);
@@ -279,6 +319,19 @@ bool fromVar(const juce::var& v, RigDoc& out, ParseNotes& notes) {
     });
     readMidi(r, out);
     out.extra = r.rest();
+    return true;
+}
+
+}  // namespace sqlive::model
+
+namespace sqlive::model {
+
+juce::var toVar(const EffectDoc& e) { return write(e); }
+bool fromVar(const juce::var& v, EffectDoc& out, ParseNotes& notes) {
+    Reader r(v, {}, notes);
+    if (! r.valid()) return false;
+    out = EffectDoc{};
+    read(r, out);
     return true;
 }
 
