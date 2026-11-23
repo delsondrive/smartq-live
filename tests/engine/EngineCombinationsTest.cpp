@@ -9,8 +9,10 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/EffectChain.h"
 #include "engine/Engine.h"
 #include "engine/OfflineRender.h"
+#include "engine/PartEffects.h"
 #include "engine/PreparedSong.h"
 #include "tests/support/MidiEvents.h"
 #include "tests/support/Songs.h"
@@ -351,5 +353,84 @@ TEST_CASE("pan through a seamless follow-on, a jump and a loop", "[combinations]
             CHECK(out[0][static_cast<std::size_t>(at)] == ramp);
             CHECK(out[1][static_cast<std::size_t>(at)] == Catch::Approx(ramp * far).epsilon(1e-6));
         }
+    }
+}
+
+// ---- Part effects with the transport (Edit mode) ----
+
+namespace {
+
+// A stereo part and a mono one of sines under a 2 Hz swell, `bars` bars long, one-bar sections, this arrangement.
+PreparedSong toneSong(const char* id, int bars, std::vector<std::uint16_t> arrangement, double hz) {
+    auto stereo = std::make_shared<PartAudio>();
+    auto mono = std::make_shared<PartAudio>();
+    for (int i = 0; i < bars * 96000; ++i) {
+        const double t = i / 48000.0, swell = 0.55 + 0.45 * std::sin(2.0 * 3.141592653589793 * 2.0 * t);
+        stereo->left.push_back(static_cast<float>(0.5 * swell * std::sin(2.0 * 3.141592653589793 * hz * t)));
+        stereo->right.push_back(static_cast<float>(0.4 * swell * std::sin(2.0 * 3.141592653589793 * hz * 1.5 * t)));
+        mono->left.push_back(static_cast<float>(0.4 * swell * std::sin(2.0 * 3.141592653589793 * 3000.0 * t)));
+    }
+    auto song = prepareSong(id, TempoMap{}, 0, 0, {{.audio = stereo, .role = 0, .pan = -30}, {.audio = mono, .role = 0}},
+                            ClickSetup{.enabled = false}, 48000.0);
+    song.sections.clear();
+    for (int b = 0; b < bars; ++b) song.sections.push_back({b * 96000, (b + 1) * 96000});
+    song.arrangement = std::move(arrangement);
+    finishSections(song);
+    return song;
+}
+
+// Every part through a 1 kHz bell of +6 dB and a compressor (-20 dB, 4:1), each a fresh chain; or none.
+std::shared_ptr<PartEffects> squashed(const PreparedSong& song, int maxBlock, bool on) {
+    if (!on) return nullptr;
+    EqSettings eq;
+    eq.bands[0] = {.enabled = true, .shape = smartq::dsp::Shape::Bell, .frequencyHz = 1000.0, .gainDb = 6.0, .q = 1.0};
+    smartq::dsp::DynamicSettings dynamic;
+    dynamic.thresholdDb = -20.0;
+    dynamic.ratio = 4.0;
+    const std::vector<ModuleSettings> effects{eq, dynamic};
+    std::vector<std::shared_ptr<EffectChain>> chains;
+    for (const auto& part : song.parts) chains.push_back(EffectChain::make(effects, 48000.0, maxBlock, !part.audio->right.empty()));
+    return PartEffects::make(std::move(chains), maxBlock);
+}
+
+} // namespace
+
+TEST_CASE("part effects through a jump, a loop, a seamless follow-on and a crossfade", "[combinations][fx]") {
+    {   // a: sections 0, 2 (looped once), 3, then a crossfade of 0.5 s into b; each song with its own effects, b's sent
+        // while it is cued.
+        auto run = [](int block, bool effects) {
+            Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+            const auto aSong = toneSong("a", 4, {0, 2, 3}, 220.0), bSong = toneSong("b", 2, {}, 330.0);
+            const auto a = e.cue(share(aSong));
+            e.setPartEffects(a, squashed(aSong, e.maxBlockFrames(), effects));
+            e.start();  e.setFollowOn({FollowKind::Crossfade, 0.5});
+            std::uint64_t b = 0;
+            return renderOffline(e, 2, 4 * 96000 + 2 * 96000, block, {
+                {10, [&](Engine& en) { b = en.cue(share(bSong)); }},
+                {20, [&](Engine& en) { en.setPartEffects(b, squashed(bSong, en.maxBlockFrames(), effects)); }},
+                {100000, [&](Engine& en) { en.setLoop(a, true); }},          // section 2 repeats at stream 192000
+                {200000, [&](Engine& en) { en.setLoop(a, false); }}});       // then section 3, crossfading at 360000
+        };
+        const auto out = run(512, true);
+        for (int block : {1, 64}) CHECK(run(block, true) == out);
+        const bool heard = out != run(512, false);                             // the effects are heard
+        CHECK(heard);
+    }
+    {   // a seamless follow-on: b's effects from its first sample.
+        auto run = [](int block, bool effects) {
+            Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+            const auto aSong = toneSong("a", 1, {}, 220.0), bSong = toneSong("b", 1, {}, 330.0);
+            const auto a = e.cue(share(aSong));
+            e.setPartEffects(a, squashed(aSong, e.maxBlockFrames(), effects));
+            e.start();  e.setFollowOn({FollowKind::Seamless, 0.0});
+            std::uint64_t b = 0;
+            return renderOffline(e, 2, 2 * 96000 + 1000, block, {
+                {10, [&](Engine& en) { b = en.cue(share(bSong)); }},
+                {20, [&](Engine& en) { en.setPartEffects(b, squashed(bSong, en.maxBlockFrames(), effects)); }}});
+        };
+        const auto out = run(512, true);
+        for (int block : {1, 64}) CHECK(run(block, true) == out);
+        const bool heard = out != run(512, false);
+        CHECK(heard);
     }
 }

@@ -105,7 +105,8 @@ public:
     // sounding, and 0xFC to each device it started), keeps the mix, keeps the cue unless it was made at another sample
     // rate (that one is dropped, through the garbage queue), and keeps stream time running. Every command not yet taken
     // is dropped, a start included, and what it carries goes through the garbage queue: the control thread sends again
-    // what it still wants (the mix, the follow-on, the cue) once the device has started.
+    // what it still wants (the mix, the follow-on, the cue, part effects) once the device has started. Every song's part
+    // effects are dropped, through the garbage queue.
     void prepare(double sampleRate, int maxBlockFrames);
     // Must only be called while process cannot run, as prepare: when the device stopped by itself (lost, or failed), after a
     // deliberate close or a failed open, and from the host's destructor, before any device starts again. The MIDI can't wait for
@@ -171,6 +172,14 @@ public:
     // drops it. Any other serial is ignored. By value: no allocation. false: the command queue was full and nothing was sent.
     bool setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>& parts) { return setSoloSet(serial, parts, parts.any()); }
     bool setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>&, bool on);
+    // The part effects of the song with this serial, played live (Edit mode; SongRenderer, "Part effects"): null clears
+    // them. For the playing song: at once, each chain fed from where the song is. For the cued song: kept with the cue and
+    // used from its first sample when it plays (a start or a follow-on); a new cue, or clearing it, drops them. Any other
+    // serial is ignored. A song fading out keeps its own. prepare drops them all: the control thread sends them again once
+    // the device has started, as it does the mix. What the engine lets go of goes back through the garbage queue.
+    void setPartEffects(std::uint64_t serial, std::shared_ptr<PartEffects>);
+    // Any thread: the maxBlockFrames prepare was last given (at least 1; 0 before any), to make chains for.
+    int maxBlockFrames() const noexcept;
     bool popEvent(EngineEvent&);
     // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
     // it is due at. Notes still sounding when a song stops (at the end of its fade), ends, or prepare stops it are ended
@@ -219,29 +228,33 @@ private:
         enum class Type : std::uint8_t {
             None, Cue, ClearCue, Start, StartAt, StartAtStep, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute,
             SetPartOverride, SetClickGain, SetPartPan, SetSoloSet, ResendMidi, ChooseStep, SetLoop, SetCueGain, PreviewCue,
-            GoToNext
+            GoToNext, SetPartEffects
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
         std::int64_t index = 0;               // a part, a song time, a step, a follow-on kind or a MIDI device
         double value = 0.0;                   // a gain, a mute, a loop or a solo (non-zero: on), or a gap in seconds
-        std::shared_ptr<const void> object;   // a song, a mix or a cue clip
+        std::shared_ptr<const void> object;   // a song, a mix, a cue clip or part effects
         std::bitset<kMaxParts> parts{};       // a solo set
     };
 
     // Objects that could not go onto a full garbage queue wait here, in place, for the next block. A block retires at most
-    // one object per command and kRetiresPerRender while rendering, so commands wait while this is nearly full.
+    // kRetiresPerCommand objects per command (a cue replaced: its song and its part effects) and kRetiresPerRender while
+    // rendering, so commands wait while this is nearly full.
     // Rendering retires songs that end, and only the songs in the slots at the block's start can: commands, which alone
     // fill the cue, are taken at the start of a block, and a song enters the playing or the fading slot only from the
-    // one before it. So a block's render retires at most kSongSlots songs, even when the fading song's fade ends, the
-    // playing song ends and its follow-on ends in the same block. Then it retires the clips the cue voice has finished
-    // with, as many as are left of kRetiresPerRender.
+    // one before it. So a block's render retires at most kSongSlots songs, each with its part effects, even when the fading
+    // song's fade ends, the playing song ends and its follow-on ends in the same block. Then it retires the clips the cue
+    // voice has finished with, as many as are left of kRetiresPerRender.
     static constexpr int kHeldCapacity = 16;
     static constexpr int kSongSlots = 3;   // playing_, transition_'s fading song (a crossfade's, or goToNext's) and cued_
-    static constexpr int kRetiresPerRender = kSongSlots + CuePlayer::kVoices;
-    static_assert(kRetiresPerRender >= kSongSlots + CuePlayer::kVoices,
-                  "a block's render can retire the playing song, the fading song, the cue and a clip per cue voice");
-    static_assert(1 + kRetiresPerRender <= kHeldCapacity, "room for one command and a render");
+    static constexpr int kRetiresPerSlot = 2;   // a song and its part effects
+    static constexpr int kRetiresPerCommand = kRetiresPerSlot;
+    static constexpr int kRetiresPerRender = kRetiresPerSlot * kSongSlots + CuePlayer::kVoices;
+    static_assert(kRetiresPerRender >= kRetiresPerSlot * kSongSlots + CuePlayer::kVoices,
+                  "a block's render can retire the playing song, the fading song, the cue (each with its part effects) and "
+                  "a clip per cue voice");
+    static_assert(kRetiresPerCommand + kRetiresPerRender <= kHeldCapacity, "room for one command and a render");
 
     bool push(Command&&);                 // false: the queue was full, and the command was dropped
     void handle(Command&) noexcept;
@@ -282,7 +295,11 @@ private:
     void report(EngineEvent::Type, std::uint64_t serial, std::int64_t streamTime, bool inGap = false,
                 int step = -1) noexcept;
     void retire(std::shared_ptr<const void>&) noexcept;
-    void retire(SongSlot&) noexcept;
+    void retire(SongSlot&) noexcept;   // its song and its part effects
+    // Part effects (EnginePartEffects.cpp): SetPartEffects; a slot's own to the garbage queue; prepare's, every one.
+    void takePartEffects(Command&) noexcept;
+    void retireEffects(SongSlot&) noexcept;
+    void dropPartEffects() noexcept;
     void flushHeld() noexcept;
     void publishStatus() noexcept;
     // The block's meters onto the published ones, each bus's from out; then the next block's watched buses (EnginePeaks.cpp).
@@ -295,6 +312,7 @@ private:
     SpscQueue<EngineEvent> events_;
     MidiOut midi_;                           // its queue too; its producer is the audio thread (and prepare)
     std::atomic<double> sample_rate_{0.0};
+    std::atomic<int> max_block_frames_{0};   // maxBlockFrames
     // The status fields are written together once per process (and by prepare). status_seq_ is odd while they are being
     // written and even once done, so a reader that sees the same even value before and after reading them has one snapshot.
     std::atomic<std::uint64_t> status_seq_{0};

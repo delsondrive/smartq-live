@@ -5,6 +5,8 @@
 #include <cmath>
 #include <span>
 
+#include "engine/PartEffects.h"
+
 namespace sqlive::engine {
 namespace {
 
@@ -53,6 +55,7 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     click_role_ = -1;
     cues_role_ = -1;
     cells_moving_ = false;
+    part_fx_ = nullptr;
 }
 
 void SongRenderer::step(Smoothed& s) const noexcept {
@@ -306,6 +309,8 @@ void SongRenderer::setPartPan(int part, int pan) noexcept {
     updatePartBalance(part, false);
 }
 
+void SongRenderer::setPartEffects(PartEffects* fx) noexcept { part_fx_ = fx; }
+
 void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
                           RenderParts what) noexcept {
     if ((song_ == nullptr && what.cue == nullptr) || !has_mix_ || frames <= 0 || click_.empty()) return;
@@ -316,8 +321,24 @@ void SongRenderer::render(SamplePos songTime, int frames, float* const* out, int
     }
     const std::uint32_t buses = bus_count_ >= 32 ? ~0u : (1u << bus_count_) - 1u;
     meter_buses_ = meters_ != nullptr ? meters_->watchedBuses & buses : 0u;
-    for (int offset = 0; offset < frames; offset += max_block_)
-        renderPiece(songTime + offset, std::min(max_block_, frames - offset), offset, envelope, what);
+    // A part's chain gives back at most a piece of its PartEffects' maxBlockFrames.
+    const int piece = part_fx_ != nullptr && part_fx_->any() ? std::min(max_block_, part_fx_->maxBlockFrames()) : max_block_;
+    for (int offset = 0; offset < frames; offset += piece)
+        renderPiece(songTime + offset, std::min(piece, frames - offset), offset, envelope, what);
+}
+
+// Each part with a chain plays the samples of its audio this piece covers through it, into the PartEffects' output for the
+// piece: sample i of the piece at index i. Samples before its audio or after its end are not played.
+void SongRenderer::runPartEffects(SamplePos audioPos, int frames) noexcept {
+    for (int p = 0; p < part_count_; ++p) {
+        const PartView& v = part_view_[p];
+        if (v.role < 0 || !part_fx_->has(p)) continue;
+        const SamplePos from = std::max<SamplePos>(audioPos, 0), to = std::min<SamplePos>(audioPos + frames, v.length);
+        if (from >= to) continue;
+        const auto s = static_cast<std::size_t>(from);
+        part_fx_->run(p, v.left + s, v.right != nullptr ? v.right + s : nullptr, static_cast<int>(to - from),
+                      static_cast<int>(from - audioPos));
+    }
 }
 
 void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const float* envelope,
@@ -370,6 +391,9 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
     }
 
     const SamplePos audioOffset = song.audioStartOffset;
+    // Part effects: not for a render that doesn't advance (a jump's outgoing tail, mixed dry) or plays no parts.
+    const bool wet = part_fx_ != nullptr && what.parts && what.advance && part_fx_->any();
+    if (wet) runPartEffects(songTime + audioOffset, frames);
     for (int i = 0; i < frames; ++i) {
         // Every smoothed value advances once per sample, before it is used, whatever the block (unless this call reads them
         // as they stand).
@@ -401,9 +425,16 @@ void SongRenderer::renderPiece(SamplePos songTime, int frames, int offset, const
             if (v.role < 0 || audioPos < 0 || audioPos >= v.length) continue;
             const float gain = static_cast<float>(part_gain_[p].value);
             if (gain == 0.0f) continue;
-            const auto s = static_cast<std::size_t>(audioPos);
-            const float left = v.left[s];
-            const float right = v.right != nullptr ? v.right[s] : left;
+            auto s = static_cast<std::size_t>(audioPos);
+            const float* sourceLeft = v.left;
+            const float* sourceRight = v.right;
+            if (wet && part_fx_->has(p)) {   // what its chain gave back for this sample
+                s = static_cast<std::size_t>(i);
+                sourceLeft = part_fx_->left(p);
+                if (sourceRight != nullptr) sourceRight = part_fx_->right(p);
+            }
+            const float left = sourceLeft[s];
+            const float right = sourceRight != nullptr ? sourceRight[s] : left;
             const float mono = v.right != nullptr ? (left + right) * 0.5f : left;
             if (meters_ != nullptr) meterPart(p, v.role, left, right, mono, gain * env);
             const Smoothed* row = &cells_[static_cast<std::size_t>(v.role) * kMaxBuses];

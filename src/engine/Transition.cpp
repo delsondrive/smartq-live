@@ -97,7 +97,10 @@ void Transition::render(float* const* out, int numChannels, std::int64_t frames)
 }
 
 SongSlot Transition::release() noexcept {
-    if (renderer_ != nullptr) renderer_->setSong(nullptr);   // before the song can be freed
+    if (renderer_ != nullptr) {   // before the song and its part effects can be freed
+        renderer_->setSong(nullptr);
+        renderer_->setPartEffects(nullptr);
+    }
     SongSlot gone = std::move(slot_);
     slot_ = {};   // its hold was moved out, so this frees nothing
     forget();

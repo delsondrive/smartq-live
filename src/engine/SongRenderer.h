@@ -14,6 +14,8 @@
 
 namespace sqlive::engine {
 
+struct PartEffects;
+
 // What one render call plays.
 struct RenderParts {
     bool parts = true;        // the song's parts
@@ -53,6 +55,15 @@ struct RenderParts {
 // writing the output: each part's peak (its gain, the envelope and the balance of its song pan, which for the meter is
 // taken as it is set, not gliding), the click's and the cues', and, on the buses the BlockMeters watches, each role's sum
 // through the bus's cell, own pan or the parts' song pans. So the output is the same with or without meters.
+//
+// Part effects (PartEffects.h): a part with a chain is read through it. For each piece, the part's own samples for that
+// song time go through its chain, in the order they play, and each sample the chain gives back, cast to float, is mixed
+// with exactly the arithmetic a plain part's sample gets (and measured so). So a song played from its start sounds bit for
+// bit as it would with each part's audio prepared through a fresh chain (applyEffects) and played plain. Song time before
+// a part's audio or after its end sends nothing through its chain, and neither does a render that doesn't advance (a
+// jump's outgoing tail mixes the part dry) or one without the parts (a count-off). A muted or soloed-out part is still
+// played through its chain, so it comes back in where it would have been. Pieces are no longer than the PartEffects'
+// maxBlockFrames.
 class SongRenderer {
 public:
     void prepare(double sampleRate, int maxBlockFrames);
@@ -79,6 +90,9 @@ public:
     // Where render raises its peaks (null: nowhere; kept through prepare). parts: whether this renderer's parts are measured
     // (the playing song's are; a song fading out on the engine's second renderer adds only to the click, cues and roles).
     void setMeters(BlockMeters*, bool parts = true) noexcept;
+    // The song's part effects, played live (null: none; prepare clears it). setSong leaves it as it is: the engine sets it
+    // with the song, and it must outlive its use here as the song does. See "Part effects" above.
+    void setPartEffects(PartEffects*) noexcept;
     // Adds into out; envelope may be null.
     void render(SamplePos songTime, int frames, float* const* out, int numChannels, const float* envelope,
                 RenderParts = {}) noexcept;
@@ -108,6 +122,7 @@ private:
     void followAutomation(SamplePos at, bool snap) noexcept;
     void countAutomated() noexcept;
     void renderPiece(SamplePos songTime, int frames, int offset, const float* envelope, RenderParts) noexcept;
+    void runPartEffects(SamplePos audioPos, int frames) noexcept;   // a piece of each part with a chain, from audioPos
     void renderCueAlone(int frames, int offset, const float* cue) noexcept;   // no song: the cue at the preview gain
     void stepCells() noexcept;                                                 // every mix cell, one sample on
     void mixCue(float value, int at) noexcept;                                 // into every bus the cue role reaches
@@ -180,6 +195,8 @@ private:
     // The channels of each bus for the current render call; null where the device has no such channel.
     std::array<float*, kMaxBuses> bus_left_{};
     std::array<float*, kMaxBuses> bus_right_{};
+
+    PartEffects* part_fx_ = nullptr;
 
     BlockMeters* meters_ = nullptr;
     bool meter_parts_ = true;

@@ -21,6 +21,8 @@ Engine::Engine() : commands_(kCommandCapacity), garbage_(kGarbageCapacity), even
 void Engine::prepare(double sampleRate, int maxBlockFrames) {
     sample_rate_.store(sampleRate, std::memory_order_relaxed);
     max_block_ = std::max(1, maxBlockFrames);
+    max_block_frames_.store(max_block_, std::memory_order_relaxed);
+    dropPartEffects();
     envelope_.assign(static_cast<std::size_t>(max_block_), 0.0f);
     click_envelope_.assign(static_cast<std::size_t>(max_block_), 0.0f);
     channels_.assign(static_cast<std::size_t>(kMaxDeviceChannels), nullptr);
@@ -191,7 +193,7 @@ void Engine::process(float* const* out, int numChannels, int frames) noexcept {
     if (max_block_ > 0) {   // prepared
         flushHeld();
         // Leave commands queued while there would be nowhere to put what they retire; they are taken in a later block.
-        while (held_count_ + 1 + kRetiresPerRender <= kHeldCapacity) {
+        while (held_count_ + kRetiresPerCommand + kRetiresPerRender <= kHeldCapacity) {
             Command command;   // popped into an empty one, so the pop never releases anything here
             if (!commands_.pop(command)) break;
             handle(command);
@@ -347,6 +349,9 @@ void Engine::handle(Command& command) noexcept {
         if (command.serial != 0 && command.serial == playing_.serial && command.index >= 0 && command.index < kMaxMidiDevices)
             midi_.resend(static_cast<int>(command.index), song_time_, stream_time_);
         break;
+    case Type::SetPartEffects:
+        takePartEffects(command);
+        break;
     }
 }
 
@@ -417,7 +422,8 @@ void Engine::takeCue() noexcept {
     playing_.hold = std::move(cued_.hold);
     playing_.song = cued_.song;
     playing_.serial = cued_.serial;
-    cued_ = {};   // its hold was moved out, so this frees nothing
+    playing_.effects = std::move(cued_.effects);
+    cued_ = {};   // its hold and its effects were moved out, so this frees nothing
     arrangement_.reset(playing_.song);
     xfade_left_ = 0;
     ending_ = false;
@@ -430,6 +436,7 @@ void Engine::takeCue() noexcept {
     // setSong resets the song's own levels; any live level for this song comes after it. A solo sent while it was cued is
     // heard from its first sample.
     renderer_->setSong(playing_.song);
+    renderer_->setPartEffects(playing_.effects.get());   // sent while it was cued: from its first sample too
     if (cued_solo_.on) renderer_->setSoloSet(cued_solo_.parts, true);
     cued_solo_ = {};
 }
@@ -693,7 +700,8 @@ void Engine::finishSong(EngineEvent::Type type, std::int64_t streamTime) noexcep
     const std::uint64_t ended = playing_.serial;
     report(type, ended, streamTime);
     cue_player_.silence();        // what still fades out carries on at the level the song's cue last had
-    renderer_->setSong(nullptr);   // before the song can be freed
+    renderer_->setSong(nullptr);   // before the song (and its part effects) can be freed
+    renderer_->setPartEffects(nullptr);
     cue_schedule_.reset();
     arrangement_.reset(nullptr);  // the choice and the loop with it
     boundary_ = 0;
@@ -762,6 +770,7 @@ void Engine::retire(std::shared_ptr<const void>& object) noexcept {
 
 void Engine::retire(SongSlot& slot) noexcept {
     retire(slot.hold);
+    retireEffects(slot);
     slot.song = nullptr;
     slot.serial = 0;
 }

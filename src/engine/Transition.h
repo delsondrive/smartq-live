@@ -13,11 +13,12 @@
 namespace sqlive::engine {
 
 // A song the audio thread holds: the playing one, the one fading out, or the cued one. `hold` keeps it alive; `song` is
-// the same object.
+// the same object. `effects`: its part effects (Engine::setPartEffects), null for none; its renderer plays them.
 struct SongSlot {
     std::shared_ptr<const void> hold;
     const PreparedSong* song = nullptr;
     std::uint64_t serial = 0;
+    std::shared_ptr<PartEffects> effects;
 };
 
 // A straight line from 1 down to 0 over `length` samples, `done` of them already played.
@@ -85,7 +86,8 @@ public:
     // The fading song's next `frames` samples (at most left()) into out, added to what is there, each at its fade's gain
     // times a stop's. Past its audio's end it is silent.
     void render(float* const* out, int numChannels, std::int64_t frames) noexcept;
-    // Its fade is over, or it must go: its renderer lets go of it, and the caller retires what this returns.
+    // Its fade is over, or it must go: its renderer lets go of it and of its part effects, and the caller retires what
+    // this returns.
     SongSlot release() noexcept;
 
 private:
