@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -18,8 +19,9 @@ namespace sqlive::ui {
 // name, label pill and channels, the sentence from the state, "Overall level" with the output's trim (drag up or down to
 // change, Shift for fine steps, double-click for 0 dB; one Session::setLevel gesture per drag), and "Playing now": the
 // output's own meter, left and right, with its level in dB (its own MeterReader on the output's bus). Under it, for the
-// song, the level check's box, "WHAT EACH OUTPUT GETS · LOUDEST MOMENT" (MixerState::outputLines), then in Edit mode on
-// "This song" the keys box ("KEYS · SELECTED STRIP"), then the mockup's closing sentence.
+// song, the level check's box, "WHAT EACH OUTPUT GETS · LOUDEST MOMENT" (MixerState::outputLines) and the mockup's closing
+// sentence, then in Edit mode the effects cards (MixerState::effectsCards, docs/mockups/effects.html's side panel) and, on
+// "This song", the keys box ("KEYS · SELECTED STRIP"), each whole or not at all.
 // While it is shown, its song is measured even outside the setlist (LevelChecker::alsoMeasure); hidden, it is forgotten.
 //
 // It changes nothing itself: levels go through Session::setLevel and setMute, which decide (a command in Edit mode,
@@ -79,6 +81,7 @@ private:
 
     // Laid out by resized(), drawn by paint().
     juce::Rectangle<int> header_, levelsForLabel_, side_, sideTitle_, sideText_, trimLabel_, levelsBox_, closingBox_;
+    std::vector<juce::Rectangle<int>> cards_;                     // each of shownSide_.effectsCards; empty: no room for it
 };
 
 }  // namespace sqlive::ui

@@ -92,3 +92,23 @@ TEST_CASE("the effects window's screen has the window over the mixer, its add me
     const auto shade = image.getPixelAt(4, 70);
     CHECK(shade.getBrightness() < theme::bg1.getBrightness() + 0.02f);
 }
+
+TEST_CASE("the mixer's screens have each part's effects, and an output's own strip with its chain", "[screens]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    sqlive::test::ScopedLook look;
+    // The console: left of the 300 px side panel, under the page's header.
+    const juce::Rectangle<int> console{16, 108, 1280 - 16 - 300 - 14 - 16, 760 - 108 - 14};
+    const auto song = ui::renderScreen("mixer-song");
+    REQUIRE(song.isValid());
+    const auto boxes = song.getClippedImage(console.withHeight(140));   // the boxes, at the top of the strips
+    CHECK(hasColour(boxes, theme::effectColour("dynamic"), 4));
+    CHECK(hasColour(boxes, theme::effectColour("transient"), 4));
+    CHECK(hasColour(song.getClippedImage({1280 - 16 - 300, 108, 300, 760 - 108}), theme::mint, 4));   // the side's cards
+
+    const auto output = ui::renderScreen("mixer-output");
+    REQUIRE(output.isValid());
+    // The output strip at the console's right: its colour bar, and its Limit's.
+    const auto strip = output.getClippedImage({console.getRight() - 10 - 124, console.getY(), 124, 140});
+    CHECK(hasColour(strip, theme::outputColour, 4));
+    CHECK(hasColour(strip, theme::effectColour("limit"), 4));
+}

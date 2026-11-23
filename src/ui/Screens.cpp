@@ -374,6 +374,37 @@ juce::String partNamed(const app::Session& session, const juce::String& songId, 
     return {};
 }
 
+// Effects on a chain, in order: each kind, on or off, with a threshold (a Dynamic) or a ceiling (a Limit) when given.
+struct Fx {
+    const char* kind;
+    bool on = true;
+    double setting = 0.0;
+};
+void addEffects(app::Session& session, const app::EffectsTarget& target, std::initializer_list<Fx> effects) {
+    for (const auto& fx : effects) {
+        if (!session.addEffect(target, fx.kind)) continue;
+        const int index = static_cast<int>(session.effects(target).size()) - 1;
+        auto effect = session.effects(target)[static_cast<std::size_t>(index)];
+        if (juce::String(fx.kind) == "dynamic") effect.values.set("threshold", fx.setting);
+        if (juce::String(fx.kind) == "limit") effect.values.set("ceiling", fx.setting);
+        session.setEffect(target, index, effect, "screens " + juce::String(fx.kind));
+        if (!fx.on) session.switchEffect(target, index, false);
+    }
+}
+
+// As the mockup's #mixer has the parts' effects: Keys an EQ and a Dynamic, Bass the same, Perc a Transient and an EQ off.
+void dressSongEffects(app::Session& session, const juce::String& songId) {
+    const auto on = [&](const char* part) { return app::EffectsTarget{songId, partNamed(session, songId, part), {}, {}}; };
+    addEffects(session, on("Keys"), {{"eq"}, {"dynamic", true, -24.0}});
+    addEffects(session, on("Bass"), {{"eq"}, {"dynamic", true, -22.0}});
+    addEffects(session, on("Perc"), {{"transient"}, {"eq", false}});
+}
+
+// As the mockup's #output has the output's own chain: an EQ, a Dynamic and a Limit at -1 dBFS.
+void dressOutputEffects(app::Session& session, const juce::String& outputId) {
+    addEffects(session, {{}, {}, session.rigId(), outputId}, {{"eq"}, {"dynamic", true, -40.0}, {"limit", true, -1.0}});
+}
+
 // The mockup's EQ on Keys: a 12 dB per octave cut at 60 Hz, a dip of 3.5 dB at 310 Hz (Q 1.2), a shelf of +2.5 dB at 6 kHz.
 model::EffectDoc withKeysEq(model::EffectDoc eq) {
     const auto band = [](int shape, double hz, double gainDb, double q) {
@@ -513,17 +544,26 @@ juce::Image render(const juce::String& name, int width, int height) {
                     session.commands().run("part.set", model::jsonObject({{"songId", song->id}, {"partId", part.id}, {"gainDb", 2}}));
         shell.openSnapshotsDialog();
     } else if (name == "mixer-song" || name == "mixer-output") {
-        // The first song mixed as the mockup's frames have it, played to bar 10 with the meters moving, as the mockup's
-        // "Playing · bar 10.1".
+        // The first song mixed as the mockup's frames have it, with each part's effects as docs/mockups/effects.html's #mixer
+        // has them (and on the output view the output's own chain, as its #output), prepared for the show, then played to
+        // bar 10 with the meters moving and the Dynamics turning down, as the mockup's "Playing · bar 10.1"; Keys selected.
         const auto songId = scene.songIdAt(0);
         const auto* rig = session.model().rig(session.rigId());
         const auto outputId = rig != nullptr && !rig->outputs.empty() ? rig->outputs[0].id : juce::String();
         dressSongMix(session, songId);
-        if (name == "mixer-output") dressOutputMix(session, outputId);
+        dressSongEffects(session, songId);
+        if (name == "mixer-output") {
+            dressOutputMix(session, outputId);
+            dressOutputEffects(session, outputId);
+        }
+        session.prepareForShow();                                 // "First Light · prepared"
+        for (int i = 0; i < 1000 && session.preparingForShow(); ++i) pump();
+        session.preparer().waitUntilIdle(20000);
         scene.measureLevels();                                    // the loudest moments
         if (auto* mixer = scene.page<MixerPage>(Page::Mixer)) {
             mixer->openSong(songId);
             if (name == "mixer-output") mixer->chooseOutput(outputId);
+            else mixer->panel().selectStrip(2);                   // Keys
             session.playSong(songId, 0.0);
             for (int i = 0; i < 6000 && session.now().seconds < 21.0; ++i) session.advanceWithoutDevice(kRate / 100);
             pump();

@@ -55,6 +55,65 @@ juce::TextLayout sentenceLayout(const juce::String& text, float width, const juc
     return layout;
 }
 
+// The effects cards (docs/mockups/effects.html's .side .card): the title, then the sentence (13 px, mid), the note (12 px,
+// dim), the kinds' colour bars with their words (.side's legend: 3 x 14 bars, 8 px to the words, a line every 20 px, 10 px
+// above), and the status with its glowing 8 px dot (.ready, 10 px above).
+constexpr int kNoteGap = 8, kLegendTop = 10, kLegendLine = 20, kStatusTop = 10, kStatusHeight = 18;
+
+int cardHeight(const MixerState::Card& card, int innerWidth) {
+    const float width = static_cast<float>(innerWidth);
+    int height = kBoxPadY + kTitleHeight + kTitleGap;
+    if (card.text.isNotEmpty()) height += ceilToInt(sentenceLayout(card.text, width).getHeight());
+    if (card.note.isNotEmpty())
+        height += (card.text.isNotEmpty() ? kNoteGap : 0) + ceilToInt(sentenceLayout(card.note, width, hintFont(), theme::dim).getHeight());
+    if (!card.legendKinds.isEmpty()) height += kLegendTop + card.legendKinds.size() * kLegendLine;
+    if (card.status.isNotEmpty()) height += kStatusTop + kStatusHeight;
+    return height + kBoxPadY;
+}
+
+void paintCard(juce::Graphics& g, const MixerState::Card& card, juce::Rectangle<int> box) {
+    theme::paintPanel(g, box.toFloat());
+    auto inner = box.reduced(kBoxPadX, kBoxPadY);
+    const float width = static_cast<float>(inner.getWidth());
+    g.setFont(capsFont());
+    g.setColour(theme::dim);
+    g.drawText(shorten(card.title, capsFont(), width), inner.removeFromTop(kTitleHeight), juce::Justification::centredLeft, false);
+    inner.removeFromTop(kTitleGap);
+    if (card.text.isNotEmpty()) {
+        const auto layout = sentenceLayout(card.text, width);
+        layout.draw(g, inner.removeFromTop(ceilToInt(layout.getHeight())).toFloat());
+    }
+    if (card.note.isNotEmpty()) {
+        if (card.text.isNotEmpty()) inner.removeFromTop(kNoteGap);
+        const auto layout = sentenceLayout(card.note, width, hintFont(), theme::dim);
+        layout.draw(g, inner.removeFromTop(ceilToInt(layout.getHeight())).toFloat());
+    }
+    if (!card.legendKinds.isEmpty()) {
+        inner.removeFromTop(kLegendTop);
+        for (int i = 0; i < card.legendKinds.size(); ++i) {
+            auto line = inner.removeFromTop(kLegendLine).toFloat();
+            g.setColour(theme::effectColour(card.legendKinds[i]));
+            g.fillRect(juce::Rectangle<float>(line.getX(), line.getCentreY() - 7.0f, 3.0f, 14.0f));
+            g.setFont(hintFont());
+            g.setColour(theme::mid);
+            g.drawText(card.legendWords[i], line.withTrimmedLeft(11.0f), juce::Justification::centredLeft, true);
+        }
+    }
+    if (card.status.isNotEmpty()) {
+        inner.removeFromTop(kStatusTop);
+        const auto line = inner.removeFromTop(kStatusHeight).toFloat();
+        const auto dot = juce::Rectangle<float>(8.0f, 8.0f).withCentre({line.getX() + 4.0f, line.getCentreY()});
+        juce::Path round;
+        round.addEllipse(dot);
+        juce::DropShadow(card.statusColour.withAlpha(0.8f), 6, {}).drawForPath(g, round);
+        g.setColour(card.statusColour);
+        g.fillEllipse(dot);
+        g.setFont(bodyFont());
+        g.drawText(shorten(card.status, bodyFont(), line.getWidth() - 15.0f), line.withTrimmedLeft(15.0f),
+                   juce::Justification::centredLeft, false);
+    }
+}
+
 }  // namespace
 
 // The mockup's .val with the output's trim in it: a drag up or down changes it, Shift for fine steps, a double-click
@@ -373,7 +432,8 @@ void MixerPage::applyPanelState() {
                              || state.panelLabelKind != shownSide_.panelLabelKind || state.panelChannels != shownSide_.panelChannels
                              || state.panelText != shownSide_.panelText
                              || state.outputLines != shownSide_.outputLines || state.outputLinesNote != shownSide_.outputLinesNote
-                             || state.bus != shownSide_.bus || keysWanted() != keysWanted_;
+                             || state.bus != shownSide_.bus || state.effectsCards != shownSide_.effectsCards
+                             || keysWanted() != keysWanted_;
     if (options == options_ && state.chosen == shownChosen_ && !sideChanged) return;   // only the strips changed: the panel's own
 
     if (options != options_) {                                    // setItems forgets the hovered segment: only when they change
@@ -393,6 +453,7 @@ void MixerPage::applyPanelState() {
     shownSide_.outputLines = state.outputLines;
     shownSide_.outputLinesNote = state.outputLinesNote;
     shownSide_.bus = state.bus;
+    shownSide_.effectsCards = state.effectsCards;
     keysWanted_ = keysWanted();
     trim_->set(outputId_);
     layOutAgain();
@@ -466,7 +527,8 @@ void MixerPage::layoutSide() {
     const auto column = side_;
     side_ = side_.withHeight(std::min(height, side_.getHeight()));
 
-    // Under it, the level check's box, the keys and the closing sentence, as far as the column reaches.
+    // Under it, the level check's box and its closing sentence, then the effects cards and the keys, each of those whole or
+    // not at all (a card too tall for what is left is passed over for the next), as far as the column reaches.
     levelsBox_ = closingBox_ = {};
     auto below = column.withTrimmedTop(std::min(column.getHeight(), side_.getHeight() + kSideGap));
     const bool levels = !state.outputLines.empty() || state.outputLinesNote.isNotEmpty();
@@ -475,16 +537,18 @@ void MixerPage::layoutSide() {
         for (const auto& line : state.outputLines) lines += kLineHeight + (line.detail.isNotEmpty() ? kDetailHeight : 0);
         levelsBox_ = below.removeFromTop(std::min(below.getHeight(), kBoxPadY + kTitleHeight + kTitleGap + lines + kBoxPadY));
         below.removeFromTop(std::min(below.getHeight(), kSideGap));
-    }
-    keys_->setVisible(keysWanted_ && below.getHeight() >= KeysCard::idealHeight());
-    if (keys_->isVisible()) {
-        keys_->setBounds(below.removeFromTop(KeysCard::idealHeight()));
-        below.removeFromTop(std::min(below.getHeight(), kSideGap));
-    }
-    if (levels) {
         const auto closing = sentenceLayout(kLevelsClosing, static_cast<float>(innerWidth), hintFont(), theme::dim);
         closingBox_ = below.removeFromTop(std::min(below.getHeight(), ceilToInt(closing.getHeight()) + 2 * kBoxPadY));
+        below.removeFromTop(std::min(below.getHeight(), kSideGap));
     }
+    cards_.clear();
+    for (const auto& card : shownSide_.effectsCards) {
+        const int cardH = cardHeight(card, innerWidth);
+        cards_.push_back(below.getHeight() >= cardH ? below.removeFromTop(cardH) : juce::Rectangle<int>());
+        if (!cards_.back().isEmpty()) below.removeFromTop(std::min(below.getHeight(), kSideGap));
+    }
+    keys_->setVisible(keysWanted_ && below.getHeight() >= KeysCard::idealHeight());
+    if (keys_->isVisible()) keys_->setBounds(below.removeFromTop(KeysCard::idealHeight()));
 
     auto inner = side_.reduced(kBoxPadX, kBoxPadY);
     sideTitle_ = inner.removeFromTop(kTitleHeight);
@@ -549,6 +613,8 @@ void MixerPage::paint(juce::Graphics& g) {
         g.setFont(bodyFont());
         g.drawText("Overall level", trimLabel_, juce::Justification::centredLeft, true);
     }
+    for (std::size_t i = 0; i < cards_.size() && i < shownSide_.effectsCards.size(); ++i)
+        if (!cards_[i].isEmpty()) paintCard(g, shownSide_.effectsCards[i], cards_[i]);
     paintLevels(g);
 }
 

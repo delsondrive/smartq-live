@@ -26,6 +26,7 @@ namespace sqlive::app {
 struct EffectsTarget {
     juce::String songId, partId, rigId, outputId;
     bool isPart() const { return songId.isNotEmpty(); }
+    bool operator==(const EffectsTarget&) const = default;
 };
 
 // Two songs as the engine plays them, the parts' effects aside: no PreparedSong holds those, as Edit mode plays them live and

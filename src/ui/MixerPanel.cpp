@@ -84,7 +84,7 @@ void MixerPanel::setCompact(bool compact) {
     if (compact == compact_) return;
     compact_ = compact;
     for (std::size_t i = 0; i < strips_.size(); ++i)
-        strips_[i]->set(state_.strips[i], compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full);
+        strips_[i]->set(shown_[i], compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full);
     resized();
     repaint();
 }
@@ -101,7 +101,7 @@ ChannelStrip* MixerPanel::stripAt(int index) {
 }
 
 const MixerState::Strip* MixerPanel::stateOf(int index) const {
-    return juce::isPositiveAndBelow(index, static_cast<int>(state_.strips.size())) ? &state_.strips[static_cast<std::size_t>(index)] : nullptr;
+    return juce::isPositiveAndBelow(index, static_cast<int>(shown_.size())) ? &shown_[static_cast<std::size_t>(index)] : nullptr;
 }
 
 void MixerPanel::toggleMute(int stripIndex) {
@@ -125,6 +125,37 @@ void MixerPanel::wire(ChannelStrip& strip, int index) {
     strip.onTypeRequest = [this, index](ChannelStrip::Field field) {
         if (editMode() && selected_ == index) startTyping(index, field);
     };
+    strip.onEffectOpen = [this, index](int effect) { openEffects(index, effect); };
+    strip.onEffectSwitch = [this, index](int effect, bool on) { switchEffect(index, effect, on); };
+    strip.onEffectMove = [this, index](int from, int to) { moveEffect(index, from, to); };
+}
+
+// An effect's own index, or -1 (the add menu) for the first empty slot.
+void MixerPanel::openEffects(int stripIndex, int effectIndex) {
+    const auto* strip = stateOf(stripIndex);
+    if (strip == nullptr || !strip->effects || !editMode() || !onOpenEffects) return;
+    const auto target = strip->effectsTarget;
+    onOpenEffects(target, juce::isPositiveAndBelow(effectIndex, static_cast<int>(strip->effects->size())) ? effectIndex : -1);
+}
+
+void MixerPanel::switchEffect(int stripIndex, int effectIndex, bool on) {
+    const auto* strip = stateOf(stripIndex);
+    if (strip == nullptr || !strip->effects) return;
+    const auto target = strip->effectsTarget;                     // a copy: the session's change may make the state again
+    session_.switchEffect(target, effectIndex, on);
+    refresh(true);
+}
+
+void MixerPanel::moveEffect(int stripIndex, int from, int to) {
+    const auto* strip = stateOf(stripIndex);
+    if (strip == nullptr || !strip->effects) return;
+    const auto target = strip->effectsTarget;
+    session_.moveEffect(target, from, to);
+    refresh(true);
+}
+
+bool MixerPanel::pinned(int stripIndex) const {
+    return state_.outputStrip.has_value() && stripIndex == static_cast<int>(state_.strips.size());
 }
 
 // A press starts a gesture and a release ends it; neither is a level of its own (a fader that isn't sent reports -60
@@ -201,6 +232,7 @@ app::MeterReader::Peak MixerPanel::read(const MixerState::Meter& meter) {
     case Kind::Click: return meters_.click();
     case Kind::Cues: return meters_.cues();
     case Kind::RoleOnBus: return meters_.roleOnBus(meter.index, meter.bus);
+    case Kind::Bus: return meters_.bus(meter.bus);
     case Kind::None: break;
     }
     return {};
@@ -218,13 +250,13 @@ void MixerPanel::tickMeters(double nowMs) {
     if (stale_) {
         stale_ = false;
         if (!fresh_) refresh();                                   // the meters as the view shows them now
-        for (std::size_t i = 0; i < strips_.size() && i < state_.strips.size(); ++i) {
-            read(state_.strips[i].meter);
+        for (std::size_t i = 0; i < strips_.size() && i < shown_.size(); ++i) {
+            read(shown_[i].meter);
             strips_[i]->clearMeter();
         }
     }
     resetPeaksIfASongStarted();
-    for (std::size_t i = 0; i < strips_.size() && i < state_.strips.size(); ++i) strips_[i]->setMeter(read(state_.strips[i].meter), nowMs);
+    for (std::size_t i = 0; i < strips_.size() && i < shown_.size(); ++i) strips_[i]->setMeter(read(shown_[i].meter), nowMs);
 }
 
 void MixerPanel::refresh(bool force) {
@@ -237,38 +269,48 @@ void MixerPanel::refresh(bool force) {
     ++states_made_;
     auto next = makeMixerState(session_, songId_, outputId_);
     const bool stateChanged = !(next == state_);
-    if (!stateChanged && strips_.size() == state_.strips.size()) return;
+    if (!stateChanged && strips_.size() == shown_.size()) return;
 
-    const bool sameStrips = next.strips.size() == strips_.size()
-                            && std::equal(next.strips.begin(), next.strips.end(), state_.strips.begin(),
+    auto nextShown = next.strips;
+    if (next.outputStrip) nextShown.push_back(*next.outputStrip);
+    const bool sameStrips = nextShown.size() == strips_.size() && nextShown.size() == shown_.size()
+                            && std::equal(nextShown.begin(), nextShown.end(), shown_.begin(),
                                           [](const MixerState::Strip& a, const MixerState::Strip& b) {
                                               return a.target == b.target && a.group == b.group;
                                           });
     // Meters it didn't read until now (another view, a song starting): what the reader holds for them is old.
-    const bool newMeters = !sameStrips || !std::equal(next.strips.begin(), next.strips.end(), state_.strips.begin(),
+    const bool newMeters = !sameStrips || !std::equal(nextShown.begin(), nextShown.end(), shown_.begin(),
                                                       [](const MixerState::Strip& a, const MixerState::Strip& b) { return a.meter == b.meter; });
     if (newMeters) stale_ = true;
     // What is being typed on a strip that goes (another output or song chosen, a part added) is closed with the strips as
     // they were, and set once the new ones are made.
     const auto typed = sameStrips ? std::nullopt : closeTyping();
     state_ = std::move(next);
+    shown_ = std::move(nextShown);
     if (!sameStrips) {
-        // Made again only when the strips themselves change, never during a drag of one of them.
+        // Made again only when the strips themselves change, never during a drag of one of them. The output strip is held
+        // on the panel itself, beside the row.
         strips_.clear();
-        for (std::size_t i = 0; i < state_.strips.size(); ++i) {
+        for (std::size_t i = 0; i < shown_.size(); ++i) {
             strips_.push_back(std::make_unique<ChannelStrip>());
             wire(*strips_.back(), static_cast<int>(i));
-            row_->addAndMakeVisible(*strips_.back());
+            if (pinned(static_cast<int>(i))) addAndMakeVisible(*strips_.back());
+            else row_->addAndMakeVisible(*strips_.back());
         }
         keepOffKeyboard(*row_);
+        for (auto& strip : strips_) keepOffKeyboard(*strip);
     }
     const auto size = compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full;
-    for (std::size_t i = 0; i < strips_.size(); ++i) strips_[i]->set(state_.strips[i], size);
+    boxRow_ = std::any_of(shown_.begin(), shown_.end(), [](const MixerState::Strip& s) { return s.effects.has_value(); });
+    for (std::size_t i = 0; i < strips_.size(); ++i) {
+        strips_[i]->set(shown_[i], size);
+        strips_[i]->setEffectsRow(boxRow_);
+    }
     if (!sameStrips) layoutRow();
     if (!sameStrips && selected_ >= 0) {
         // The selected strip, if it is still there; otherwise none.
-        const auto found = std::find_if(state_.strips.begin(), state_.strips.end(), [&](const MixerState::Strip& s) { return s.target == selectedTarget_; });
-        const int index = found != state_.strips.end() ? static_cast<int>(found - state_.strips.begin()) : -1;
+        const auto found = std::find_if(shown_.begin(), shown_.end(), [&](const MixerState::Strip& s) { return s.target == selectedTarget_; });
+        const int index = found != shown_.end() ? static_cast<int>(found - shown_.begin()) : -1;
         setSelection(index);
         if (index < 0) {
             giveKeysBack();
@@ -279,29 +321,58 @@ void MixerPanel::refresh(bool force) {
     if (typed) setTyped(*typed);
 }
 
-void MixerPanel::paint(juce::Graphics& g) { theme::paintPanel(g, getLocalBounds().toFloat()); }
+void MixerPanel::paint(juce::Graphics& g) {
+    theme::paintPanel(g, getLocalBounds().toFloat());
+    if (pinnedDivider_ < 0 || strips_.empty()) return;
+    // The output strip's divider, as the row's, and its glow when selected (the row draws its own strips').
+    const auto& out = *strips_.back();
+    g.setColour(theme::hairline);
+    g.fillRect(pinnedDivider_, out.getY() + kDividerInset, 1, std::max(0, out.getHeight() - 2 * kDividerInset));
+    if (out.isSelected()) {
+        juce::Path shape;
+        shape.addRoundedRectangle(out.getBounds().toFloat(), 7.0f);
+        juce::DropShadow(theme::mint.withAlpha(0.18f), 18, {}).drawForPath(g, shape);
+    }
+}
 
 void MixerPanel::resized() {
-    auto area = getLocalBounds().reduced(kPad);
-    if (compact_) area.setTop(std::min(area.getBottom(), getLocalBounds().getY() + kCompactTop));
-    viewport_.setBounds(area);
+    area_ = getLocalBounds().reduced(kPad);
+    if (compact_) area_.setTop(std::min(area_.getBottom(), getLocalBounds().getY() + kCompactTop));
     // The viewport and its scroll bars (made again when the look changes) never take the keyboard; the strips are kept
     // off it as they are made, and the typing field, while it is open, takes it.
     viewport_.setWantsKeyboardFocus(false);
     viewport_.setMouseClickGrabsKeyboardFocus(false);
+    layoutRow();
     keepOffKeyboard(viewport_.getHorizontalScrollBar());
     keepOffKeyboard(viewport_.getVerticalScrollBar());
-    layoutRow();
 }
 
+// The row in the room left of the output strip (when there is one: held at the right after a divider), each strip as tall
+// as the row leaves above its scroll bar.
 void MixerPanel::layoutRow() {
-    const int count = static_cast<int>(strips_.size());
-    const int width = ChannelStrip::stripWidth(compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full);
+    const int count = static_cast<int>(state_.strips.size());
+    const auto size = compact_ ? ChannelStrip::Size::Compact : ChannelStrip::Size::Full;
+    const int width = ChannelStrip::stripWidth(size);
     int dividers = 0;
     for (int i = 1; i < count; ++i)
         if (state_.strips[static_cast<std::size_t>(i)].group != state_.strips[static_cast<std::size_t>(i) - 1].group) ++dividers;
-
     const int needed = count * width + std::max(0, count - 1) * kStripGap + dividers * (kDividerWidth + kStripGap);
+
+    // The output strip right after the roles when they all fit, as the mockup has it; held at the right when they scroll.
+    auto rowArea = area_;
+    juce::Rectangle<int> pinArea;
+    pinnedDivider_ = -1;
+    const bool hasPinned = state_.outputStrip.has_value() && static_cast<int>(strips_.size()) == count + 1;
+    if (hasPinned) {
+        const int pinWidth = std::min(rowArea.getWidth(), compact_ ? width : ChannelStrip::outputStripWidth);
+        const int divider = 2 * kStripGap + kDividerWidth;
+        if (needed + divider + pinWidth < rowArea.getWidth()) rowArea.setWidth(needed + divider + pinWidth);
+        pinArea = rowArea.removeFromRight(pinWidth);
+        rowArea.removeFromRight(std::min(rowArea.getWidth(), divider));
+        pinnedDivider_ = rowArea.getRight() + kStripGap + kDividerLineX;
+    }
+    viewport_.setBounds(rowArea);
+
     const int available = viewport_.getWidth();
     const bool scrolls = needed > available;
     const int rowHeight = std::max(0, viewport_.getHeight() - (scrolls ? viewport_.getScrollBarThickness() : 0));
@@ -309,7 +380,7 @@ void MixerPanel::layoutRow() {
 
     row_->dividers.clear();
     int x = 0;
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count && i < static_cast<int>(strips_.size()); ++i) {
         if (i > 0) {
             x += kStripGap;
             if (state_.strips[static_cast<std::size_t>(i)].group != state_.strips[static_cast<std::size_t>(i) - 1].group) {
@@ -320,8 +391,10 @@ void MixerPanel::layoutRow() {
         strips_[static_cast<std::size_t>(i)]->setBounds(x, 0, width, rowHeight);
         x += width;
     }
+    if (hasPinned) strips_.back()->setBounds(pinArea.getX(), rowArea.getY(), pinArea.getWidth(), rowHeight);
     if (auto* strip = stripAt(typingStrip_)) editor_.place(typingBox(*strip, editor_.field()));
     row_->repaint();
+    repaint();
 }
 
 // ---- The keyboard ----------------------------------------------------------------------------------------------------
@@ -354,7 +427,7 @@ void MixerPanel::setSelection(int index) {
     if (index != selected_) endRun();
     if (typingStrip_ >= 0 && typingStrip_ != index) finishTyping(true);   // as a click elsewhere would
     selected_ = index;
-    if (index >= 0) selectedTarget_ = state_.strips[static_cast<std::size_t>(index)].target;
+    if (index >= 0) selectedTarget_ = shown_[static_cast<std::size_t>(index)].target;
     for (std::size_t i = 0; i < strips_.size(); ++i) strips_[i]->setSelected(static_cast<int>(i) == selected_);
     setWantsKeyboardFocus(takesKeys());
     if (index >= 0) scrollTo(index);
@@ -582,8 +655,8 @@ void MixerPanel::finishTyping(bool keep) {
 void MixerPanel::setTyped(const Typed& typed) {
     if (!editMode()) return;
     const auto flash = [&] {
-        const auto found = std::find_if(state_.strips.begin(), state_.strips.end(), [&](const MixerState::Strip& s) { return s.target == typed.target; });
-        if (auto* view = stripAt(found != state_.strips.end() ? static_cast<int>(found - state_.strips.begin()) : -1)) view->flash(typed.field);
+        const auto found = std::find_if(shown_.begin(), shown_.end(), [&](const MixerState::Strip& s) { return s.target == typed.target; });
+        if (auto* view = stripAt(found != shown_.end() ? static_cast<int>(found - shown_.begin()) : -1)) view->flash(typed.field);
     };
     if (typed.field == ChannelStrip::Field::Level) {
         const auto db = model::parseDb(typed.text);
@@ -606,7 +679,7 @@ void MixerPanel::setTyped(const Typed& typed) {
 
 void MixerPanel::scrollTo(int stripIndex) {
     const auto* strip = stripAt(stripIndex);
-    if (strip == nullptr) return;
+    if (strip == nullptr || pinned(stripIndex)) return;           // the output strip is always in view
     const auto bounds = strip->getBounds();
     const int width = viewport_.getViewWidth();
     int x = viewport_.getViewPositionX();

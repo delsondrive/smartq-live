@@ -22,11 +22,21 @@ struct MixerState {
     // Where a strip's live meter comes from (app::MeterReader): a part of the playing song by its index in what the engine
     // plays, the click, the cues, or a role on an output's bus. None: nothing to show (another song than the one playing,
     // an output with no bus, a role the mix doesn't know).
+    // Bus: what an output's bus sends to the interface, after the output's own effects (the output strip's).
     struct Meter {
-        enum class Kind { None, Part, Click, Cues, RoleOnBus };
+        enum class Kind { None, Part, Click, Cues, RoleOnBus, Bus };
         Kind kind = Kind::None;
-        int index = -1, bus = -1;                                 // the part or role index; the bus for RoleOnBus
+        int index = -1, bus = -1;                                 // the part or role index; the bus for RoleOnBus and Bus
         bool operator==(const Meter&) const = default;
+    };
+
+    // One effect in a strip's Effects box: its kind ("eq", "dynamic"…), its name ("EQ", "Dynamic"…), on or off, and how many
+    // dB it is turning the audio down now, to the nearest whole dB (Session::effectReductionDb; 0 when nothing plays there).
+    struct EffectSlot {
+        juce::String kind, name;
+        bool on = true;
+        float reductionDb = 0.0f;
+        bool operator==(const EffectSlot&) const = default;
     };
 
     struct Strip {
@@ -44,9 +54,27 @@ struct MixerState {
         // isn't, so it is silent (its M a hollow red outline, its fader and pan dimmed, its meter empty).
         bool canSolo = false, soloed = false, silencedBySolo = false;
         Meter meter;
+        // The Effects box (docs/mockups/effects.html, .rack): a part's chain in this song, or the output strip's own. nullopt:
+        // no box (Click and Cues, the roles on an output view, everything in Show mode).
+        std::optional<std::vector<EffectSlot>> effects;
+        app::EffectsTarget effectsTarget;                         // where the box's chain is
         bool operator==(const Strip&) const = default;
     };
     std::vector<Strip> strips;
+    // An output view's own strip, at the right after a divider: the output's name in its colour (theme::outputColour), its
+    // trim on the fader (LevelTarget::Kind::OutputTrim), its bus's meter (what leaves for the interface, after its effects),
+    // the footer "output · trim", and in Edit mode its Effects box. nullopt on "This song".
+    std::optional<Strip> outputStrip;
+    // The side panel's effects cards (the mockup's), in Edit mode only. "This song": "EFFECTS · THIS SONG", "IN A SLOT" (with
+    // the kinds' colour bars) and "FOR THE SHOW" (the song's preparation, a glowing dot in its colour); an output: "THE
+    // OUTPUT'S OWN EFFECTS" and, with a Limit on, "LIMIT · FOH" with its ceiling.
+    struct Card {
+        juce::String title, text, note, status;                   // text in mid, note in dim, status with its dot
+        juce::Colour statusColour;
+        juce::StringArray legendKinds, legendWords;               // IN A SLOT: a colour bar per kind, and its words
+        bool operator==(const Card&) const = default;
+    };
+    std::vector<Card> effectsCards;
     // The side panel's heading, drawn as the mockup's "DRUMMER · [In-ears] OUT 3/4": the output's name in capitals, its
     // label as the label pill (panelLabelKind gives the pill its colours), and its channels; then the sentence. For
     // "This song": "THIS SONG", "", "", and "How loud each part is in this song, and where it sits, for everyone."
@@ -76,7 +104,8 @@ struct MixerState {
 // may carry (model::mayRoute), click and cues first, in the band's order, each with its own pan there or "Follow" (linked);
 // Pad has no strip in this stage. The link button is offered only in Edit mode. A strip changed tonight says how in its
 // footer, as a warning: "+2 dB tonight", "muted tonight", "pan R 30 tonight". The meters: a part's only while its song is
-// the one playing (and the click and cues with them); a role on an output whenever that output has a bus.
+// the one playing (and the click and cues with them); a role on an output whenever that output has a bus. In Edit mode each
+// part strip has its Effects box and an output view's own strip (outputStrip) its chain's; never in Show mode.
 MixerState makeMixerState(const app::Session&, const juce::String& songId, const juce::String& outputId);
 
 }  // namespace sqlive::ui

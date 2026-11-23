@@ -34,6 +34,10 @@ void plugInPages(AppShell& shell, app::Session& session, app::AudioHost* host, a
         shell.showPage(Page::SongEditor);
     };
     setlists->onOpenSong = openInEditor;
+    // A click in a strip's Effects box, on the Mixer page or in the Song editor's mixer: the effects window over the page.
+    const auto openEffects = [&shell](const app::EffectsTarget& target, int index) { shell.openEffects(target, index); };
+    mixer->panel().onOpenEffects = openEffects;
+    editor->mixerDock().mixer().onOpenEffects = openEffects;
 
     // The New song dialog over the shell. The veil lives as long as the pages' callbacks that hold it, and is closed
     // after the dialog's callback has returned. A new song opens in the Song editor.

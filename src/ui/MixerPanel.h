@@ -55,6 +55,14 @@ namespace sqlive::ui {
 // false to every key, nothing in it wants the keyboard, and no typing opens, so every key reaches the window and its
 // ShowController. Entering Show mode drops the selection and any typing (what was typed isn't set).
 //
+// Effects (docs/mockups/effects.html, #mixer and #output; Edit mode only, where the state gives boxes): every full strip of a
+// row with boxes keeps the box's room (ChannelStrip::setEffectsRow). A click on a slot asks the page for the effects window
+// (onOpenEffects, with the slot's index; -1 for "+", the window's add menu); the dot is one Session::switchEffect; a slot
+// dragged within its strip is one Session::moveEffect, on release. On an output view the output's own strip
+// (MixerState::outputStrip, 124 px) is held at the right, after a divider, while the roles' row scrolls beside it; its
+// index is the one after the roles' (stripAt, the keyboard), its fader the output's trim (Session::setLevel), its meter the
+// bus's.
+//
 // It refreshes on Session::changes() while it and its parents are visible, and on show(). It keeps one MeterReader and,
 // while shown, gives every strip a frame of its meter 30 times a second (tickMeters). The first frame after it was
 // hidden, or after its strips' meters changed, drops what the reader held and starts every bar from nothing. Each
@@ -68,6 +76,9 @@ public:
     juce::String songId() const { return songId_; }
     juce::String outputId() const { return outputId_; }
     std::function<void()> onStateChanged;                         // after a refresh that changed state()
+    // A click in a strip's Effects box: the window on that chain at that effect (-1: its add menu). The pages give it
+    // AppShell::openEffects.
+    std::function<void(const app::EffectsTarget&, int index)> onOpenEffects;
     void setCompact(bool);
     int minimumHeight() const;                                    // a whole strip (a 120 px fader) and the row's scroll bar
     bool compact() const { return compact_; }
@@ -75,7 +86,7 @@ public:
     const MixerState& state() const { return state_; }
     int statesMade() const { return states_made_; }                 // for tests: how many times makeMixerState ran
     const juce::Viewport& viewport() const;                       // for tests: the row of strips, which scrolls sideways
-    ChannelStrip* stripAt(int index);                             // nullptr out of range
+    ChannelStrip* stripAt(int index);                             // nullptr out of range; the output strip after the roles
     void toggleMute(int stripIndex);                              // what a strip's "M" does; nothing for a strip without one
     void tickMeters(double nowMs);                                // one frame of every strip's meter (the timer's); for tests
 
@@ -119,6 +130,10 @@ private:
     void panMoved(int stripIndex, int pan, bool gestureStart, bool gestureEnd);
     void setLinked(int stripIndex, bool linked);
     void setSoloed(int stripIndex, bool soloed);
+    void openEffects(int stripIndex, int effectIndex);
+    void switchEffect(int stripIndex, int effectIndex, bool on);
+    void moveEffect(int stripIndex, int from, int to);
+    bool pinned(int stripIndex) const;                            // the output strip, held at the right
     void resetPeaksIfASongStarted();
     app::MeterReader::Peak read(const MixerState::Meter&);
 
@@ -148,7 +163,10 @@ private:
     app::MeterReader meters_;
     juce::String songId_, outputId_;
     MixerState state_;
-    bool compact_ = false, fresh_ = false;
+    std::vector<MixerState::Strip> shown_;                        // what each strip shows: the state's, then the output strip
+    bool compact_ = false, fresh_ = false, boxRow_ = false;       // boxRow_: some strip has an Effects box
+    juce::Rectangle<int> area_;                                   // the row's and the output strip's room
+    int pinnedDivider_ = -1;                                      // x of the divider before the output strip; -1 none
     juce::String gesture_;                                        // the fader or pan drag going on
     int states_made_ = 0;
     std::uint64_t songSerial_ = 0;                                // the song playing when the peaks were last looked at

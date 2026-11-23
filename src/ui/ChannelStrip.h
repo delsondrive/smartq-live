@@ -2,16 +2,27 @@
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "app/MeterReader.h"
 #include "ui/MixerState.h"
+#include "ui/StripEffects.h"
 
 namespace sqlive::ui {
 
 // One strip of the mixer console (the spec's "The strip"; the mockup's .strip, drawn by StripParts), top to bottom:
 //  - a 4 px bar along the top in the strip's colour;
+//  - on a full strip with effects (MixerState::Strip::effects), the Effects box (docs/mockups/effects.html's .rack, drawn by
+//    StripEffects): "EFFECTS" and the count, then four 20 px slots, each a filled slot (its kind's bar, the power dot, the
+//    name, the live reduction) or "+" (the first empty one) or an empty outline; the selected strip's first slot outlined in
+//    mint. A strip without a box in a row of strips with boxes (setEffectsRow: Click and Cues, an output view's roles) keeps
+//    its room empty, so every row below lines up. The box gives way before the fader does: while the fader keeps 120 px it
+//    has four slots; on a shorter strip three, two or one (the last "+N more" when the effects don't fit), then one slim 18 px
+//    line with a short bar per effect and the count; at the very smallest (minimumHeight, the Song editor's dock at the
+//    smallest window, where the tracks need every pixel) none, nor its room. Compact strips never have one;
+//  - (the output strip on an output view: the mockup's .strip.master, 124 px, a violet-tinted body);
 //  - the pan bar (96 px; 74 px beside the link button on an output view): "C", "L 40", "R 100", a faint fill from the centre
 //    to the value and a marker at it; "Follow" in a dashed outline while an output's role is linked. Left empty (the row
 //    kept) for a strip without a pan (Click and Cues on "This song");
@@ -40,6 +51,12 @@ namespace sqlive::ui {
 // sideways is passed on, so the row scrolls. M, S and the link button act on the press: onMute(!muted), onSolo(!soloed),
 // onLink(!linked). Any press calls onSelect first.
 //
+// The Effects box: a press on a slot's power dot switches it, onEffectSwitch(index, !on), at once; a click (a press and
+// release without moving 4 px) on a slot opens it, onEffectOpen(index); on "+" or an empty slot, onEffectOpen(the first empty
+// slot); on "+N more", onEffectOpen(the first effect not shown); on the slim line, onEffectOpen(0). A slot dragged up or down
+// is lifted (drawn faint), a mint line shows where it would land, and its release calls onEffectMove(from, to) once (nothing
+// when let go in its place).
+//
 // Typing (the mixer decides whether it may, in Edit mode only): a press on the level box asks for a typed level,
 // onTypeRequest(Field::Level), at once; a click (a press and release without a move) on the pan bar's words asks for a
 // typed pan, onTypeRequest(Field::Pan), once the double-click time has passed without a second press, so a double-click
@@ -54,7 +71,8 @@ public:
     static float dbAtFraction(float fromBottom01);
     static float fractionForDb(float db);
     static int stripWidth(Size);                                  // 112, or 118 compact
-    static int minimumHeight(Size);                               // every row, and a fader zone of 120 px
+    static constexpr int outputStripWidth = 124;                  // the output strip, full size (.strip.master)
+    static int minimumHeight(Size);                               // every row, and a fader zone of 120 px (no Effects box)
 
     ChannelStrip();
 
@@ -63,6 +81,9 @@ public:
     Size stripSize() const { return size_; }
     void setSelected(bool);
     bool isSelected() const { return selected_; }
+    // Whether a full strip keeps the Effects box's room though it has no box (its row of strips has boxes). A strip with a
+    // box always has it.
+    void setEffectsRow(bool);
 
     // One frame of the meter: the largest magnitude, left and right, since the last frame (MeterReader). Each bar jumps up
     // to a louder peak and otherwise falls 1.5 dB a frame; the frames are 30 a second.
@@ -88,6 +109,19 @@ public:
     std::function<void(bool soloed)> onSolo;
     std::function<void()> onPeakReset, onSelect;
     std::function<void(Field)> onTypeRequest;
+    std::function<void(int index)> onEffectOpen;                  // the index of an effect, or of the first empty slot
+    std::function<void(int index, bool on)> onEffectSwitch;
+    std::function<void(int from, int to)> onEffectMove;
+
+    // The Effects box: where it is (empty without one), how many slot rows it shows (4…1; 0 for the slim line), what each
+    // row holds and where, each row's words as drawn ("EQ", "+", "+2 more", ""), and an effect's reduction as drawn ("−3").
+    juce::Rectangle<int> effectsArea() const { return box_; }
+    int slotsShown() const { return box_.isEmpty() ? 0 : rows_; }
+    std::vector<stripeffects::Row> slotRows() const;
+    juce::Rectangle<int> slotArea(int row) const;
+    juce::Rectangle<int> powerArea(int row) const;                // the dot of an effect's row; empty for any other row
+    juce::String slotText(int row) const;
+    juce::String reductionText(int effectIndex) const;
 
     void flash(Field);                                            // that box danger red once
     std::optional<Field> flashing() const { return flash_; }
@@ -119,8 +153,16 @@ public:
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
-    enum class Drag { None, Fader, Pan };
+    enum class Drag { None, Fader, Pan, Slot };
 
+    bool hasBox() const { return size_ == Size::Full && strip_.effects.has_value(); }
+    bool hasBoxRow() const { return size_ == Size::Full && (effectsRow_ || strip_.effects.has_value()); }
+    int effectCount() const { return strip_.effects ? static_cast<int>(strip_.effects->size()) : 0; }
+    int rowAt(juce::Point<int>) const;                            // the slot row under a point; -1 none
+    void pressedInBox(juce::Point<int>);
+    void releasedInBox();
+    int slotTargetFor(int y) const;                               // where the slot carried would land
+    void paintBox(juce::Graphics&);
     bool hasPanBar() const { return strip_.pan.has_value(); }
     bool showsLink() const { return hasPanBar() && strip_.linkable; }
     bool showsSolo() const { return strip_.canSolo && size_ == Size::Full; }
@@ -132,9 +174,12 @@ private:
 
     MixerState::Strip strip_;
     Size size_ = Size::Full;
-    bool selected_ = false;
+    bool selected_ = false, effectsRow_ = false;
 
-    juce::Rectangle<int> panRow_, buttonRow_, boxRow_, zone_, name_;
+    juce::Rectangle<int> box_, panRow_, buttonRow_, boxRow_, zone_, name_;
+    int rows_ = 0;                                                // the Effects box's slot rows (0: the slim line)
+    int slotPressed_ = -1, slotTarget_ = -1;                      // the row pressed in the box (-2: the slim line), where it'd land
+    bool slotLifted_ = false;
 
     float level_[2] = {kMinDb, kMinDb}, hold_[2] = {kMinDb, kMinDb};
     double holdUntil_[2] = {0.0, 0.0}, clipUntil_ = -1.0;

@@ -16,6 +16,7 @@ namespace {
 
 // The mockup's console colours (its CSS), beyond the theme's.
 const juce::Colour kBodyTop{0xff1c1821}, kBodyMiddle{0xff151219}, kBodyBottom{0xff131017};
+const juce::Colour kOutputTop{0xff201b2a}, kOutputMiddle{0xff17131f}, kOutputBottom{0xff141019};   // .strip.master
 const juce::Colour kRecess{0xff0b0a0e}, kRecessEdge{0x12ffffff};          // .pan, .num: #0b0a0e, rgba(255,255,255,.07)
 const juce::Colour kBodyEdge{0x14ffffff};                                  // .strip border: rgba(255,255,255,.08)
 const juce::Colour kGroove{0xff060508}, kGrooveEdge{0x0fffffff};           // .groove
@@ -56,12 +57,13 @@ juce::String scaleWords(float mark) {
 
 juce::String withTrueMinus(const juce::String& text) { return text.replace("-", juce::String::fromUTF8("\xe2\x88\x92")); }
 
-void paintBody(juce::Graphics& g, juce::Rectangle<float> bounds, juce::Colour colour, bool selected) {
+void paintBody(juce::Graphics& g, juce::Rectangle<float> bounds, juce::Colour colour, bool selected, bool output) {
     constexpr float radius = 7.0f;
     juce::Path shape;
     shape.addRoundedRectangle(bounds, radius);
-    juce::ColourGradient fill(kBodyTop, 0.0f, bounds.getY(), kBodyBottom, 0.0f, bounds.getBottom(), false);
-    fill.addColour(0.6, kBodyMiddle);
+    juce::ColourGradient fill(output ? kOutputTop : kBodyTop, 0.0f, bounds.getY(), output ? kOutputBottom : kBodyBottom, 0.0f,
+                              bounds.getBottom(), false);
+    fill.addColour(0.6, output ? kOutputMiddle : kBodyMiddle);
     g.setGradientFill(fill);
     g.fillPath(shape);
     {
@@ -74,7 +76,7 @@ void paintBody(juce::Graphics& g, juce::Rectangle<float> bounds, juce::Colour co
         g.setColour(theme::mint);
         g.drawRoundedRectangle(bounds.reduced(1.0f), radius - 1.0f, 2.0f);
     } else {
-        g.setColour(kBodyEdge);
+        g.setColour(output ? theme::outputColour.withAlpha(0.35f) : kBodyEdge);
         g.drawRoundedRectangle(bounds.reduced(0.5f), radius, 1.0f);
     }
 }

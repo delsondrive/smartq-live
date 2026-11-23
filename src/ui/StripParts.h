@@ -16,8 +16,9 @@ namespace sqlive::ui::stripparts {
 juce::String withTrueMinus(const juce::String&);
 
 // The strip's body: a dark vertical gradient in 7 px corners, a hairline border (mint and 2 px when selected), and a 4 px
-// bar of the strip's colour along the top.
-void paintBody(juce::Graphics&, juce::Rectangle<float> bounds, juce::Colour colour, bool selected);
+// bar of the strip's colour along the top. output: the output strip's (docs/mockups/effects.html's .strip.master), a gradient
+// tinted violet and a border of the output colour at .35.
+void paintBody(juce::Graphics&, juce::Rectangle<float> bounds, juce::Colour colour, bool selected, bool output = false);
 
 // The pan bar (.pan): recessed, a faint fill from the centre to the value and a small glowing marker at it, both in the
 // strip's colour, and the value's words ("C", "L 40") above the marker in a soft dark halo, in caution when it is
