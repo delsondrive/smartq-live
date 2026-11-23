@@ -53,9 +53,10 @@ public:
     static int minimumTracksHeight();                             // the ruler and two part lanes
 
     std::function<void()> onLayoutChanged;                        // a drag or a fold: the page lays out again
-    std::function<void()> onStripSelected;                        // after a strip was chosen in the mixer
+    std::function<void()> onKeysChanged;                          // the mixer took the keyboard or let it go (MixerPanel::hasKeys)
 
     MixerPanel& mixer() { return mixer_; }
+    const MixerPanel& mixer() const { return mixer_; }
     juce::Component& splitter();                                  // for tests: the bar that drags
     juce::Button& foldButton();                                   // for tests: "▾ Hide" / "▴ Mixer"
     juce::String splitterWords() const;                           // "MIXER · THIS SONG"

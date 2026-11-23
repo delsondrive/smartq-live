@@ -140,3 +140,45 @@ TEST_CASE("a song played alone from the editor hears its solo from its start", "
     REQUIRE(s.now().playingSongId == k.song.id);
     CHECK(silent(peaks(s, 600)));
 }
+
+TEST_CASE("soloing a part the engine doesn't play still silences the others", "[solo]") {
+    // The Bass's audio is missing: the song plays without it, yet a solo on it is a solo (the mixer shows the others
+    // silenced), so the Keys go quiet too.
+    KeysAlone k; auto& s = k.s;
+    const auto& song = *s.model().song(k.song.id);
+    REQUIRE(s.folder().audioFile(song, song.parts[1]).deleteFile());
+    s.cache().forget(k.song.id);
+    k.d.settle();
+    s.perform(Action::Start);
+    s.advanceWithoutDevice(48000 * 4);
+    REQUIRE(heard(peaks(s)));                                                    // the Keys, the song playing without its Bass
+    s.setSolo(k.song.id, k.bass, true);
+    s.advanceWithoutDevice(4800);
+    CHECK(silent(peaks(s)));
+    s.setSolo(k.song.id, k.bass, false);
+    s.advanceWithoutDevice(4800);
+    CHECK(heard(peaks(s)));
+}
+
+TEST_CASE("a solo change the engine's full queue dropped is sent again; entering Show clears every solo for sure", "[solo]") {
+    KeysAlone k; auto& s = k.s;
+    s.setSolo(k.song.id, k.bass, true);
+    s.perform(Action::Start);
+    s.advanceWithoutDevice(48000 * 4);
+    REQUIRE(silent(peaks(s)));                                                   // the (muted) Bass alone
+    const auto fill = [&] { while (s.engine().setSoloSet(0, {}, false)) {} };   // an audio thread stalled: the queue is full
+    fill();
+    s.setSolo(k.song.id, k.bass, false);                                          // dropped
+    peaks(s, 1);                                                                 // the engine catches up
+    s.advanceWithoutDevice(4800);                                                // the next tick sends it again
+    CHECK(heard(peaks(s)));
+
+    s.setSolo(k.song.id, k.bass, true);
+    s.advanceWithoutDevice(4800);
+    REQUIRE(silent(peaks(s)));
+    fill();
+    s.enterShow();                                                               // its clear is dropped too
+    peaks(s, 1);
+    s.advanceWithoutDevice(4800);
+    CHECK(heard(peaks(s)));                                                      // no solo reaches the show
+}

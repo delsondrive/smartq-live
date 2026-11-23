@@ -84,6 +84,8 @@ public:
     int selectedStrip() const { return selected_; }
     std::function<void(int index)> onStripSelected;               // a change of selection made here; -1: none
     bool takesKeys() const;                                       // Edit mode, and a strip selected; never in Show mode
+    bool hasKeys() const;                                         // takesKeys, and the keyboard really here (or in its typing field)
+    std::function<void()> onKeysChanged;                          // hasKeys changed: the Song editor's footer hints follow it
     void setKeysHome(juce::Component*);                           // where the keys go back to; nullptr: where they went before
     juce::Component* keysHome() const { return keysHome_.getComponent(); }
     StripValueEditor* typing();                                   // the field being typed into; nullptr when none
@@ -91,7 +93,9 @@ public:
     bool watchingPresses() const { return watching_; }           // for tests: every mouse press is seen (while typing)
 
     bool keyPressed(const juce::KeyPress&) override;
+    void focusGained(FocusChangeType) override;
     void focusLost(FocusChangeType) override;
+    void focusOfChildComponentChanged(FocusChangeType) override;
     void paint(juce::Graphics&) override;
     void resized() override;
     void visibilityChanged() override;
@@ -138,6 +142,7 @@ private:
     void nameRun(const app::LevelTarget&, const juce::String& name);
     juce::Rectangle<int> typingBox(ChannelStrip&, ChannelStrip::Field) const;
     void scrollTo(int stripIndex);
+    void keysMaybeChanged();                                      // onKeysChanged when hasKeys isn't what it was
 
     app::Session& session_;
     app::MeterReader meters_;
@@ -167,6 +172,7 @@ private:
     std::unique_ptr<PressWatcher> watcher_;
     bool watching_ = false;
     juce::Time openingPress_;                                     // the mouse press that opened the field, if one did
+    bool hadKeys_ = false;                                        // hasKeys as last told (keysMaybeChanged)
 };
 
 }  // namespace sqlive::ui

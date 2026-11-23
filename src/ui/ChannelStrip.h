@@ -35,8 +35,10 @@ namespace sqlive::ui {
 // it (not a linked one), the wheel moves it 1 a notch. onLevelDrag(db, start, end) and onPanDrag(pan, start, end) report a
 // gesture as LevelFader did: a press starts it with the value as it is (0 for a linked pan), each move that changes the
 // value reports it, the release ends it; a double-click or wheel notch is a gesture of its own (start and end together).
-// So a press and release without a move reports no value of its own, and changes nothing. M, S and the link button act
-// on the press: onMute(!muted), onSolo(!soloed), onLink(!linked). Any press calls onSelect first.
+// So a press and release without a move reports no value of its own, and changes nothing. A drag is measured on the screen,
+// so a press that scrolls the row to the strip (its selection) isn't read as a move. A wheel or swipe that is mostly
+// sideways is passed on, so the row scrolls. M, S and the link button act on the press: onMute(!muted), onSolo(!soloed),
+// onLink(!linked). Any press calls onSelect first.
 //
 // Typing (the mixer decides whether it may, in Edit mode only): a press on the level box asks for a typed level,
 // onTypeRequest(Field::Level), at once; a click (a press and release without a move) on the pan bar's words asks for a
@@ -103,6 +105,7 @@ public:
     juce::Rectangle<int> scaleArea() const;
     juce::Rectangle<int> meterArea() const;                       // both bars
     juce::Rectangle<int> clipLightArea() const;
+    juce::Rectangle<int> meterFrameArea() const;                  // what a meter frame redraws: the bars, the clip light and its glow
     juce::Rectangle<int> nameArea() const { return name_; }
     float yForDb(float db) const;                                 // where the cap's centre line, the scale and the meter put a level
     juce::Rectangle<float> capBounds() const;

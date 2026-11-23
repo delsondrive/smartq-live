@@ -205,7 +205,7 @@ TEST_CASE("several soloed parts play; the others, but never the click and cues, 
         std::vector<Change> changes;
         if (solo) {
             changes = {{5120, [](SongRenderer& x) { x.setSoloSet(soloOf({0, 2})); }},
-                       {15360, [](SongRenderer& x) { x.setSoloSet(soloOf({100})); }},        // a part the song doesn't have
+                       {15360, [](SongRenderer& x) { x.setSoloSet(soloOf({100})); }},        // a part the song doesn't have: still a solo
                        {20480, [](SongRenderer& x) { x.setSoloSet(soloOf({1})); }},
                        {25600, [](SongRenderer& x) { x.setSoloSet({}); }}};
         }
@@ -217,7 +217,7 @@ TEST_CASE("several soloed parts play; the others, but never the click and cues, 
     CHECK(reference[1] == plain[1]);                                              // the click and the cue, untouched
     CHECK(reference[0][5000] == Catch::Approx(0.7f));
     CHECK(reference[0][15000] == Catch::Approx(0.5f).margin(1e-4));              // parts 0 and 2 play
-    CHECK(reference[0][20000] == Catch::Approx(0.7f).margin(1e-4));              // no part of the song's: no solo
+    CHECK(std::abs(reference[0][20000]) < 1e-4f);                                // a solo, of no part it plays: all silent
     CHECK(reference[0][25000] == Catch::Approx(0.2f).margin(1e-4));
     CHECK(reference[0][30000] == Catch::Approx(0.7f).margin(1e-4));              // none: everything again
 
@@ -258,6 +258,28 @@ TEST_CASE("the engine takes a solo set and a part pan for the playing song, or t
     f.cue(twoParts("b"));
     f.start();
     CHECK(renderOffline(f, 2, 64, 64)[0][0] == 0.75f);
+}
+
+TEST_CASE("a solo on with no part the engine plays silences every part, cued or playing; a full queue says so", "[solo]") {
+    // The session solos a part whose audio didn't load: the set is empty, the solo is on all the same (the spec: while any
+    // part is soloed, every part that isn't is silent).
+    auto song = share(prepareSong("s", TempoMap{}, 0, 0, {{constantAudio(96000, 0.25f, NAN), 0}, {constantAudio(96000, 0.5f, NAN), 0}},
+                                  ClickSetup{.enabled = false}, 48000.0));
+    Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+    const auto s = e.cue(song);
+    CHECK(e.setSoloSet(s, {}, true));                                            // with the cue: from the first sample
+    e.start();
+    auto out = renderOffline(e, 2, 30000, 512, {{10000, [&](Engine& en) { en.setSoloSet(s, {}, false); }},
+                                                {20000, [&](Engine& en) { en.setSoloSet(s, {}, true); }}});
+    CHECK(out[0][0] == 0.0f);
+    CHECK(out[0][9999] == 0.0f);
+    CHECK(out[0][19000] == Catch::Approx(0.75f).margin(1e-4));                   // off: both parts
+    CHECK(std::abs(out[0][29000]) < 1e-4f);                                      // on again while playing: silent
+
+    Engine full; full.prepare(48000.0, 512);
+    bool taken = true;
+    for (int i = 0; i < 100000 && taken; ++i) taken = full.setSoloSet(0, {}, false);
+    CHECK_FALSE(taken);                                                          // dropped, and the caller is told
 }
 
 TEST_CASE("pan and solo changes allocate and free nothing on the audio thread", "[pan][solo]") {

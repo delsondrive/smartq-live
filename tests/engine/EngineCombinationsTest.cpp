@@ -315,3 +315,41 @@ TEST_CASE("pan through a crossfade", "[combinations][pan]") {
     CHECK(moved[0][95000] == Catch::Approx(aFade + 0.5 * bFade).margin(1e-3));   // both at the centre now
     CHECK(moved[1][95000] == Catch::Approx(aFade + 0.5 * bFade).margin(1e-3));
 }
+
+TEST_CASE("pan through a seamless follow-on, a jump and a loop", "[combinations][pan]") {
+    {   // Seamless: a hard left to its last sample, b hard right from its first, at any block size.
+        auto run = [](int block) {
+            Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+            auto a = testSong("a", 96000, 1.0f);
+            a.parts[0].pan = -100;
+            auto b = testSong("b", 96000, 0.5f);
+            b.parts[0].pan = 100;
+            e.cue(share(std::move(a)));  e.start();  e.setFollowOn({FollowKind::Seamless, 0.0});
+            return renderOffline(e, 2, 96000 + 5000, block, {{10, [b](Engine& en) { en.cue(share(b)); }}});
+        };
+        const auto out = run(512);
+        for (int block : {1, 64}) CHECK(run(block) == out);
+        CHECK(out[0][96000 - 1] == 1.0f);  CHECK(out[1][96000 - 1] == 0.0f);
+        CHECK(out[0][96000] == 0.0f);      CHECK(out[1][96000] == 0.5f);  // b's pan from its first sample, not gliding in
+        CHECK(out[0][96000 + 4000] == 0.0f);  CHECK(out[1][96000 + 4000] == 0.5f);
+    }
+    {   // A pan set as the song starts holds through a jump (sections 0 then 2) and a loop of section 2.
+        const float far = balanceGains(-50).second;               // the right side at L50; the left stays at unity
+        auto run = [](int block) {
+            Engine e; e.prepare(48000.0, 4096); e.setMix(stereoMix());
+            const auto s = e.cue(share(rampSong("r", 3, {1, 1, 1}, {0, 2})));  e.start();
+            return renderOffline(e, 2, 3 * 96000, block, {
+                {10, [s](Engine& en) { en.setPartPan(s, 0, -50); }},
+                {100000, [s](Engine& en) { en.setLoop(s, true); }},          // section 2 again at stream 192000
+                {200000, [s](Engine& en) { en.setLoop(s, false); }}});
+        };
+        const auto out = run(512);
+        for (int block : {1, 64}) CHECK(run(block) == out);
+        for (const int at : {50000, 96000 + 1000, 192000 + 1000, 288000 - 1}) {
+            CAPTURE(at);
+            const float ramp = static_cast<float>(at < 96000 ? at : 192000 + (at % 96000));   // the song time heard
+            CHECK(out[0][static_cast<std::size_t>(at)] == ramp);
+            CHECK(out[1][static_cast<std::size_t>(at)] == Catch::Approx(ramp * far).epsilon(1e-6));
+        }
+    }
+}

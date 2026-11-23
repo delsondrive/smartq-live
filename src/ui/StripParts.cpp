@@ -273,7 +273,7 @@ void paintClipLight(juce::Graphics& g, juce::Rectangle<float> r, bool lit) {
     if (lit) {
         juce::Path shape;
         shape.addRoundedRectangle(r, 1.0f);
-        juce::DropShadow(theme::danger, 8, {}).drawForPath(g, shape);
+        juce::DropShadow(theme::danger, kClipGlow, {}).drawForPath(g, shape);
     }
     g.setColour(lit ? theme::danger : juce::Colours::white.withAlpha(0.08f));
     g.fillRoundedRectangle(r, 1.0f);

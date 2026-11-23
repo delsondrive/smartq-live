@@ -66,6 +66,7 @@ MixerPanel::MixerPanel(app::Session& session)
 }
 
 MixerPanel::~MixerPanel() {
+    onKeysChanged = nullptr;                                      // nothing told while it goes
     watchPresses(false);
     editor_.onDone = nullptr;                                     // nothing typed is set while it goes
     editor_.stop();
@@ -329,6 +330,15 @@ bool MixerPanel::editMode() const { return session_.mode() == app::Mode::Edit; }
 
 bool MixerPanel::takesKeys() const { return editMode() && selected_ >= 0; }
 
+bool MixerPanel::hasKeys() const { return takesKeys() && hasKeyboardFocus(true); }
+
+void MixerPanel::keysMaybeChanged() {
+    const bool now = hasKeys();
+    if (now == hadKeys_) return;
+    hadKeys_ = now;
+    if (onKeysChanged) onKeysChanged();
+}
+
 StripValueEditor* MixerPanel::typing() { return typingStrip_ >= 0 ? &editor_ : nullptr; }
 
 void MixerPanel::selectStrip(int index) {
@@ -348,6 +358,7 @@ void MixerPanel::setSelection(int index) {
     for (std::size_t i = 0; i < strips_.size(); ++i) strips_[i]->setSelected(static_cast<int>(i) == selected_);
     setWantsKeyboardFocus(takesKeys());
     if (index >= 0) scrollTo(index);
+    keysMaybeChanged();
 }
 
 void MixerPanel::pressed(int stripIndex) {
@@ -398,7 +409,14 @@ void MixerPanel::dropKeys() {
     if (onStripSelected) onStripSelected(-1);
 }
 
-void MixerPanel::focusLost(FocusChangeType) { endRun(); }
+void MixerPanel::focusGained(FocusChangeType) { keysMaybeChanged(); }
+
+void MixerPanel::focusLost(FocusChangeType) {
+    endRun();
+    keysMaybeChanged();
+}
+
+void MixerPanel::focusOfChildComponentChanged(FocusChangeType) { keysMaybeChanged(); }
 
 bool MixerPanel::keyPressed(const juce::KeyPress& key) {
     if (!takesKeys()) return false;

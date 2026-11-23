@@ -42,7 +42,7 @@ void SongRenderer::prepare(double sampleRate, int maxBlockFrames) {
     song_ = nullptr;
     part_count_ = 0;
     solo_.reset();
-    solo_any_ = false;
+    solo_on_ = false;
     count_in_first_ = count_in_end_ = 0;
     parts_moving_ = false;
     automated_ = 0;
@@ -64,7 +64,7 @@ void SongRenderer::setSong(const PreparedSong* song) noexcept {
     if (part_gain_.empty()) return;   // not prepared
     song_ = song;
     solo_.reset();
-    solo_any_ = false;
+    solo_on_ = false;
     part_count_ = song != nullptr ? std::min(static_cast<int>(song->parts.size()), kMaxParts) : 0;
     for (int p = 0; p < part_count_; ++p) {
         const PreparedPart& part = song->parts[static_cast<std::size_t>(p)];
@@ -286,10 +286,12 @@ void SongRenderer::setClickGain(float linear) noexcept { click_gain_.target = li
 void SongRenderer::setCueGain(float linear) noexcept { cue_gain_.target = linear; }
 void SongRenderer::setPreviewGain(float linear) noexcept { preview_gain_ = linear; }
 
-void SongRenderer::setSoloSet(const std::bitset<kMaxParts>& parts) noexcept {
-    solo_ = parts;
-    for (int p = part_count_; p < kMaxParts; ++p) solo_.reset(static_cast<std::size_t>(p));   // parts the song doesn't have
-    solo_any_ = solo_.any();
+void SongRenderer::setSoloSet(const std::bitset<kMaxParts>& parts, bool on) noexcept {
+    auto set = parts;
+    for (int p = part_count_; p < kMaxParts; ++p) set.reset(static_cast<std::size_t>(p));   // parts the song doesn't have
+    if (set == solo_ && on == solo_on_) return;   // the session asserting the solo it already has: nothing moves
+    solo_ = set;
+    solo_on_ = on;
     updatePartTargets();
     // Before the song's first sample (the engine sends a song's solo as it starts it): heard from that sample, not gliding
     // in. A part that follows automation is put on its target by that sample's followAutomation anyway.

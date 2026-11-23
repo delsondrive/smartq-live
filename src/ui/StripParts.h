@@ -46,6 +46,8 @@ void paintScale(juce::Graphics&, juce::Rectangle<float> column, const std::funct
 // caution from -6 dB to -1 and danger from 0, the rest dark; a thin line at holdDb (none at -60 or below).
 void paintMeterBar(juce::Graphics&, juce::Rectangle<float> bar, juce::Colour colour, float levelDb, float holdDb,
                    const std::function<float(float)>& yForDb);
+// The clip light: dim, or lit danger red with a glow kClipGlow px around it.
+inline constexpr int kClipGlow = 8;
 void paintClipLight(juce::Graphics&, juce::Rectangle<float>, bool lit);
 
 // The name label (.scrib): recessed, a dot in the strip's colour, the name and a dim ◉ for in-ears only, centred and cut

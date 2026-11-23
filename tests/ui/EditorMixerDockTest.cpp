@@ -360,6 +360,23 @@ TEST_CASE("the editor's status line names the soloed parts in caution", "[editor
     CHECK(makeSongEditorState(s, id, 0.0).solo.isEmpty());
 }
 
+
+TEST_CASE("the footer shows the mixer's key hints only while the mixer really has the keyboard", "[editor][dock]") {
+    DemoSession d; auto& s = *d.session;
+    ScopedLook look;
+    const auto song = *s.model().song(d.setlist().entries[0].songId);
+    SongEditorPage page(s);  page.openSong(song.id);
+    snapshot(page, 1280, 698);
+    auto& mixer = page.mixerDock().mixer();
+    pressHeader(page, song.parts[0].id);                          // a track's name: its strip selected, the keys the tracks'
+    REQUIRE(mixer.selectedStrip() >= 0);
+    CHECK_FALSE(page.mixerKeyHints());
+    clickStrip(mixer, 3);                                         // no window here: nothing can take the keyboard
+    REQUIRE(mixer.takesKeys());
+    CHECK_FALSE(page.mixerKeyHints());
+    page.mixerDock().setFolded(true);                             // folded with a strip selected
+    CHECK_FALSE(page.mixerKeyHints());
+}
 // The keyboard really moving needs a window on the desktop (focus is only given to what is showing): hidden from routine
 // runs, as every test that shows a window.
 TEST_CASE("the keys go to the mixer once a strip is clicked, and back to the tracks once a track is", "[editor][dock][.window]") {
@@ -381,13 +398,16 @@ TEST_CASE("the keys go to the mixer once a strip is clicked, and back to the tra
     page.grabKeyboardFocus();
     clickStrip(mixer, 3);
     CHECK(mixer.hasKeyboardFocus(true));
+    CHECK(page.mixerKeyHints());                                  // and the footer says so
     pressHeader(page, song.parts[0].id);                          // a track: the keys to the tracks, its strip selected
     CHECK(page.hasKeyboardFocus(false));
+    CHECK_FALSE(page.mixerKeyHints());                            // its strip selected, the tracks' hints
     CHECK(mixer.selectedStrip() == 2);
     clickStrip(mixer, 4);
     CHECK(mixer.hasKeyboardFocus(true));
     CHECK(mixer.keyPressed(K(K::escapeKey, {}, 0)));
     CHECK(page.hasKeyboardFocus(false));
+    CHECK_FALSE(page.mixerKeyHints());
     clickStrip(mixer, 4);
     auto* body = page.lanesViewport().getViewedComponent();
     press(*body, {Timeline::headerWidth + 100, 5});               // the timeline

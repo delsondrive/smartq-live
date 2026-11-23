@@ -66,7 +66,7 @@ SongEditorState makeSongEditorState(const app::Session&, const juce::String& son
 // empty space, snapped as the snap says; Alt for no snap), which follows the playhead while the song plays. Under the
 // tracks, the EditorMixerDock: the mixer on This song, its selection linked with the tracks'. Right (290 px): the
 // EditorInspector (the change inspector, or TEMPO, SECTION or CUE, then SONG and CLICK; QUICK ACTIONS; and WHEN A SECTION
-// IS CHOSEN LIVE). Footer (EditorFooter): where the cursor is, the key hints (the mixer's while it has a strip selected),
+// IS CHOSEN LIVE). Footer (EditorFooter): where the cursor is, the key hints (the mixer's while it has the keyboard),
 // the soloed parts in caution and how the save went. With no song open: "Choose a song on the left, or add one." and
 // "+ New song".
 //
@@ -104,6 +104,7 @@ public:
     const juce::Viewport& lanesViewport() const;                  // for tests: the timeline's scrolling lanes
     Timeline& timeline() { return timeline_; }                    // for tests
     EditorMixerDock& mixerDock() { return dock_; }                // for tests and the screenshots: the mixer under the tracks
+    bool mixerKeyHints() const { return dock_.mixer().hasKeys(); }   // the footer's: the mixer really has the keyboard
     const juce::Viewport& songsViewport() const;                  // for tests: the scrolling list of songs
     juce::String drawnTitle() const;                              // for tests: the title as laid out, shortened with "…" to fit
 

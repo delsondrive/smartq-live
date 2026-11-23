@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <bitset>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -338,8 +339,9 @@ private:
     void refreshWanted();
     void refreshMix(bool force);
     void refreshPlayingLevels();                                 // the playing song's levels and pans, as heard, to the engine
-    // The follow-on and the cue. A cue goes at most once per tick (a fader dragged on the next song changes it on every
-    // move), unless forced, as a Start needs it now. What the engine's full queue drops is sent again on the next tick.
+    // The solos (assertSolos), the follow-on and the cue. A cue goes at most once per tick (a fader dragged on the next song
+    // changes it on every move), unless forced, as a Start needs it now. What the engine's full queue drops is sent again on
+    // the next tick.
     void refreshTransport(bool force = false);
     engine::FollowOn followOn() const;
     bool handleEngineEvents();                                   // true when anything changed
@@ -361,10 +363,22 @@ private:
     void rememberShow();                                         // in Show mode: the show memory, when it differs
     void writeShowMemory();                                      // the show memory as it is now; the file is saved by the flush
     void tonightChanged();
-    // The song's solo set, by part index in what the engine plays, to the engine for the song with this serial (playing or
-    // cued). Empty in Show mode. And to every song the engine plays or has cued of songId.
-    void sendSolo(std::uint64_t serial, const Prepared&);
+    // The song's solo, by part index in what the engine plays, and whether one is on (a part soloed that the engine
+    // doesn't play still silences the others), to the engine for the song with this serial (playing or cued); none in Show
+    // mode. false: the engine's full queue dropped it, and assertSolos sends it again. sendSolos: to every song the engine
+    // plays or has cued of songId.
+    struct SoloSent {
+        std::bitset<engine::kMaxParts> parts;
+        bool on = false;
+        bool operator==(const SoloSent&) const = default;
+    };
+    SoloSent wantedSolo(const Prepared&) const;
+    bool sendSolo(std::uint64_t serial, const Prepared&);
     void sendSolos(const juce::String& songId);
+    // Each tick (refreshTransport): the playing and the cued song's solo sent again wherever what the engine took last isn't
+    // what it should be, so a dropped command can never leave a solo on. force: sent whatever was taken (entering Show
+    // mode); and once at each song's start.
+    void assertSolos(bool force);
     // "Keys on Headphones" for a Mix target, from the band's role and the chosen rig's output; "" when either is gone.
     juce::String roleOnOutputWords(const LevelTarget&) const;
     void snapshotOnOpening();                                   // Edit mode: the automatic "Opened the folder" snapshot
@@ -429,6 +443,8 @@ private:
     int mix_channels_ = 0;
 
     std::map<juce::String, juce::StringArray> solos_;           // by song id: its soloed part ids (setSolo); never saved
+    std::map<std::uint64_t, SoloSent> solo_sent_;               // what the engine took last, by serial (playing, cued)
+    std::uint64_t solo_started_ = 0;                             // the playing serial whose start asserted its solo
     Tonight tonight_;
     std::uint64_t tonight_revision_ = 0;                         // tonightRevision()
     // The playing song's levels as last sent to the engine, for the song with this serial.

@@ -321,7 +321,7 @@ SongEditorPage::SongEditorPage(app::Session& session)
     addChildComponent(inspector_);
     dock_.setKeysHome(this);                                      // Esc in the mixer: the keys to the tracks
     dock_.onLayoutChanged = [this] { resized(); };
-    dock_.onStripSelected = [this] { repaint(footer_); };         // the mixer's key hints, or the tracks'
+    dock_.onKeysChanged = [this] { repaint(footer_); };           // the mixer's key hints, or the tracks'
     addChildComponent(dock_);
     arrangementRow_.onPlayAsArranged = [this] { playAsArranged(); };
     arrangementRow_.onArrangementShown = [this] { timeline_.refresh(); };   // the Cues lane names what follows in it
@@ -637,7 +637,7 @@ void SongEditorPage::paint(juce::Graphics& g) {
     g.setColour(theme::hairline);
     g.fillRect(bar_.getX(), bar_.getBottom() - 1, bar_.getWidth(), 1);
     paintEditorFooter(g, footer_, {state_.footerBar, state_.footerTime, state_.solo, state_.saved, state_.saveFailed,
-                                   dock_.mixer().takesKeys()});
+                                   mixerKeyHints()});
 }
 
 bool SongEditorPage::keyPressed(const juce::KeyPress& key) {

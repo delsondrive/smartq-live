@@ -287,6 +287,7 @@ engine::FollowOn Session::followOn() const {
 }
 
 void Session::refreshTransport(bool force) {
+    assertSolos(false);                                          // a solo the engine's full queue dropped goes again
     const auto follow = followOn();
     if (follow.kind != follow_on_.kind || follow.gapSeconds != follow_on_.gapSeconds) {
         if (engine_.setFollowOn(follow)) follow_on_ = follow;    // not taken: the next tick tries again

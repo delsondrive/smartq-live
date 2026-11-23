@@ -517,3 +517,119 @@ TEST_CASE("a view shown again starts its meters from nothing", "[strip]") {
     CHECK(panel.stripAt(2)->meterDb(0) > -60.0f);
     s.perform(app::Action::Stop);
 }
+
+TEST_CASE("a sideways wheel or swipe over the fader or the pan scrolls the row instead", "[strip]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    ScopedLook look;
+    struct Row : juce::Component {                                // the strips' row, as the viewport would see the wheel
+        int wheels = 0;
+        void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override { ++wheels; }
+    } row;
+    ChannelStrip strip;
+    row.addAndMakeVisible(strip);
+    std::vector<Gesture> levels, pans;
+    strip.onLevelDrag = [&](float db, bool start, bool end) { levels.push_back({db, start, end}); };
+    strip.onPanDrag = [&](int pan, bool start, bool end) { pans.push_back({static_cast<float>(pan), start, end}); };
+    strip.set(partStrip(), ChannelStrip::Size::Full);
+    row.setSize(112, 560);
+    strip.setBounds(0, 0, 112, 560);
+    const auto cap = strip.capBounds().getCentre();
+    const auto bar = strip.panArea().getCentre().toFloat();
+    const juce::MouseWheelDetails sideways{0.25f, 0.0f, false, false, false};
+    const juce::MouseWheelDetails swipe{0.3f, 0.05f, false, true, false};  // a trackpad, mostly sideways
+    for (const auto& wheel : {sideways, swipe}) {
+        strip.mouseWheelMove(mouseAt(strip, cap, cap, false), wheel);
+        strip.mouseWheelMove(mouseAt(strip, bar, bar, false), wheel);
+    }
+    CHECK(row.wheels == 4);
+    CHECK(levels.empty());
+    CHECK(pans.empty());
+    strip.mouseWheelMove(mouseAt(strip, cap, cap, false), juce::MouseWheelDetails{0.0f, 0.25f, false, false, false});
+    CHECK(levels.size() == 1);                                    // up and down still move the fader
+    CHECK(row.wheels == 4);
+}
+
+TEST_CASE("a pan drag on a half-hidden strip doesn't jump when its press scrolls the row (Edit mode)", "[strip]") {
+    DemoSession d; auto& s = *d.session;
+    const auto songId = d.setlist().entries[0].songId;
+    ScopedLook look;
+    MixerPanel panel(s);
+    panel.show(songId, {});
+    snapshot(panel, 400, 600);                                    // five strips in 400 px: the last ones cut off
+    const int viewWidth = panel.viewport().getViewWidth();
+    ChannelStrip* strip = nullptr;                                // the one the panel's right edge cuts through
+    for (int i = 0; panel.stripAt(i) != nullptr; ++i)
+        if (panel.stripAt(i)->getX() < viewWidth && panel.stripAt(i)->getRight() > viewWidth) strip = panel.stripAt(i);
+    REQUIRE(strip != nullptr);
+    REQUIRE_FALSE(strip->panArea().isEmpty());
+    const auto target = strip->strip().target;
+    const int panBefore = s.pan(target).value_or(0);
+    const auto downAt = strip->panArea().getCentre().toFloat().withX(static_cast<float>(strip->panArea().getX() + 4));
+    const auto onScreen = strip->localPointToGlobal(downAt);
+    const int viewBefore = panel.viewport().getViewPositionX();
+    strip->mouseDown(mouseAt(*strip, downAt, downAt, false));
+    REQUIRE(panel.viewport().getViewPositionX() != viewBefore);  // the press selected it, and the row scrolled to it
+    // The mouse moves one pixel to the right on the screen: where that is on the strip now.
+    const auto movedTo = strip->getLocalPoint(nullptr, onScreen.translated(1.0f, 0.0f));
+    strip->mouseDrag(mouseAt(*strip, movedTo, downAt, true));
+    strip->mouseUp(mouseAt(*strip, movedTo, downAt, true));
+    CHECK(std::abs(s.pan(target).value_or(0) - panBefore) <= 3);  // one pixel of 96 is about 2, not the scroll's 60 px
+}
+
+TEST_CASE("a meter frame changes no pixel outside the bars, the clip light and the peak box it repaints", "[strip]") {
+    juce::ScopedJuceInitialiser_GUI gui;
+    ScopedLook look;
+    ChannelStrip strip;
+    strip.set(partStrip(), ChannelStrip::Size::Full);
+    const auto quiet = snapshot(strip, 112, 560);
+    strip.setMeter({2.0f, 1.5f}, 0.0);                            // over full scale: the bars, the holds, the light and the peak
+    REQUIRE(strip.clipLit());
+    const auto loud = snapshot(strip, 112, 560);
+    const auto frame = strip.meterFrameArea();
+    CHECK(frame.contains(strip.meterArea()));
+    CHECK(frame.contains(strip.clipLightArea()));
+    CHECK_FALSE(frame.intersects(strip.capBounds().toNearestInt()));   // the cap and its shadows aren't redrawn 30 times a second
+    CHECK_FALSE(frame.intersects(strip.levelBoxArea()));
+    const juce::Image::BitmapData a(quiet, juce::Image::BitmapData::readOnly), b(loud, juce::Image::BitmapData::readOnly);
+    int changedOutside = 0, changedInside = 0;
+    for (int y = 0; y < 560; ++y)
+        for (int x = 0; x < 112; ++x) {
+            if (a.getPixelColour(x, y) == b.getPixelColour(x, y)) continue;
+            if (frame.contains(x, y) || strip.peakBoxArea().contains(x, y)) ++changedInside;
+            else ++changedOutside;
+        }
+    CHECK(changedInside > 0);
+    CHECK(changedOutside == 0);
+}
+
+TEST_CASE("in Show mode a pan drag through the panel is tonight's: no undo step, the rig untouched", "[strip]") {
+    DemoSession d; auto& s = *d.session;
+    const auto songId = d.setlist().entries[0].songId;
+    const auto outputId = s.model().rig(s.rigId())->outputs[0].id;
+    s.enterShow();
+    ScopedLook look;
+    MixerPanel panel(s);
+    panel.show(songId, outputId);
+    snapshot(panel, 1400, 600);
+    auto* keys = panel.stripAt(2);
+    REQUIRE(keys != nullptr);
+    const auto target = keys->strip().target;
+    REQUIRE(keys->strip().linked);                                // it follows the song; no link button in Show mode
+    REQUIRE(keys->linkArea().isEmpty());
+    const auto rigBefore = *s.model().rig(s.rigId());
+    const auto undoBefore = s.commands().undoName();
+    const auto bar = keys->panArea().getCentre().toFloat();
+
+    press(*keys, bar);                                            // a press and release changes nothing
+    CHECK_FALSE(s.pan(target).has_value());
+    CHECK_FALSE(s.panChangedTonight(target));
+
+    drag(*keys, bar, bar.translated(20.0f, 0.0f));
+    REQUIRE(s.pan(target).has_value());
+    CHECK(*s.pan(target) > 0);
+    CHECK(s.panChangedTonight(target));
+    CHECK(s.commands().undoName() == undoBefore);                 // no command ran
+    CHECK(*s.model().rig(s.rigId()) == rigBefore);                // the band folder's rig as it was
+    panel.show(songId, outputId);                                 // as the session's change message would
+    CHECK(panel.stripAt(2)->strip().panChangedTonight);
+}

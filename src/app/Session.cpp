@@ -269,7 +269,8 @@ void Session::enterShow() {
     stopVoice(false);                                            // and waited for: Show mode never writes the band folder
     mode_ = Mode::Show;
     cues_.setShowRunning(true);                                  // nor looks at the cue clips again: the show keeps its own
-    for (const auto& [songId, parts] : std::exchange(solos_, {})) sendSolos(songId);   // a show has no solo (SessionSolo.cpp)
+    solos_.clear();                                              // a show has no solo (SessionSolo.cpp): sent for sure
+    assertSolos(true);
     writeShowMemory();
     flushNow();                                                  // what is waiting is written now, not left for the show
     refresh();

@@ -67,9 +67,12 @@ public:
     // The level of a cue rendered with no song set (Engine::previewCue). setSong(nullptr) sets it to the level the song's cue
     // last had, so a voice still fading out as a song ends carries on at that level.
     void setPreviewGain(float linear) noexcept;
-    // The soloed parts (empty = none; parts the song doesn't have are left out, so a set of only those is none). Set before
-    // the song's first sample (right after setSong) it is heard from that sample; afterwards the parts glide.
-    void setSoloSet(const std::bitset<kMaxParts>&) noexcept;
+    // The soloed parts, and whether a solo is on: while it is, every part not in the set is silent, so a set of only parts
+    // the song doesn't have (or an empty one, on) silences them all. The first form is on whenever the set isn't empty. Set
+    // before the song's first sample (right after setSong) it is heard from that sample; afterwards the parts glide. The
+    // same solo again changes nothing.
+    void setSoloSet(const std::bitset<kMaxParts>& parts) noexcept { setSoloSet(parts, parts.any()); }
+    void setSoloSet(const std::bitset<kMaxParts>&, bool on) noexcept;
     // true: ignore that part's automation (its level is its fader alone) until setSong; false: follow it again. A part the song
     // doesn't have is ignored.
     void setPartOverride(int part, bool) noexcept;
@@ -98,7 +101,7 @@ private:
     void step(Smoothed&) const noexcept;
     void updatePartTargets() noexcept;
     bool partSilenced(int part) const noexcept {
-        return part_mute_[part] != 0 || (solo_any_ && !solo_[static_cast<std::size_t>(part)]);
+        return part_mute_[part] != 0 || (solo_on_ && !solo_[static_cast<std::size_t>(part)]);
     }
     void updatePartBalance(int part, bool snap) noexcept;   // its balance on each bus, from its pan and the buses' own pans
     void stepBalances() noexcept;                           // every part's and role's balance, one sample on
@@ -156,7 +159,7 @@ private:
     const PreparedSong* song_ = nullptr;
     int part_count_ = 0;
     std::bitset<kMaxParts> solo_;           // the soloed parts, only of those the song has
-    bool solo_any_ = false;
+    bool solo_on_ = false;
     std::size_t count_in_first_ = 0;        // song->ticks[count_in_first_, count_in_end_) are the count-in's, which sound
     std::size_t count_in_end_ = 0;          // even with the click off
     std::size_t playable_first_ = 0;        // the first of song->ticks at or after its start: those before are a count-off's

@@ -111,14 +111,14 @@ void ChannelStrip::setMeter(app::MeterReader::Peak now, double nowMs) {
     const bool lit = clipUntil_ >= 0.0 && nowMs < clipUntil_;
     changed = changed || lit != clipLit_;
     clipLit_ = lit;
+    bool peakChanged = false;
     if (loudest > kMinDb && (!peak_ || loudest > *peak_)) {
         peak_ = loudest;
-        changed = true;
+        peakChanged = true;
     }
-    if (changed) {
-        repaint(zone_);
-        repaint(boxRow_);
-    }
+    // 30 times a second on every strip: only what moved, never the cap with its shadows, the scale or the level box.
+    if (changed) repaint(meterFrameArea());
+    if (peakChanged) repaint(peakBoxArea());
 }
 
 void ChannelStrip::clearMeter() {
@@ -127,13 +127,13 @@ void ChannelStrip::clearMeter() {
     holdUntil_[0] = holdUntil_[1] = 0.0;
     clipUntil_ = -1.0;
     clipLit_ = false;
-    repaint(zone_);
+    repaint(meterFrameArea());
 }
 
 void ChannelStrip::resetPeak() {
     if (!peak_) return;
     peak_.reset();
-    repaint(boxRow_);
+    repaint(peakBoxArea());
 }
 
 void ChannelStrip::flash(Field field) {
@@ -228,6 +228,10 @@ juce::Rectangle<int> ChannelStrip::meterArea() const {
 
 juce::Rectangle<int> ChannelStrip::clipLightArea() const { return {zone_.getX() + kMeterX, zone_.getY(), kMeterWidth, kClipHeight}; }
 
+juce::Rectangle<int> ChannelStrip::meterFrameArea() const {
+    return meterArea().getUnion(clipLightArea().expanded(parts::kClipGlow)).getIntersection(getLocalBounds());
+}
+
 juce::Rectangle<int> ChannelStrip::faderArea() const { return zone_.withWidth(std::min(zone_.getWidth(), kScaleX)); }
 
 float ChannelStrip::travel() const { return std::max(1.0f, static_cast<float>(zone_.getHeight() - 2 * kZoneInset)); }
@@ -294,6 +298,9 @@ void ChannelStrip::paint(juce::Graphics& g) {
 void ChannelStrip::mouseDown(const juce::MouseEvent& e) {
     ++typeTicket_;                                                // a second press: no typed pan after all
     if (e.mods.isPopupMenu()) return;
+    // Where the press is on the screen, taken before onSelect: selecting a strip the panel's edge cuts off scrolls the row,
+    // moving the strip under the mouse; a drag measured on the screen doesn't take that for a move (MixerPanel::scrollTo).
+    const auto onScreen = localPointToGlobal(e.position);
     if (onSelect) onSelect();
     const auto at = e.getPosition();
     if (linkArea().contains(at)) {
@@ -310,7 +317,7 @@ void ChannelStrip::mouseDown(const juce::MouseEvent& e) {
     } else if (panArea().contains(at)) {
         drag_ = Drag::Pan;
         dragPan_ = strip_.linked ? 0.0f : static_cast<float>(*strip_.pan);
-        lastMouse_ = e.position.x;
+        lastMouse_ = onScreen.x;
         panPressOnWords_ = e.getNumberOfClicks() == 1 && panTextArea().contains(at);
         panMoved_ = false;
         if (onPanDrag) onPanDrag(juce::roundToInt(dragPan_), true, false);
@@ -318,16 +325,17 @@ void ChannelStrip::mouseDown(const juce::MouseEvent& e) {
         drag_ = Drag::Fader;
         const float db = toTenth(currentDb());
         dragFraction_ = fractionForDb(db);
-        lastMouse_ = e.position.y;
+        lastMouse_ = onScreen.y;
         if (onLevelDrag) onLevelDrag(db, true, false);
     }
 }
 
 void ChannelStrip::mouseDrag(const juce::MouseEvent& e) {
     const float fine = e.mods.isShiftDown() ? kFineDrag : 1.0f;
+    const auto onScreen = localPointToGlobal(e.position);        // as the press was measured
     if (drag_ == Drag::Fader) {
-        dragFraction_ = juce::jlimit(0.0f, 1.0f, dragFraction_ + (lastMouse_ - e.position.y) / travel() * fine);
-        lastMouse_ = e.position.y;
+        dragFraction_ = juce::jlimit(0.0f, 1.0f, dragFraction_ + (lastMouse_ - onScreen.y) / travel() * fine);
+        lastMouse_ = onScreen.y;
         const float db = toTenth(dbAtFraction(dragFraction_));
         if (strip_.db && *strip_.db == db) return;
         strip_.db = db;
@@ -335,8 +343,8 @@ void ChannelStrip::mouseDrag(const juce::MouseEvent& e) {
         if (onLevelDrag) onLevelDrag(db, false, false);
     } else if (drag_ == Drag::Pan) {
         const float width = static_cast<float>(std::max(1, panArea().getWidth()));
-        dragPan_ = juce::jlimit(-100.0f, 100.0f, dragPan_ + (e.position.x - lastMouse_) / width * kPanRange * fine);
-        lastMouse_ = e.position.x;
+        dragPan_ = juce::jlimit(-100.0f, 100.0f, dragPan_ + (onScreen.x - lastMouse_) / width * kPanRange * fine);
+        lastMouse_ = onScreen.x;
         const int pan = juce::roundToInt(dragPan_);
         if (strip_.linked ? pan == 0 : strip_.pan == pan) return;   // a linked bar unlinks only once it moves off the centre
         panMoved_ = true;
@@ -396,7 +404,10 @@ int ChannelStrip::notchesOf(const juce::MouseWheelDetails& wheel) {
 void ChannelStrip::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) {
     const auto at = e.getPosition();
     const bool onPan = panArea().contains(at), onZone = zone_.contains(at);
-    if (drag_ != Drag::None || (!onPan && !onZone)) {
+    // A sideways wheel or trackpad swipe is the row's, wherever it is: the strips are scrolled sideways, and up and down
+    // alone move a fader or a pan.
+    const bool sideways = std::abs(wheel.deltaX) > std::abs(wheel.deltaY);
+    if (drag_ != Drag::None || (!onPan && !onZone) || sideways) {
         Component::mouseWheelMove(e, wheel);                      // the row scrolls
         return;
     }

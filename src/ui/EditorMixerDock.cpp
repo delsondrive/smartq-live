@@ -97,6 +97,7 @@ EditorMixerDock::EditorMixerDock(app::Session& session, Timeline& timeline)
     addAndMakeVisible(*splitter_);
     mixer_.onStripSelected = [this](int index) { stripChosen(index); };
     mixer_.onStateChanged = [this] { stripsMadeAgain(); };
+    mixer_.onKeysChanged = [this] { if (onKeysChanged) onKeysChanged(); };
     addChildComponent(mixer_);
     mixer_.setVisible(!folded_);                                  // hidden only while folded, whatever its size
 }
@@ -104,6 +105,7 @@ EditorMixerDock::EditorMixerDock(app::Session& session, Timeline& timeline)
 EditorMixerDock::~EditorMixerDock() {
     mixer_.onStripSelected = nullptr;
     mixer_.onStateChanged = nullptr;
+    mixer_.onKeysChanged = nullptr;
 }
 
 void EditorMixerDock::setSong(const juce::String& songId) {
@@ -190,7 +192,6 @@ void EditorMixerDock::stripChosen(int index) {
     } else if (timeline_.selection().kind == EditorSelection::Kind::Part) {
         timeline_.select({});
     }
-    if (onStripSelected) onStripSelected();
 }
 
 void EditorMixerDock::followTracks(const EditorSelection& selection) {

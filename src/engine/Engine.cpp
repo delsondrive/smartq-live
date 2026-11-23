@@ -41,7 +41,7 @@ void Engine::prepare(double sampleRate, int maxBlockFrames) {
     playing_ = {};
     if (cued_.song != nullptr && !fitsRate(*cued_.song)) {
         retire(cued_);
-        cued_solo_.reset();
+        cued_solo_ = {};
     }
     // Commands sent before the device stopped were meant for a device that no longer runs: a start among them would go off
     // by itself on the first block. They are dropped, and whatever they carry goes back through the garbage queue. With
@@ -137,8 +137,8 @@ void Engine::setPartPan(std::uint64_t serial, int part, int pan) {
     push({.type = Command::Type::SetPartPan, .serial = serial, .index = part, .value = static_cast<double>(pan)});
 }
 
-void Engine::setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>& parts) {
-    push({.type = Command::Type::SetSoloSet, .serial = serial, .parts = parts});
+bool Engine::setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>& parts, bool on) {
+    return push({.type = Command::Type::SetSoloSet, .serial = serial, .value = on ? 1.0 : 0.0, .parts = parts});
 }
 
 bool Engine::popEvent(EngineEvent& event) { return events_.pop(event); }
@@ -224,14 +224,14 @@ void Engine::handle(Command& command) noexcept {
         break;
     case Type::Cue:
         retire(cued_);
-        cued_solo_.reset();   // a solo sent for the song it replaces
+        cued_solo_ = {};   // a solo sent for the song it replaces
         cued_.hold = std::move(command.object);
         cued_.song = static_cast<const PreparedSong*>(cued_.hold.get());
         cued_.serial = cued_.song != nullptr ? command.serial : 0;
         break;
     case Type::ClearCue:
         retire(cued_);
-        cued_solo_.reset();
+        cued_solo_ = {};
         break;
     case Type::Start:
         if (cueFits()) startPlaying(cued_.song->start, true);
@@ -336,11 +336,13 @@ void Engine::handle(Command& command) noexcept {
         if (command.serial != 0 && command.serial == playing_.serial)
             renderer_->setPartPan(static_cast<int>(command.index), static_cast<int>(command.value));
         break;
-    case Type::SetSoloSet:
+    case Type::SetSoloSet: {   // on even with no part in the set: a part soloed that this song doesn't play
         if (command.serial == 0) break;
-        if (command.serial == playing_.serial) renderer_->setSoloSet(command.parts);
-        else if (command.serial == cued_.serial) cued_solo_ = command.parts;   // heard from its first sample (takeCue)
+        const bool on = command.value != 0.0;
+        if (command.serial == playing_.serial) renderer_->setSoloSet(command.parts, on);
+        else if (command.serial == cued_.serial) cued_solo_ = {command.parts, on};   // heard from its first sample (takeCue)
         break;
+    }
     case Type::ResendMidi:   // for the playing song only, whose device numbers these are; nothing in a gap or once stopped
         if (command.serial != 0 && command.serial == playing_.serial && command.index >= 0 && command.index < kMaxMidiDevices)
             midi_.resend(static_cast<int>(command.index), song_time_, stream_time_);
@@ -428,8 +430,8 @@ void Engine::takeCue() noexcept {
     // setSong resets the song's own levels; any live level for this song comes after it. A solo sent while it was cued is
     // heard from its first sample.
     renderer_->setSong(playing_.song);
-    if (cued_solo_.any()) renderer_->setSoloSet(cued_solo_);
-    cued_solo_.reset();
+    if (cued_solo_.on) renderer_->setSoloSet(cued_solo_.parts, true);
+    cued_solo_ = {};
 }
 
 // The playing song (just taken from the cue) plays from songTime, its first sample at streamTime. Dropping the mix first

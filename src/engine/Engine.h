@@ -164,10 +164,13 @@ public:
     void previewCue(std::shared_ptr<const PartAudio> clip, float linear);
     // The song's pan of a part (-100 to 100), for the playing song only, gliding.
     void setPartPan(std::uint64_t serial, int part, int pan);
-    // The soloed parts of the song with this serial (empty = none; the click and the cue voice are never silenced). For the
-    // playing song: at once, the parts gliding. For the cued song: kept with the cue and heard from its first sample when it
-    // plays (a start or a follow-on); a new cue, or clearing it, drops it. Any other serial is ignored. By value: no allocation.
-    void setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>&);
+    // The soloed parts of the song with this serial (the click and the cue voice are never silenced), and whether a solo is
+    // on: on with an empty set silences every part (a part soloed that this song doesn't play: its audio didn't load). The
+    // first form is on whenever the set isn't empty. For the playing song: at once, the parts gliding. For the cued song:
+    // kept with the cue and heard from its first sample when it plays (a start or a follow-on); a new cue, or clearing it,
+    // drops it. Any other serial is ignored. By value: no allocation. false: the command queue was full and nothing was sent.
+    bool setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>& parts) { return setSoloSet(serial, parts, parts.any()); }
+    bool setSoloSet(std::uint64_t serial, const std::bitset<kMaxParts>&, bool on);
     bool popEvent(EngineEvent&);
     // One consumer thread (the MIDI dispatcher): the MIDI the playing song sends, oldest first, each with the stream time
     // it is due at. Notes still sounding when a song stops (at the end of its fade), ends, or prepare stops it are ended
@@ -221,7 +224,7 @@ private:
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
         std::int64_t index = 0;               // a part, a song time, a step, a follow-on kind or a MIDI device
-        double value = 0.0;                   // a gain, a mute or a loop (non-zero: on), or a gap in seconds
+        double value = 0.0;                   // a gain, a mute, a loop or a solo (non-zero: on), or a gap in seconds
         std::shared_ptr<const void> object;   // a song, a mix or a cue clip
         std::bitset<kMaxParts> parts{};       // a solo set
     };
@@ -322,7 +325,11 @@ private:
     std::vector<float> click_envelope_;      // max_block_: the click's fade of one chunk while the parts fade in
     std::vector<float*> channels_;           // the output channels from where a chunk's render begins
     SongSlot playing_, cued_;
-    std::bitset<kMaxParts> cued_solo_;       // the cued song's solo set (setSoloSet), applied when it starts playing
+    struct CuedSolo {
+        std::bitset<kMaxParts> parts{};
+        bool on = false;                     // even with an empty set
+    };
+    CuedSolo cued_solo_;                     // the cued song's solo (setSoloSet), applied when it starts playing
     std::shared_ptr<const void> mix_hold_;
     const MixSetup* mix_ = nullptr;
     FollowOn follow_;                        // what follows when the playing song ends, read at that moment

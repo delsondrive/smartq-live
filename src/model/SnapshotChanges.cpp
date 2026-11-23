@@ -210,7 +210,7 @@ void describeOwnPans(Lines& out, const juce::String& where, const BandDoc& thenB
     }
 }
 
-void describeRig(Lines& out,const BandDoc& thenBand, const BandDoc& nowBand, const RigDoc& then, const RigDoc& now) {
+void describeRig(Lines& out, const BandDoc& thenBand, const BandDoc& nowBand, const RigDoc& then, const RigDoc& now) {
     const auto& where = now.name;
     if (then.name != now.name) out.add(where, "was " + quoted(then.name));
 
