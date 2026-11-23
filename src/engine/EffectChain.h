@@ -83,9 +83,16 @@ public:
 
     // Any thread. The delay the chain plays at, in samples: a Limit's lookahead (and True Peak's) on an output; 0 for a part's.
     int latencySamples() const noexcept;
+    // Any thread. The most latencySamples can ever be, whatever settings come later: each module's longest (a Limit's at its
+    // longest lookahead, with True Peak and Soft Clip). Fixed from make on.
+    int maxLatencySamples() const noexcept { return maxLatency_; }
 
     // Any thread. How many dB that slot is turning the audio down now, 0 or above: 0 for an EQ, a Width, or no such slot.
     float reductionDb(int slot) const noexcept;
+    // One taker (OutputEffects, on the audio thread). The most that slot turned the audio down by since the last take (or
+    // since make), 0 or above, starting again from where it is now; 0 for an EQ, a Width, or no such slot. It reads the
+    // slot's meter as Smart Q's AI does, which Smart Q Live has no other use for.
+    float takeLargestReductionDb(int slot) noexcept;
 
 private:
     struct Slot;
@@ -98,6 +105,7 @@ private:
     std::vector<smartq::dsp::Module*> live_, shadow_;
     std::unique_ptr<smartq::dsp::Chain> chain_;
     int maxBlockFrames_ = 0;
+    int maxLatency_ = 0;
     bool stereo_ = true;
     std::atomic<bool> held_{false};
 };

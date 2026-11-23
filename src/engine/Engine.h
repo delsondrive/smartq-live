@@ -23,6 +23,8 @@
 
 namespace sqlive::engine {
 
+class OutputEffects;
+
 enum class PlayState : std::uint8_t { Stopped, Playing, Stopping };
 enum class FollowKind : std::uint8_t { Stop, Gap, Seamless, Crossfade };
 // gapSeconds: the gap's length for Gap, the crossfade's for Crossfade.
@@ -105,8 +107,8 @@ public:
     // sounding, and 0xFC to each device it started), keeps the mix, keeps the cue unless it was made at another sample
     // rate (that one is dropped, through the garbage queue), and keeps stream time running. Every command not yet taken
     // is dropped, a start included, and what it carries goes through the garbage queue: the control thread sends again
-    // what it still wants (the mix, the follow-on, the cue, part effects) once the device has started. Every song's part
-    // effects are dropped, through the garbage queue.
+    // what it still wants (the mix, the follow-on, the cue, part and output effects) once the device has started. Every
+    // song's part effects, and the output effects, are dropped, through the garbage queue.
     void prepare(double sampleRate, int maxBlockFrames);
     // Must only be called while process cannot run, as prepare: when the device stopped by itself (lost, or failed), after a
     // deliberate close or a failed open, and from the host's destructor, before any device starts again. The MIDI can't wait for
@@ -176,8 +178,22 @@ public:
     // them. For the playing song: at once, each chain fed from where the song is. For the cued song: kept with the cue and
     // used from its first sample when it plays (a start or a follow-on); a new cue, or clearing it, drops them. Any other
     // serial is ignored. A song fading out keeps its own. prepare drops them all: the control thread sends them again once
-    // the device has started, as it does the mix. What the engine lets go of goes back through the garbage queue.
-    void setPartEffects(std::uint64_t serial, std::shared_ptr<PartEffects>);
+    // the device has started, as it does the mix. What the engine lets go of goes back through the garbage queue. One
+    // PartEffects, and each of its chains, belongs to one song slot at a time: never give the same one to two songs (a song
+    // crossfading into itself included), nor the same chain to two PartEffects in use. false: the command queue was full
+    // and nothing was sent.
+    bool setPartEffects(std::uint64_t serial, std::shared_ptr<PartEffects>);
+    // Each output's own effects (OutputEffects.h; EngineOutputEffects.cpp), run on every block after rendering and before the
+    // meters, in every mode, playing or not, so the bus meters show what leaves for the interface. Kept across songs, stops
+    // and starts; null clears them, and without any, process is as it would be had they never been. Taken at the start of
+    // the next block; the ones replaced go back through the garbage queue. prepare drops them, through the garbage queue:
+    // the control thread sends them again once the device has started, as it does the mix. One OutputEffects, and each of
+    // its chains, belongs to this engine alone while it holds them: never give the same one (or a chain of it) to anything
+    // else in use. false: the command queue was full and nothing was sent.
+    bool setOutputEffects(std::shared_ptr<OutputEffects>);
+    // Any thread: how late every output leaves because of its effects (OutputEffects::latencySamples), in samples, as of
+    // the last process; 0 without output effects, and after prepare.
+    int outputEffectsLatency() const noexcept;
     // Any thread: the maxBlockFrames prepare was last given (at least 1; 0 before any), to make chains for.
     int maxBlockFrames() const noexcept;
     bool popEvent(EngineEvent&);
@@ -228,13 +244,13 @@ private:
         enum class Type : std::uint8_t {
             None, Cue, ClearCue, Start, StartAt, StartAtStep, Stop, SetFollowOn, SetMix, SetPartGain, SetPartMute,
             SetPartOverride, SetClickGain, SetPartPan, SetSoloSet, ResendMidi, ChooseStep, SetLoop, SetCueGain, PreviewCue,
-            GoToNext, SetPartEffects
+            GoToNext, SetPartEffects, SetOutputEffects
         };
         Type type = Type::None;
         std::uint64_t serial = 0;             // the song a cue or a level is for
         std::int64_t index = 0;               // a part, a song time, a step, a follow-on kind or a MIDI device
         double value = 0.0;                   // a gain, a mute, a loop or a solo (non-zero: on), or a gap in seconds
-        std::shared_ptr<const void> object;   // a song, a mix, a cue clip or part effects
+        std::shared_ptr<const void> object;   // a song, a mix, a cue clip, part effects or output effects
         std::bitset<kMaxParts> parts{};       // a solo set
     };
 
@@ -300,6 +316,10 @@ private:
     void takePartEffects(Command&) noexcept;
     void retireEffects(SongSlot&) noexcept;
     void dropPartEffects() noexcept;
+    // Output effects (EngineOutputEffects.cpp): SetOutputEffects; prepare's drop; a block's run, after rendering.
+    void takeOutputEffects(Command&) noexcept;
+    void dropOutputEffects() noexcept;
+    void runOutputEffects(float* const* out, int channelCount, int frames) noexcept;
     void flushHeld() noexcept;
     void publishStatus() noexcept;
     // The block's meters onto the published ones, each bus's from out; then the next block's watched buses (EnginePeaks.cpp).
@@ -313,6 +333,7 @@ private:
     MidiOut midi_;                           // its queue too; its producer is the audio thread (and prepare)
     std::atomic<double> sample_rate_{0.0};
     std::atomic<int> max_block_frames_{0};   // maxBlockFrames
+    std::atomic<int> output_latency_{0};     // outputEffectsLatency
     // The status fields are written together once per process (and by prepare). status_seq_ is odd while they are being
     // written and even once done, so a reader that sees the same even value before and after reading them has one snapshot.
     std::atomic<std::uint64_t> status_seq_{0};
@@ -350,6 +371,8 @@ private:
     CuedSolo cued_solo_;                     // the cued song's solo (setSoloSet), applied when it starts playing
     std::shared_ptr<const void> mix_hold_;
     const MixSetup* mix_ = nullptr;
+    std::shared_ptr<const void> output_fx_hold_;
+    OutputEffects* output_fx_ = nullptr;     // output_fx_hold_'s; the engine is its only user (it plays the chains)
     FollowOn follow_;                        // what follows when the playing song ends, read at that moment
     PlayState state_ = PlayState::Stopped;   // Playing during a gap too
     bool in_gap_ = false;                    // silence between a song that ended and its follow-on; playing_ is empty

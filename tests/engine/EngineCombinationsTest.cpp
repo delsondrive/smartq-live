@@ -12,6 +12,7 @@
 #include "engine/EffectChain.h"
 #include "engine/Engine.h"
 #include "engine/OfflineRender.h"
+#include "engine/OutputEffects.h"
 #include "engine/PartEffects.h"
 #include "engine/PreparedSong.h"
 #include "tests/support/MidiEvents.h"
@@ -433,4 +434,43 @@ TEST_CASE("part effects through a jump, a loop, a seamless follow-on and a cross
         const bool heard = out != run(512, false);
         CHECK(heard);
     }
+}
+
+namespace {
+
+// The stereo bus through a 1 kHz bell of +6 dB and a Limit at -6 dBFS, a fresh chain; or none.
+std::shared_ptr<OutputEffects> limited(int maxBlock, bool on) {
+    if (!on) return nullptr;
+    EqSettings eq;
+    eq.bands[0] = {.enabled = true, .shape = smartq::dsp::Shape::Bell, .frequencyHz = 1000.0, .gainDb = 6.0, .q = 1.0};
+    smartq::dsp::LimitSettings limit;
+    limit.ceilingDb = -6.0;
+    const std::vector<ModuleSettings> effects{eq, limit};
+    return OutputEffects::make({EffectChain::make(effects, 48000.0, maxBlock, true)}, *stereoMix(), maxBlock);
+}
+
+} // namespace
+
+TEST_CASE("output effects through a jump, a loop and a crossfade", "[combinations][fx]") {
+    // a: sections 0, 2 (looped once), 3, then a crossfade of 0.5 s into b; the output's effects kept across both songs,
+    // replaced by fresh ones partway through.
+    auto run = [](int block, bool effects) {
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.setOutputEffects(limited(e.maxBlockFrames(), effects));
+        const auto aSong = toneSong("a", 4, {0, 2, 3}, 220.0), bSong = toneSong("b", 2, {}, 330.0);
+        const auto a = e.cue(share(aSong));
+        e.start();  e.setFollowOn({FollowKind::Crossfade, 0.5});
+        return renderOffline(e, 2, 4 * 96000 + 2 * 96000, block, {
+            {10, [&](Engine& en) { en.cue(share(bSong)); }},
+            {100000, [&](Engine& en) { en.setLoop(a, true); }},          // section 2 repeats at stream 192000
+            {200000, [&](Engine& en) { en.setLoop(a, false); }},         // then section 3, crossfading at 360000
+            {250000, [&](Engine& en) { en.setOutputEffects(limited(en.maxBlockFrames(), effects)); }}});
+    };
+    const auto out = run(512, true);
+    for (int block : {1, 64}) CHECK(run(block, true) == out);
+    const bool heard = out != run(512, false);
+    CHECK(heard);
+    const float ceiling = std::pow(10.0f, -6.0f / 20.0f);
+    for (const auto& channel : out)
+        for (float sample : channel) REQUIRE(std::abs(sample) <= ceiling + 1e-6f);
 }

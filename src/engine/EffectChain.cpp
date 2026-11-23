@@ -93,6 +93,8 @@ std::shared_ptr<EffectChain> EffectChain::make(std::span<const ModuleSettings> s
         give(*slot->shadow, slot->playing);
     }
     chain->chain_->reset();  // every module settled on its settings
+    for (auto& slot : chain->slots_)   // as dsp::Chain sizes its own lines, once prepared
+        chain->maxLatency_ += std::max({0, slot->live->maxLatencySamples(), slot->shadow->maxLatencySamples()});
     return chain;
 }
 
@@ -130,6 +132,12 @@ float EffectChain::reductionDb(int slot) const noexcept {
     if (slot < 0 || slot >= static_cast<int>(slots_.size())) return 0.0f;
     const dsp::ReductionMeter* meter = slots_[static_cast<size_t>(slot)]->meter;
     return meter == nullptr ? 0.0f : static_cast<float>(meter->reductionDb());
+}
+
+float EffectChain::takeLargestReductionDb(int slot) noexcept {
+    if (slot < 0 || slot >= static_cast<int>(slots_.size())) return 0.0f;
+    dsp::ReductionMeter* meter = slots_[static_cast<size_t>(slot)]->meter;
+    return meter == nullptr ? 0.0f : static_cast<float>(meter->takeLargestReductionDb(dsp::MeterReader::Ai));
 }
 
 }  // namespace sqlive::engine

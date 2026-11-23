@@ -9,8 +9,8 @@
 
 namespace sqlive::engine {
 
-void Engine::setPartEffects(std::uint64_t serial, std::shared_ptr<PartEffects> effects) {
-    push({.type = Command::Type::SetPartEffects, .serial = serial, .object = std::move(effects)});
+bool Engine::setPartEffects(std::uint64_t serial, std::shared_ptr<PartEffects> effects) {
+    return push({.type = Command::Type::SetPartEffects, .serial = serial, .object = std::move(effects)});
 }
 
 int Engine::maxBlockFrames() const noexcept { return max_block_frames_.load(std::memory_order_relaxed); }

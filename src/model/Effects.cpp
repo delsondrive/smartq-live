@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
+
+#include "engine/OutputEffects.h"
 
 namespace sqlive::model {
 
@@ -323,6 +326,32 @@ bool sameSet(const juce::NamedValueSet& a, const juce::NamedValueSet& b) {
 
 bool EffectDoc::operator==(const EffectDoc& other) const {
     return kind == other.kind && on == other.on && sameSet(values, other.values) && sameSet(extra, other.extra);
+}
+
+}  // namespace sqlive::model
+
+namespace sqlive::model {
+
+// buildMixSetup gives a bus, in the rig's order, to each in-ear or PA output on the device, while there is room: so walking
+// the outputs in order, the next bus is the next such output's when its channels are the bus's. One off the device has none
+// and is passed over. (Two outputs on the same channels, which the rig check blocks, could be told apart only by the device's
+// channel count; they share the bus's channels whichever chain it gets.)
+std::shared_ptr<engine::OutputEffects> buildOutputEffects(const RigDoc& rig, const engine::MixSetup& mix, double sampleRate,
+                                                          int maxBlockFrames) {
+    std::vector<std::shared_ptr<engine::EffectChain>> byBus(mix.buses.size());
+    std::size_t bus = 0;
+    bool any = false;
+    for (const auto& o : rig.outputs) {
+        if (bus >= mix.buses.size()) break;
+        if (o.label != OutputLabel::Monitor && o.label != OutputLabel::Foh) continue;
+        if (mix.buses[bus].firstChannel != o.firstChannel - 1 || mix.buses[bus].stereo != o.stereo) continue;
+        if (const auto settings = chainOf(o.effects, EffectPlace::Output, o.stereo); ! settings.empty()) {
+            byBus[bus] = engine::EffectChain::make(settings, sampleRate, maxBlockFrames, o.stereo);
+            any = true;
+        }
+        ++bus;
+    }
+    return any ? engine::OutputEffects::make(std::move(byBus), mix, maxBlockFrames) : nullptr;
 }
 
 }  // namespace sqlive::model

@@ -17,6 +17,10 @@ namespace sqlive::engine {
 //
 // The chains are shared: the control thread may keep the same EffectChain pointers to send them new settings
 // (EffectChain::setSettings, which never locks), while the audio thread plays them here.
+//
+// One PartEffects belongs to one song slot at a time, and each chain to one PartEffects: never give the same one to two
+// songs (a song crossfading into itself included), nor the same chain to two objects in use (a chain's state is the audio
+// it has heard, and its scratch is written as it plays).
 struct PartEffects {
     // Control thread; allocates. byPartIndex: null where a part has none; entries past kMaxParts are left out. maxBlockFrames:
     // the most frames run is given at once (at least 1): the renderer plays its pieces no longer than this.

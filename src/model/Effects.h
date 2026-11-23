@@ -1,9 +1,13 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include "engine/EffectChain.h"
+#include "engine/MixSetup.h"
 #include "model/Documents.h"
+
+namespace sqlive::engine { class OutputEffects; }
 
 namespace sqlive::model {
 
@@ -44,5 +48,12 @@ std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>&, Effec
 // its `on` and `extra` (the settings' bypass is not written: that is `on`). An effect of a kind not known is given back as it
 // was.
 EffectDoc withSettings(EffectDoc, const engine::ModuleSettings&);
+
+// The engine's output effects for the rig: each output's chain (chainOf, as the output is stereo or mono), made at this rate
+// and block size, on the bus buildMixSetup lays the output on in this mix (made from the same rig). An output with no bus
+// (a timecode or unused one, one off the device, one past the mix's buses) is left out, and so is one whose effects give an
+// empty chain. Null when no bus has a chain, so the engine has nothing to run. Control thread: it allocates.
+std::shared_ptr<engine::OutputEffects> buildOutputEffects(const RigDoc&, const engine::MixSetup&, double sampleRate,
+                                                          int maxBlockFrames);
 
 }  // namespace sqlive::model

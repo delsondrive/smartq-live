@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/PreparedSong.h"
+#include "model/Effects.h"
 #include "model/LevelMeasure.h"
 
 using namespace sqlive;
@@ -119,4 +120,36 @@ TEST_CASE("the level check measures a hard-panned part on the channel it hits", 
     CHECK(levels.outputs[0].peakDb == Catch::Approx(20.0f * std::log10(0.4f)).margin(0.01f));   // each on its own side
     CHECK(levels.outputs[1].peakDb == Catch::Approx(20.0f * std::log10(0.8f)).margin(0.01f));   // mono: pan ignored
     CHECK(levels.outputs[2].peakDb == Catch::Approx(20.0f * std::log10(0.8f)).margin(0.01f));   // both on the right
+}
+
+// ---- Output effects ----
+
+TEST_CASE("the level check measures after the output's effects", "[levels][fx]") {
+    BandDoc band; band.roles = {{"keys", "Keys", RoleKind::Part, {}}, {"bvs", "BVs", RoleKind::Part, {}}};
+    auto limit = defaultEffect("limit");
+    limit.values.set("ceiling", -1.0);
+    RigDoc rig; rig.outputs = {{"pa", "PA", 1, true, OutputLabel::Foh, 0.0f, {{"keys", 0.0f}}},
+                               {"ears", "Drummer", 3, false, OutputLabel::Monitor, 0.0f, {{"keys", 0.0f}}},
+                               {"bv", "BV ears", 4, false, OutputLabel::Monitor, 0.0f, {{"bvs", 0.0f}}}};
+    rig.outputs[0].effects = {limit};
+    // Keys: a 1 kHz sine peaking at +3 dBFS through bar 3, silence around it. BVs: one sample 5 before bar 3, which every
+    // output hears late by the PA's Limit, so past the bar line.
+    const float loud = std::pow(10.0f, 3.0f / 20.0f);
+    auto keys = std::make_shared<engine::PartAudio>(); keys->left.assign(4 * 96000, 0.0f);
+    for (int i = 2 * 96000; i < 3 * 96000; ++i)
+        keys->left[size_t(i)] = loud * static_cast<float>(std::sin(2.0 * 3.141592653589793 * 1000.0 * i / 48000.0));
+    auto bvs = std::make_shared<engine::PartAudio>(); bvs->left.assign(4 * 96000, 0.0f);
+    bvs->left[2 * 96000 - 5] = 0.5f;
+    auto song = std::make_shared<const engine::PreparedSong>(engine::prepareSong("s", engine::TempoMap{}, 0, 0, {{keys, 0}, {bvs, 1}}, engine::ClickSetup{.enabled = false}, 48000.0));
+    auto levels = measureSong(song, band, rig, 48000.0, [](double) { return true; });
+    REQUIRE(levels.complete);  REQUIRE(levels.outputs.size() == 3);
+    const auto& pa = levels.outputs[0];
+    CHECK(pa.peakDb <= -1.0f + 1e-4f);  CHECK(pa.peakDb > -1.5f);  CHECK_FALSE(pa.clips);
+    CHECK(pa.limitDb == Catch::Approx(4.0f).margin(0.3f));  CHECK(pa.limitBar == 3);
+    const auto& ears = levels.outputs[1];                            // no Limit: the keys as they are, only later
+    CHECK(ears.peakDb == Catch::Approx(3.0f).margin(0.05f));  CHECK(ears.clips);  CHECK(ears.bar == 3);
+    CHECK(ears.limitDb == 0.0f);  CHECK(ears.limitBar == 1);
+    const auto& bv = levels.outputs[2];
+    CHECK(bv.peakDb == Catch::Approx(20.0f * std::log10(0.5f)).margin(0.01f));
+    CHECK(bv.bar == 2);                                              // where it is in the song, not where it left
 }
