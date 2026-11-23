@@ -14,6 +14,9 @@ namespace sqlive::model {
 // A chain of effects on a part (the song's, for every output) or on an output (the whole mix of it).
 inline constexpr int kMaxEffects = 4;
 
+// Raised whenever the copied DSP changes how an effect sounds, so audio prepared with the old code is prepared again.
+inline constexpr int kEffectsCodeVersion = 1;
+
 enum class EffectPlace { Part, Output };
 
 // The kinds a chain can be given, in the order of the add menu. Width only for stereo (a stereo part, a stereo output).
@@ -48,6 +51,11 @@ std::vector<engine::ModuleSettings> chainOf(const std::vector<EffectDoc>&, Effec
 // its `on` and `extra` (the settings' bypass is not written: that is `on`). An effect of a kind not known is given back as it
 // was.
 EffectDoc withSettings(EffectDoc, const engine::ModuleSettings&);
+
+// A chain as canonical JSON (every object's keys sorted, no spaces): the same effects give the same text however their values
+// were written, so it can be hashed. Each effect gives its kind, whether it is on, and its values; `extra` is left out, as it
+// does not change the sound.
+juce::String effectsKey(const std::vector<EffectDoc>&);
 
 // The engine's output effects for the rig: each output's chain (chainOf, as the output is stereo or mono), made at this rate
 // and block size, on the bus buildMixSetup lays the output on in this mix (made from the same rig). An output with no bus

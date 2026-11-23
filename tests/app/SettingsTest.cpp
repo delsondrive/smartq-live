@@ -81,3 +81,13 @@ TEST_CASE("settings keep the Song editor's mixer panel per computer: its height 
     CHECK_FALSE(Settings(file).editorMixerFolded());
     CHECK(Settings(file).editorMixerHeight() == 333);
 }
+TEST_CASE("settings keep the size limit of the prepared audio per computer, 20 GB until chosen", "[settings]") {
+    sqlive::test::TempDir t; auto file = t.dir().getChildFile("settings.json");
+    {   Settings s(file);
+        CHECK(s.preparedLimitBytes() == 20LL * 1024 * 1024 * 1024);
+        s.setPreparedLimitBytes(50LL * 1024 * 1024 * 1024);
+        REQUIRE(s.save().wasOk()); }
+    CHECK(Settings(file).preparedLimitBytes() == 50LL * 1024 * 1024 * 1024);
+    file.replaceWithText("{\"preparedLimitBytes\": \"lots\"}");
+    CHECK(Settings(file).preparedLimitBytes() == 20LL * 1024 * 1024 * 1024);   // not a number: the default
+}

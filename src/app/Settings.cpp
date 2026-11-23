@@ -16,8 +16,11 @@ Settings::Settings(juce::File file) : file_(std::move(file)), bands_(new juce::D
     // What this version doesn't know (a later one's MIDI or remote settings) is kept as it is, and written back.
     for (const auto& property : parsed.getDynamicObject()->getProperties())
         if (property.name != juce::Identifier("recent") && property.name != juce::Identifier("bands")
-            && property.name != juce::Identifier("editorMixer"))
+            && property.name != juce::Identifier("editorMixer") && property.name != juce::Identifier("preparedLimitBytes"))
             others_.set(property.name, property.value);
+
+    if (const auto limit = parsed.getProperty("preparedLimitBytes", {}); limit.isInt() || limit.isInt64() || limit.isDouble())
+        preparedLimitBytes_ = std::max<std::int64_t>(0, static_cast<std::int64_t>(limit));
 
     const auto mixer = parsed.getProperty("editorMixer", {});
     if (mixer.isObject()) {
@@ -181,6 +184,7 @@ juce::Result Settings::save() {
     mixer->setProperty("height", editorMixerHeight_);
     mixer->setProperty("folded", editorMixerFolded_);
     root->setProperty("editorMixer", juce::var(mixer));
+    root->setProperty("preparedLimitBytes", static_cast<juce::int64>(preparedLimitBytes_));
     return model::writeFileAtomically(file_, juce::JSON::toString(juce::var(root)));
 }
 

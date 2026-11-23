@@ -355,3 +355,39 @@ std::shared_ptr<engine::OutputEffects> buildOutputEffects(const RigDoc& rig, con
 }
 
 }  // namespace sqlive::model
+
+namespace sqlive::model {
+
+namespace {
+juce::String canonicalJson(const juce::var& value) {
+    if (auto* object = value.getDynamicObject()) {
+        juce::StringArray names;
+        for (const auto& property : object->getProperties()) names.add(property.name.toString());
+        names.sort(false);
+        juce::String text = "{";
+        for (int i = 0; i < names.size(); ++i)
+            text << (i > 0 ? "," : "") << juce::JSON::toString(juce::var(names[i]), true) << ":"
+                 << canonicalJson(object->getProperty(juce::Identifier(names[i])));
+        return text + "}";
+    }
+    if (auto* array = value.getArray()) {
+        juce::String text = "[";
+        for (int i = 0; i < array->size(); ++i) text << (i > 0 ? "," : "") << canonicalJson((*array)[i]);
+        return text + "]";
+    }
+    return juce::JSON::toString(value, true);
+}
+}  // namespace
+
+juce::String effectsKey(const std::vector<EffectDoc>& effects) {
+    juce::String text = "[";
+    for (std::size_t i = 0; i < effects.size(); ++i) {
+        auto* values = new juce::DynamicObject();
+        for (const auto& property : effects[i].values) values->setProperty(property.name, property.value);
+        text << (i > 0 ? "," : "") << "{\"kind\":" << juce::JSON::toString(juce::var(effects[i].kind), true)
+             << ",\"on\":" << (effects[i].on ? "true" : "false") << ",\"values\":" << canonicalJson(juce::var(values)) << "}";
+    }
+    return text + "]";
+}
+
+}  // namespace sqlive::model

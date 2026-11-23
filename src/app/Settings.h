@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #include <juce_core/juce_core.h>
@@ -69,6 +70,11 @@ public:
     bool editorMixerFolded() const { return editorMixerFolded_; }
     void setEditorMixerFolded(bool folded) { editorMixerFolded_ = folded; }
 
+    // How much disk the prepared audio (parts played through their effects once, kept on this computer) may use: 20 GB until
+    // chosen. The oldest used is dropped first.
+    std::int64_t preparedLimitBytes() const { return preparedLimitBytes_; }
+    void setPreparedLimitBytes(std::int64_t bytes) { preparedLimitBytes_ = std::max<std::int64_t>(0, bytes); }
+
     juce::Result save();                                                // writes the file atomically
 
 private:
@@ -81,6 +87,7 @@ private:
     juce::NamedValueSet others_;                                        // top-level keys this version doesn't know, kept as read
     int editorMixerHeight_ = 0;                                         // "editorMixer": {"height", "folded"}
     bool editorMixerFolded_ = false;
+    std::int64_t preparedLimitBytes_ = 20LL * 1024 * 1024 * 1024;       // "preparedLimitBytes"
 };
 
 }  // namespace sqlive::app

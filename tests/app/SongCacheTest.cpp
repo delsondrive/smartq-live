@@ -3,7 +3,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "app/PreparedStore.h"
 #include "app/SongCache.h"
+#include "engine/ApplyEffects.h"
+#include "model/Effects.h"
 #include "model/BandFolder.h"
 #include "model/BandModel.h"
 #include "model/DemoBand.h"
@@ -109,4 +112,146 @@ TEST_CASE_METHOD(CacheFixture, "a failed song says why", "[cache]") {
     REQUIRE(cache.state(empty.id) == SongCache::State::Failed);
     CHECK(cache.problems(empty.id) == juce::StringArray("The song has no audio parts."));
     CHECK(cache.problems("unknown").isEmpty());
+}
+
+// ---- Show mode: prepared parts ----
+namespace {
+model::EffectDoc eqPlus6() {
+    auto e = model::defaultEffect("eq");
+    auto* band = new juce::DynamicObject();
+    band->setProperty("freq", 1000.0);  band->setProperty("gain", 6.0);
+    juce::Array<juce::var> bands;  bands.add(juce::var(band));
+    e.values.set("bands", bands);
+    return e;
+}
+struct ShowFixture : CacheFixture {
+    sqlive::app::PreparedStore store{t.dir().getChildFile("Prepared"), 1LL << 32};
+    WantedSong show(model::SongDoc song) const { auto w = wanted(song);  w.showAudio = true;  return w; }
+    std::shared_ptr<const sqlive::engine::PartAudio> raw(const model::SongDoc& s, int part) const {
+        return model::loadPartAudio(folder.audioFile(s, s.parts[(size_t) part]), 48000.0, [](double) { return true; });
+    }
+    std::shared_ptr<const sqlive::engine::PartAudio> expected(const model::SongDoc& s, int part) const {
+        auto audio = raw(s, part);
+        return sqlive::engine::applyEffects(audio, model::chainOf(s.parts[(size_t) part].effects, model::EffectPlace::Part, ! audio->right.empty()),
+                                            48000.0, [](double) { return true; });
+    }
+};
+}
+TEST_CASE_METHOD(ShowFixture, "a show song is played with its prepared parts", "[cache]") {
+    REQUIRE(a.parts.size() >= 2);
+    a.parts[0].effects = {eqPlus6()};
+    const auto want = expected(a, 0), plain = raw(a, 0);
+    REQUIRE(want->left != plain->left);                           // the effect does something
+    {
+        SongCache cache(SongCache::defaultBudgetBytes(), &store);
+        cache.setWanted({show(a)});
+        REQUIRE(cache.waitUntilIdle(20000));
+        REQUIRE(cache.state(a.id) == SongCache::State::Ready);
+        auto loaded = cache.loaded(a.id);
+        CHECK(loaded->audio.at(a.parts[0].id)->left == want->left);
+        CHECK(loaded->audio.at(a.parts[0].id)->right == want->right);
+        CHECK(loaded->audio.at(a.parts[1].id)->left == raw(a, 1)->left);   // no effect: the raw audio
+        CHECK(loaded->problems.isEmpty());
+        CHECK(cache.partsPrepared() == 1);
+        CHECK_FALSE(cache.preparingEffects(a.id));
+        CHECK(store.sizeBytes() > 0);
+    }
+    SongCache again(SongCache::defaultBudgetBytes(), &store);     // a new run: the store has it
+    again.setWanted({show(a)});
+    REQUIRE(again.waitUntilIdle(20000));
+    CHECK(again.partsPrepared() == 0);                            // read, not prepared
+    CHECK(again.loaded(a.id)->audio.at(a.parts[0].id)->left == want->left);
+    CHECK(again.loaded(a.id)->audio.at(a.parts[0].id)->right == want->right);
+}
+TEST_CASE_METHOD(ShowFixture, "a show song with no store is still prepared, in memory", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    SongCache cache(SongCache::defaultBudgetBytes());
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == expected(a, 0)->left);
+    CHECK(cache.loaded(a.id)->problems.isEmpty());
+}
+TEST_CASE_METHOD(ShowFixture, "an Edit song is loaded plain", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    cache.setWanted({wanted(a)});                                 // showAudio false
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == raw(a, 0)->left);
+    CHECK(cache.partsPrepared() == 0);
+    CHECK(store.sizeBytes() == 0);
+}
+TEST_CASE_METHOD(ShowFixture, "an effect that is off prepares nothing", "[cache]") {
+    auto off = eqPlus6();  off.on = false;
+    a.parts[0].effects = {off};
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == raw(a, 0)->left);
+    CHECK(cache.partsPrepared() == 0);
+    CHECK(store.sizeBytes() == 0);
+}
+TEST_CASE_METHOD(ShowFixture, "changing a part's effects loads the song again", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    const auto first = cache.loaded(a.id);
+    cache.setWanted({show(a)});                                   // the same: kept as it is
+    CHECK(cache.state(a.id) == SongCache::State::Ready);
+    CHECK(cache.loaded(a.id) == first);
+
+    a.parts[0].effects[0].on = false;                             // changed
+    cache.setWanted({show(a)});
+    CHECK(cache.state(a.id) != SongCache::State::Ready);
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.loaded(a.id) != first);
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == raw(a, 0)->left);
+
+    a.parts[0].effects = {eqPlus6()};                             // back: found in the store
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.partsPrepared() == 1);
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == expected(a, 0)->left);
+
+    cache.setWanted({wanted(a)});                                 // Edit, then Show again: the audio differs, so it loads again
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == raw(a, 0)->left);
+}
+TEST_CASE_METHOD(ShowFixture, "a song waiting to be prepared is Loading, and is not preparing once Ready", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    cache.setPaused(true);
+    cache.setWanted({show(a)});
+    CHECK(cache.state(a.id) == SongCache::State::Loading);
+    CHECK_FALSE(cache.preparingEffects(a.id));
+    cache.setPaused(false);
+    REQUIRE(cache.waitUntilIdle(20000));
+    CHECK(cache.state(a.id) == SongCache::State::Ready);
+    CHECK_FALSE(cache.preparingEffects(a.id));
+}
+TEST_CASE_METHOD(ShowFixture, "a cleared store is prepared again, not an error", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    SongCache cache(SongCache::defaultBudgetBytes(), &store);
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    store.clear();
+    cache.forget(a.id);
+    REQUIRE(cache.waitUntilIdle(20000));
+    REQUIRE(cache.state(a.id) == SongCache::State::Ready);
+    CHECK(cache.partsPrepared() == 2);
+    CHECK(cache.problems(a.id).isEmpty());
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == expected(a, 0)->left);
+    CHECK(store.sizeBytes() > 0);
+}
+TEST_CASE_METHOD(ShowFixture, "a store that can't be written still gives the prepared audio", "[cache]") {
+    a.parts[0].effects = {eqPlus6()};
+    const auto blocker = t.dir().getChildFile("Blocked");
+    blocker.replaceWithText("a file where the store's folder should be");
+    sqlive::app::PreparedStore broken(blocker, 1LL << 32);
+    SongCache cache(SongCache::defaultBudgetBytes(), &broken);
+    cache.setWanted({show(a)});
+    REQUIRE(cache.waitUntilIdle(20000));
+    REQUIRE(cache.state(a.id) == SongCache::State::Ready);
+    CHECK(cache.loaded(a.id)->audio.at(a.parts[0].id)->left == expected(a, 0)->left);
+    CHECK(cache.problems(a.id) == juce::StringArray("Prepared audio for " + a.parts[0].name + " couldn't be saved on this computer."));
 }

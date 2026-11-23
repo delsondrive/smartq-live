@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -13,11 +14,14 @@
 
 namespace sqlive::app {
 
+class PreparedStore;
+
 // A song the cache is asked to hold: a copy of its document and each part's audio file, resolved on the message thread, so
 // the loader never reads the model or the band folder.
 struct WantedSong {
     model::SongDoc doc;
     std::map<juce::String, juce::File> files;                      // each part's audio file by part id, resolved on the message thread
+    bool showAudio = false;                                        // Show mode: each part with an effect on is played prepared, through its effects
 };
 
 // A part's waveform in short, for drawing it at any scale: the lowest and highest sample (of either channel) in each block of
@@ -52,7 +56,9 @@ class SongCache : private juce::Thread, private juce::AsyncUpdater {
 public:
     enum class State { NotLoaded, Loading, Ready, Failed };       // Failed = no part could be loaded
 
-    explicit SongCache(std::int64_t budgetBytes);                 // keeps no BandFolder: the loader reads only what setWanted hands it
+    // store: where prepared parts are kept between runs (not owned, must outlive the cache). Null: parts of a showAudio song with
+    // effects are still prepared, but only in memory, and again every time the song is loaded.
+    explicit SongCache(std::int64_t budgetBytes, PreparedStore* store = nullptr);   // keeps no BandFolder: the loader reads only what setWanted hands it
     ~SongCache() override;
 
     static std::int64_t defaultBudgetBytes();                     // half of juce::SystemStats::getMemorySizeInMegabytes()
@@ -72,6 +78,8 @@ public:
     // Why a song lacks audio: the loaded song's problems when Ready, and for a Failed one why nothing could be loaded
     // ("Keys: the audio file is missing.", or "The song has no audio parts."). Empty otherwise.
     juce::StringArray problems(const juce::String& songId) const;
+    bool preparingEffects(const juce::String& songId) const;      // true while a part of it is being played through its effects
+    int partsPrepared() const;                                    // for tests: how many parts this cache has run through applyEffects
     void forget(const juce::String& songId);                      // its files changed: load it again (nothing if it isn't kept)
 
     std::function<void(const juce::String& songId)> onChanged;    // message thread; once per song whose state or progress changed
@@ -85,6 +93,7 @@ private:
         std::shared_ptr<const LoadedSong> loaded;
         juce::StringArray problems;                                // kept for a Failed song too, which has no LoadedSong
         std::uint64_t token = 0;                                   // new for every fresh entry, so a stale load can tell
+        bool preparing = false;                                    // a part is being prepared (applyEffects is running)
     };
     struct Job {
         WantedSong song;
@@ -101,6 +110,7 @@ private:
     bool reportProgress(const Job&, double progress);             // loader; false = abandon the load
     void finish(const Job&, std::shared_ptr<LoadedSong>);         // loader
     std::shared_ptr<LoadedSong> load(const Job&);                 // loader; nullptr when abandoned
+    void setPreparing(const Job&, bool);                          // loader
     void noteChangedLocked(const juce::String& songId);
     void deliverChanges();
     bool isIdle() const;
@@ -113,6 +123,8 @@ private:
     std::map<juce::String, Entry> entries_;
     std::uint64_t nextToken_ = 0;
     juce::StringArray changed_;
+    PreparedStore* const store_;
+    std::atomic<int> partsPrepared_{0};
     juce::WaitableEvent stateChanged_;
 };
 

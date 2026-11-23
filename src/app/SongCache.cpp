@@ -6,6 +6,9 @@
 #include <set>
 #include <utility>
 
+#include "app/PreparedStore.h"
+#include "engine/ApplyEffects.h"
+#include "model/Effects.h"
 #include "model/SongAudio.h"
 #include "model/Units.h"
 
@@ -49,6 +52,16 @@ void makeOverview(LoadedSong& song, const model::SongDoc& doc) {
     }
 }
 
+// Whether two wanted songs would sound the same from the same files: for a showAudio song that includes each part's effects.
+bool sameSound(const WantedSong& a, const WantedSong& b) {
+    if (a.files != b.files || a.showAudio != b.showAudio) return false;
+    if (! a.showAudio) return true;
+    if (a.doc.parts.size() != b.doc.parts.size()) return false;
+    for (std::size_t i = 0; i < a.doc.parts.size(); ++i)
+        if (a.doc.parts[i].id != b.doc.parts[i].id || a.doc.parts[i].effects != b.doc.parts[i].effects) return false;
+    return true;
+}
+
 WaveSummary summarise(const engine::PartAudio& audio) {
     constexpr auto block = static_cast<std::size_t>(WaveSummary::blockFrames);
     WaveSummary s;
@@ -77,7 +90,8 @@ WaveSummary summarise(const engine::PartAudio& audio) {
 
 }  // namespace
 
-SongCache::SongCache(std::int64_t budgetBytes) : juce::Thread("Smart Q Live loader"), budget_(budgetBytes) {
+SongCache::SongCache(std::int64_t budgetBytes, PreparedStore* store)
+    : juce::Thread("Smart Q Live loader"), budget_(budgetBytes), store_(store) {
     startThread();
 }
 
@@ -152,6 +166,14 @@ juce::StringArray SongCache::problems(const juce::String& songId) const {
     return found == entries_.end() ? juce::StringArray() : found->second.problems;
 }
 
+bool SongCache::preparingEffects(const juce::String& songId) const {
+    const juce::ScopedLock sl(lock_);
+    const auto found = entries_.find(songId);
+    return found != entries_.end() && found->second.preparing;
+}
+
+int SongCache::partsPrepared() const { return partsPrepared_; }
+
 void SongCache::forget(const juce::String& songId) {
     {
         const juce::ScopedLock sl(lock_);
@@ -190,7 +212,7 @@ void SongCache::rebuildLocked() {
         total += bytes;
         kept.insert(id);
         const auto old = entries_.find(id);
-        if (old != entries_.end() && old->second.song.files == wanted.files) {
+        if (old != entries_.end() && sameSound(old->second.song, wanted)) {
             Entry entry = std::move(old->second);
             entry.song = wanted;
             entries_.erase(old);
@@ -247,6 +269,17 @@ bool SongCache::reportProgress(const Job& job, double progress) {
     return due;
 }
 
+void SongCache::setPreparing(const Job& job, bool preparing) {
+    {
+        const juce::ScopedLock sl(lock_);
+        const auto found = entries_.find(job.song.doc.id);
+        if (found == entries_.end() || found->second.token != job.token || found->second.preparing == preparing) return;
+        found->second.preparing = preparing;
+        noteChangedLocked(job.song.doc.id);
+    }
+    triggerAsyncUpdate();
+}
+
 std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
     const auto& doc = job.song.doc;
     auto song = std::make_shared<LoadedSong>();
@@ -263,13 +296,45 @@ std::shared_ptr<LoadedSong> SongCache::load(const Job& job) {
             song->problems.add(part.name + ": the audio file is missing.");
             continue;
         }
-        auto audio = model::loadPartAudio(file->second, job.sampleRate,
-                                          [&](double p) { return reportProgress(job, ((double) i + p) / count); });
-        if (! reportProgress(job, (double) (i + 1) / count)) return nullptr;
-        if (audio == nullptr) {
-            song->problems.add(part.name + ": the audio file couldn't be read.");
-            continue;
+        // A part with an effect on, in a show song, is played prepared: found in the store, or else read, played through its
+        // effects once and put there. Found in the store, the file itself isn't read.
+        const bool wantsEffects = job.song.showAudio && std::any_of(part.effects.begin(), part.effects.end(),
+                                                                    [](const model::EffectDoc& e) { return e.on; });
+        // The share of this part's slice of the progress, from `from` to `to`.
+        const auto within = [&](double from, double to) {
+            return [&, from, to](double p) { return reportProgress(job, ((double) i + from + (to - from) * p) / count); };
+        };
+        std::shared_ptr<const engine::PartAudio> audio;
+        juce::String key;
+        if (wantsEffects && store_ != nullptr) {
+            key = PreparedStore::keyFor(file->second, part.effects, job.sampleRate);
+            audio = store_->read(key, within(0.0, 1.0));
+            if (audio == nullptr && ! reportProgress(job, (double) i / count)) return nullptr;
         }
+        if (audio == nullptr) {
+            audio = model::loadPartAudio(file->second, job.sampleRate, within(0.0, wantsEffects ? 0.5 : 1.0));
+            if (! reportProgress(job, (double) (i + (wantsEffects ? 0.5 : 1.0)) / count)) return nullptr;
+            if (audio == nullptr) {
+                song->problems.add(part.name + ": the audio file couldn't be read.");
+                continue;
+            }
+            const auto chain = wantsEffects ? model::chainOf(part.effects, model::EffectPlace::Part, ! audio->right.empty())
+                                            : std::vector<engine::ModuleSettings>{};
+            if (wantsEffects && std::any_of(chain.begin(), chain.end(), [](const engine::ModuleSettings& s) {
+                                                 return ! std::visit([](const auto& settings) { return settings.bypassed; }, s); })) {
+                setPreparing(job, true);
+                auto prepared = engine::applyEffects(audio, chain, job.sampleRate, within(0.5, 1.0));
+                setPreparing(job, false);
+                if (prepared == nullptr) return nullptr;               // abandoned meanwhile
+                ++partsPrepared_;
+                audio = std::move(prepared);
+                if (store_ != nullptr) {
+                    if (store_->write(key, *audio)) store_->trim();
+                    else song->problems.add("Prepared audio for " + part.name + " couldn't be saved on this computer.");
+                }
+            }
+        }
+        if (! reportProgress(job, (double) (i + 1) / count)) return nullptr;
         song->waves[part.id] = summarise(*audio);
         song->audio[part.id] = std::move(audio);
         loadedParts.parts.push_back(part);
@@ -287,6 +352,7 @@ void SongCache::finish(const Job& job, std::shared_ptr<LoadedSong> song) {
         if (song != nullptr && found != entries_.end() && found->second.token == job.token) {
             auto& entry = found->second;
             entry.problems = song->problems;
+            entry.preparing = false;
             if (song->audio.empty()) {
                 entry.state = State::Failed;
                 entry.progress = 0.0;
