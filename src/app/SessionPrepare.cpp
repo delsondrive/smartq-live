@@ -137,4 +137,12 @@ double Session::prepareForShowProgress() const { return show_prepare_.value_or(0
 EffectsPreparer& Session::preparer() { return *preparer_; }
 PreparedStore& Session::preparedStore() { return prepared_store_; }
 
+bool Session::clearPreparedAudio() {
+    if (mode_ == Mode::Show) return false;
+    prepared_store_.clear();
+    prepareSetlist();                                            // bumps effectsRevision
+    changed();
+    return true;
+}
+
 }  // namespace sqlive::app

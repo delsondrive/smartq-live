@@ -265,6 +265,9 @@ public:
     // what effectsState said (it looks at every part's file) until this changes.
     std::uint64_t effectsRevision() const { return effects_revision_; }
     PreparedStore& preparedStore();                              // where prepared parts are kept on this computer
+    // Setup's Clear: deletes every prepared file (Edit mode only; false in Show mode), then hands the setlist's songs to the preparer
+    // again and bumps effectsRevision, so the cards read Changed and the songs are prepared in the background again.
+    bool clearPreparedAudio();
     bool hasTonightChanges() const;
     int tonightChangeCount() const;                             // how many levels and pans were changed tonight (Tonight::count)
     // Makes them permanent, as one undoable step; Edit mode only. What can't be kept (its song or output is gone) is dropped,

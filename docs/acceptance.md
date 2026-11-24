@@ -418,6 +418,25 @@ At the PC, with real audio and headphones on (low volume first). Use a song with
 
 If anything is wrong, see "What to write down" below: for the mixer, also write down the song, the output, the part, whether it was Edit or Show mode, and the keys pressed.
 
+## 33. Effects
+
+At the PC, with real audio and headphones on (low volume first). Use a song with several parts that has some effects on, and a rig with a main (FOH) output. Edit mode unless a line says Show mode.
+
+- [ ] **Each effect on a part:** on one part at a time, add an EQ, then a Dynamic, a De-Ess, a Width, a Transient and a Limit from its effects box on the mixer strip (or from the effects window). Play the song: each does what its name says, on that part only, on every output the part goes to. Switch its power dot off and on: the sound changes and changes back, with no click.
+- [ ] **(by ear)** The same in Show mode: with each part's effect on, go to Show mode (let "Ready for the show?" finish preparing first) and play the song from the start: every part sounds the same as it did in Edit mode, with the same loudness.
+- [ ] **(by ear)** A stem with an effect from the song's start: put an effect on a stem, play the song from bar 1 in Edit mode, then in Show mode: you hear the same thing from the first beat in both, and the effect's tail does not start late or cut in.
+- [ ] **(by ear)** Hold to hear without effects: hold the effects window's **Hold** button while a part with a strong effect plays: you hear the part without its effects, at the same loudness (no jump up or down in level other than what the effects did). Let go: the effects come back with no click. Closing the window while holding lets go too.
+- [ ] **(by ear)** A Limit on FOH: add a Limit to the FOH output with its ceiling at −3 dB and play a loud song: the output never goes above −3 dB (its meter stops there), and the music is not distorted at normal levels. Raise the part levels until the Limit works hard.
+- [ ] **A Limit working hard:** with the Limit still working hard, open the pre-show check ("Ready for the show?"): the level check names the Limit as working hard, as a warning to turn the levels down, not as a reason the show can't start.
+- [ ] **(by ear)** Switching the Limit off and on: while a song plays, switch the FOH Limit's power dot off and on a few times: there is no click, and the MIDI pedal changes stay exactly on the beat (no shift).
+- [ ] **Output delay not heard:** a Limit on an output delays every output a little, together, so that they stay in time. Play a song with the click in your ears and the band on FOH: click and music stay together. The footer of the effects window says how late the outputs leave.
+- [ ] **MIDI pedals on the beat:** with effects on parts and a Limit on an output, play a song with MIDI changes on a pedalboard: each change arrives on its beat, as it did without any effect (check with the pedalboard's own display, or record the MIDI and the click together).
+- [ ] **Preparing, then ready:** change an effect's setting on a part, and wait: the effects window's footer reads `Changed` and then, after a couple of seconds without changes, `Preparing effects`, then `Prepared`. The pre-show check does not let the show start while a song is still preparing: it says so, and **Prepare now** makes every setlist song ready, then the show can start. In Show mode nothing is prepared; no effect can be edited.
+- [ ] **Clear and prepared again:** on Setup, **Audio & routing**, the line under the grid says `Prepared audio on this computer: ` and how much (for example `350 MB of 20 GB`, or `nothing yet (up to 20 GB)` when it is empty). Click **Clear**: it asks first; **Cancel** leaves everything. **Clear** empties it (the line says nothing yet) and the songs with effects are prepared again by themselves within a moment (the line grows again; the cards say `Preparing effects`, then `Prepared`). Nothing was lost: the songs sound the same. In Show mode the Clear button is dim and does nothing.
+- [ ] **Nothing in the band folder grows:** look at the band folder (OneDrive) before and after preparing: no new files and no bigger files. The prepared audio is only in this computer's own folder (`Prepared audio`, next to the settings file).
+
+If anything is wrong, see "What to write down" below: for effects, also write down the song, the part or output, the effect, whether it was Edit or Show mode, and what the footer said.
+
 ## What to write down
 
 For every problem: the screen's name, the window size, what you did, what you expected and what you saw. For a problem with sound: the song, the output, the buffer size and the sample rate. For a problem with how a screen looks: a picture made with `--screenshots`.

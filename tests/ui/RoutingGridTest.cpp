@@ -238,7 +238,7 @@ TEST_CASE("the setup page lays out at every window size, and takes no keys in Sh
         // The top panel's controls side by side, none on another; the problems under it, the grid under them.
         std::vector<juce::Component*> controls;
         for (auto* child : page.getChildren())
-            if (child->isVisible() && child != &page.grid()) controls.push_back(child);
+            if (child->isVisible() && child != &page.grid() && child != &page.clearButton()) controls.push_back(child);
         for (size_t i = 0; i < controls.size(); ++i) {
             CHECK(page.topBounds().contains(controls[i]->getBounds()));
             for (size_t j = i + 1; j < controls.size(); ++j) CHECK_FALSE(controls[i]->getBounds().intersects(controls[j]->getBounds()));
@@ -247,6 +247,9 @@ TEST_CASE("the setup page lays out at every window size, and takes no keys in Sh
         CHECK(page.grid().getY() >= page.problemsBounds().getBottom());
         CHECK(page.grid().getHeight() >= 200);
         CHECK(page.grid().getX() >= page.subTabsBounds().getRight());
+        // The prepared audio line's Clear button under the grid, inside the page, over nothing.
+        CHECK(page.clearButton().getY() >= page.grid().getBottom());
+        CHECK(page.getLocalBounds().contains(page.clearButton().getBounds()));
     }
     s.enterShow();
     snapshot(page, 1280, 698);

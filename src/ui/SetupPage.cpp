@@ -42,11 +42,11 @@ const model::ComputerBinding* bindingOf(const app::Session& session) {
 
 SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlInput* input, app::RemoteAccess* access,
                      app::RemoteServer* server)
-    : session_(session), host_(host), duplicate_("Duplicate rig"), more_(juce::String::fromUTF8("\xe2\x8b\xaf")), tone_("Test tone"),
+    : session_(session), host_(host), duplicate_("Duplicate rig"), more_(juce::String::fromUTF8("\xe2\x8b\xaf")), tone_("Test tone"), clear_prepared_("Clear"),
       grid_(session), midi_(session, input), cue_voice_(session) {
     if (access != nullptr && server != nullptr) remote_ = std::make_unique<RemoteSetupPage>(session, *access, *server);
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
-                                                               &more_, &tone_, &grid_})
+                                                               &more_, &tone_, &clear_prepared_, &grid_})
         addAndMakeVisible(*child);
 
     juce::StringArray rates, buffers;
@@ -76,6 +76,8 @@ SetupPage::SetupPage(app::Session& session, app::AudioHost* host, app::ControlIn
     };
     more_.onClick = [this] { rigMenu(); };
     tone_.onClick = [this] { setTestTone(!tone_on_); };
+    clear_prepared_.onClick = [this] { askToClear(); };
+    clear_prepared_.setTooltip("Deletes the prepared audio kept on this computer. Songs with effects are prepared again.");
     tone_.setTooltip("While it is on, click an output's name to hear a tone there.");
     grid_.onOutputPressed = [this](const juce::String& outputId) { return playTone(outputId); };
 
@@ -116,7 +118,7 @@ void SetupPage::showSubTab(SubTab tab) {
     const bool audio = tab == SubTab::Audio, midi = tab == SubTab::Midi;
     if (!audio) setTestTone(false);
     for (auto* child : std::initializer_list<juce::Component*>{&rig_, &types_, &devices_, &rate_, &buffer_, &connection_, &duplicate_,
-                                                               &more_, &tone_, &grid_})
+                                                               &more_, &tone_, &clear_prepared_, &grid_})
         child->setVisible(audio);
     midi_.setVisible(midi);                                       // shown, it reads the band again; hidden, it stops waiting
     cue_voice_.setVisible(tab == SubTab::CueVoice);
@@ -178,6 +180,7 @@ void SetupPage::refresh(bool force) {
     tone_.setEnabled(host_ != nullptr && host_->isOpen());
     if (tone_on_ && !tone_.isEnabled()) setTestTone(false);
 
+    refreshPrepared(force);
     const auto interfacesFor = session_.rigId() + "|" + state_.device + "|" + type_;
     if (interfacesFor != interfaces_for_) {
         interfaces_for_ = interfacesFor;
@@ -333,6 +336,63 @@ bool SetupPage::playTone(const juce::String& outputId) {
     return true;
 }
 
+// ---- Prepared audio ----------------------------------------------------------------------------------------------------
+
+juce::String SetupPage::sizeText(std::int64_t bytes) {
+    constexpr double kMB = 1024.0 * 1024.0, kGB = kMB * 1024.0;
+    if (bytes <= 0) return "nothing";
+    if (static_cast<double>(bytes) >= kGB) {
+        auto text = juce::String(static_cast<double>(bytes) / kGB, 1);
+        if (text.endsWith(".0")) text = text.dropLastCharacters(2);
+        return text + " GB";
+    }
+    return juce::String(static_cast<int>(std::lround(static_cast<double>(bytes) / kMB))) + " MB";
+}
+
+// The store's size is read from its folder, so it is read again only when the effects' revision moves (a song prepared, a
+// clear), when the page is shown, or when the mode changes; not on every tick of a playing song.
+void SetupPage::refreshPrepared(bool force) {
+    const auto revision = session_.effectsRevision();
+    if (!force && revision == prepared_revision_) {
+        clear_prepared_.setEnabled(prepared_has_ && editable());
+        return;
+    }
+    prepared_revision_ = revision;
+    const auto size = session_.preparedStore().sizeBytes();
+    const auto limit = sizeText(session_.settings().preparedLimitBytes());
+    const auto text = size > 0 ? "Prepared audio on this computer: " + sizeText(size) + " of " + limit
+                               : "Prepared audio on this computer: nothing yet (up to " + limit + ")";
+    prepared_has_ = size > 0;
+    clear_prepared_.setEnabled(prepared_has_ && editable());
+    if (text != prepared_text_) {
+        prepared_text_ = text;
+        repaint();
+    }
+}
+
+void SetupPage::askToClear() {
+    if (!editable() || !prepared_has_) return;
+    clear_asked_ = true;
+    clear_box_ = juce::AlertWindow::showScopedAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::NoIcon)
+            .withAssociatedComponent(this)
+            .withTitle("Clear the prepared audio?")
+            .withMessage("It is only a copy, kept on this computer. Songs with effects are prepared again.")
+            .withButton("Clear")
+            .withButton("Cancel"),
+        [safe = juce::Component::SafePointer<SetupPage>(this)](int result) {
+            if (safe == nullptr) return;
+            safe->clear_asked_ = false;
+            if (result == 1) safe->clearNow();
+        });
+}
+
+void SetupPage::clearNow() {
+    if (!editable() || !session_.clearPreparedAudio()) return;
+    refreshPrepared(true);
+}
+
 // ---- Layout and drawing ------------------------------------------------------------------------------------------------
 
 std::vector<juce::String> SetupPage::problemLines() const {
@@ -423,6 +483,10 @@ void SetupPage::resized() {
     if (lines > 0) area.removeFromTop(kColumnGap);
     problems_ = area.removeFromTop(lines * kProblemHeight);
     area.removeFromTop(kColumnGap);
+    prepared_row_ = area.removeFromBottom(kControlHeight);
+    const int clearW = clear_prepared_.idealWidth();
+    clear_prepared_.setBounds(prepared_row_.getRight() - clearW, prepared_row_.getY(), clearW, kControlHeight);
+    area.removeFromBottom(kColumnGap);
     grid_.setBounds(area);
     keepOffKeyboard(*this);
 }
@@ -463,6 +527,11 @@ void SetupPage::paint(juce::Graphics& g) {
     g.drawText("AUDIO INTERFACE", interface_label_, juce::Justification::centredLeft, false);
     g.drawText("SAMPLE RATE", rate_label_, juce::Justification::centredLeft, false);
     g.drawText("BUFFER", buffer_label_, juce::Justification::centredLeft, false);
+
+    g.setColour(theme::mid);
+    g.setFont(problemFont());
+    g.drawText(shorten(prepared_text_, problemFont(), static_cast<float>(std::max(0, clear_prepared_.getX() - prepared_row_.getX() - kGroupGap))),
+               prepared_row_.withWidth(std::max(0, clear_prepared_.getX() - prepared_row_.getX() - kGroupGap)), juce::Justification::centredLeft, false);
 
     const auto lines = problemLines();
     const int offset = problem_.isNotEmpty() ? 1 : 0;             // the device's or a command's failure comes first

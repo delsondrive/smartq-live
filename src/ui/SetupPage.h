@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -58,6 +59,13 @@ public:
     const RoutingState& state() const { return state_; }
     RoutingGrid& grid() { return grid_; }
     bool testToneOn() const { return tone_on_; }
+    // The "Prepared audio on this computer: 4.2 GB of 20 GB" line under the grid and its Clear button (Edit mode, and only while
+    // something is kept). Clear asks first; clearNow is what the question's "Clear" does.
+    juce::String preparedLine() const { return prepared_text_; }
+    static juce::String sizeText(std::int64_t bytes);              // "4.2 GB", "350 MB", "nothing"
+    PillButton& clearButton() { return clear_prepared_; }
+    bool askingToClear() const { return clear_asked_; }
+    void clearNow();
 
     juce::Rectangle<int> subTabsBounds() const { return sub_tabs_; }   // for tests
     juce::Rectangle<int> subTabBounds(SubTab tab) const;              // for tests
@@ -77,6 +85,8 @@ private:
     bool run(const juce::String& command, const juce::var& params);
     void say(const juce::String& problem);
     void reopen();                                                // the rig's interface on this computer, opened again
+    void refreshPrepared(bool force);
+    void askToClear();
 
     void chooseRig(int index);
     void chooseType(int index);
@@ -102,6 +112,11 @@ private:
     Choice rig_, types_, devices_, rate_, buffer_;
     StatusPill connection_;
     PillButton duplicate_, more_, tone_;
+    PillButton clear_prepared_;
+    juce::ScopedMessageBox clear_box_;
+    juce::String prepared_text_;
+    std::uint64_t prepared_revision_ = ~std::uint64_t(0);
+    bool prepared_has_ = false, clear_asked_ = false;
     RoutingGrid grid_;
     MidiSetupPage midi_;
     CueVoicePage cue_voice_;
@@ -109,7 +124,7 @@ private:
     SubTab sub_tab_choice_ = SubTab::Audio;
 
     // Laid out by resized(), drawn by paint().
-    juce::Rectangle<int> sub_tabs_, sub_tab_, midi_tab_, cue_tab_, remote_tab_, top_, problems_, rig_label_, interface_label_, rate_label_,
+    juce::Rectangle<int> sub_tabs_, sub_tab_, midi_tab_, cue_tab_, remote_tab_, top_, problems_, prepared_row_, rig_label_, interface_label_, rate_label_,
         buffer_label_;
 };
 

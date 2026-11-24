@@ -17,6 +17,8 @@ Stage 4 done: phone remote, a level check before the show, and snapshots that sa
 
 The Cubase-style mixer is in: real faders, live meters, pan, solo and keyboard editing, on the Mixer page and under the tracks in the Song editor.
 
+Effects on parts and outputs are in: an EQ, Dynamic, De-Ess, Width, Transient or Limit on a part or an output (Smart Q's modules), heard live in Edit mode and prepared for Show mode.
+
 On Windows the window has no separate title strip: the top bar is the title bar (drag its empty parts to move the window; minimise, maximise and close sit at its right end).
 
 ## Using it
