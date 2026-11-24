@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "app/Session.h"
+#include "model/AtomicFile.h"
 #include "model/BandFolder.h"
 #include "model/CoreCommands.h"
 #include "model/DocumentSet.h"
@@ -146,7 +147,7 @@ TEST_CASE("when the safety copy can't be written, going back is taken back and c
     const auto snapshots = root.getChildFile("snapshots");
     commands.registerCommand("snapshot.apply", [&](BandModel& m, const juce::var& p) {
         auto applied = applyDocuments(m, p, "This snapshot couldn't be read, so nothing was changed.");
-        CHECK(snapshots.moveFileTo(root.getChildFile("elsewhere")));            // and in its place a file: no safety copy now
+        CHECK(moveRetrying(snapshots, root.getChildFile("elsewhere")));         // and in its place a file: no safety copy now
         CHECK(snapshots.replaceWithText("not a folder"));
         return applied;
     });
@@ -177,7 +178,7 @@ TEST_CASE("a song removed on another computer comes back from the trash with its
     const auto dir = s.folder().songFolder(id);
     REQUIRE(s.folder().audioFile(*s.model().song(id), part).existsAsFile());
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dir.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
+    REQUIRE(moveRetrying(dir, root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
     s.advanceWithoutDevice(0);
     REQUIRE(s.outsideChanges().size() == 1);
     REQUIRE(s.takeOutsideChanges().wasOk());
@@ -196,7 +197,7 @@ TEST_CASE("a new song with a trashed song's title keeps its own folder when the 
     const auto part = s.model().song(id)->parts[0];
     const auto dir = s.folder().songFolder(id);
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dir.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
+    REQUIRE(moveRetrying(dir, root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
     s.advanceWithoutDevice(0);
     REQUIRE(s.takeOutsideChanges().wasOk());                        // the removal is loaded; its place is still remembered
     REQUIRE(s.model().song(id) == nullptr);

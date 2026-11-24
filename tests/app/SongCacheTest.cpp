@@ -34,7 +34,11 @@ struct CacheFixture {
         for (auto& p : s.parts) w.files[p.id] = folder.audioFile(s, p);
         return w;
     }
-    static juce::File makeDemo(const sqlive::test::TempDir& t) { auto root = t.dir().getChildFile("Demo"); model::createDemoBand(root); return root; }
+    static juce::File makeDemo(const sqlive::test::TempDir& t) {
+        auto root = t.dir().getChildFile("Demo");
+        REQUIRE(model::createDemoBand(root).wasOk());
+        return root;
+    }
 };
 }
 TEST_CASE_METHOD(CacheFixture, "wanted songs are loaded in order and reported", "[cache]") {

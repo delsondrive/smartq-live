@@ -56,7 +56,11 @@ struct PreparerFixture {
     juce::String keyOf(const model::SongDoc& s, int part) const {
         return PreparedStore::keyFor(folder.audioFile(s, s.parts[(std::size_t) part]), s.parts[(std::size_t) part].effects, 48000.0);
     }
-    static juce::File makeDemo(const sqlive::test::TempDir& t) { auto root = t.dir().getChildFile("Demo"); model::createDemoBand(root); return root; }
+    static juce::File makeDemo(const sqlive::test::TempDir& t) {
+        auto root = t.dir().getChildFile("Demo");
+        REQUIRE(model::createDemoBand(root).wasOk());
+        return root;
+    }
 };
 
 }  // namespace

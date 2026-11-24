@@ -1,4 +1,7 @@
+#include <chrono>
 #include <cmath>
+#include <memory>
+#include <thread>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -109,4 +112,47 @@ TEST_CASE("a failed swap leaves no temporary file", "[basics]") {
     }
     CHECK(file.loadFileAsString() == "old");
     CHECK(t.dir().getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1);
+}
+TEST_CASE("a swap refused for a moment, as a virus scanner holds a file just written, is tried again", "[basics]") {
+    sqlive::test::TempDir t;
+    auto file = t.dir().getChildFile("doc.json");
+    REQUIRE(writeFileAtomically(file, "old").wasOk());
+    auto hold = std::make_unique<sqlive::test::ExclusiveFileHold>(file);   // refused while this is held: 50 ms
+    if (!hold->held()) SKIP("this system lets a file that is open be replaced");
+    std::thread release([&hold] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        hold.reset();
+    });
+    const auto r = writeFileAtomically(file, "new");
+    release.join();
+    CHECK(r.wasOk());
+    CHECK(file.loadFileAsString() == "new");
+    CHECK(t.dir().getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1);
+}
+TEST_CASE("a folder's move refused for a moment, as a virus scanner holds a file in it, is tried again", "[basics]") {
+    sqlive::test::TempDir t;
+    const auto from = t.dir().getChildFile("Song"), to = t.dir().getChildFile("trash").getChildFile("Song");
+    REQUIRE(writeFileAtomically(from.getChildFile("song.json"), "{}").wasOk());
+    REQUIRE(to.getParentDirectory().createDirectory());
+    auto hold = std::make_unique<sqlive::test::ExclusiveFileHold>(from.getChildFile("song.json"));   // for 50 ms
+    if (!hold->held()) SKIP("this system lets a folder with an open file in it be moved");
+    std::thread release([&hold] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        hold.reset();
+    });
+    const bool moved = moveRetrying(from, to);
+    release.join();
+    CHECK(moved);
+    CHECK(to.getChildFile("song.json").loadFileAsString() == "{}");
+    CHECK_FALSE(from.exists());
+}
+TEST_CASE("a move that stays refused fails, leaving both places as they were", "[basics]") {
+    sqlive::test::TempDir t;
+    const auto from = t.dir().getChildFile("a.json"), to = t.dir().getChildFile("b.json");
+    REQUIRE(writeFileAtomically(from, "a").wasOk());
+    sqlive::test::ExclusiveFileHold hold(from);
+    if (!hold.held()) SKIP("this system lets a file that is open be moved");
+    CHECK_FALSE(moveRetrying(from, to));
+    CHECK_FALSE(to.exists());
+    CHECK(from.existsAsFile());
 }

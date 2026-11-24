@@ -22,6 +22,7 @@
 #include "app/Settings.h"
 #include "app/ShowController.h"
 #include "model/ActionNames.h"
+#include "model/AtomicFile.h"
 #include "model/DemoBand.h"
 #include "model/DocumentsJson.h"
 #include "model/JsonObject.h"
@@ -680,7 +681,7 @@ juce::Result renderScreens(const juce::File& folder, int width, int height) {
             part.deleteFile();
             return juce::Result::fail("Couldn't write " + part.getFullPathName() + ".");
         }
-        if (!part.moveFileTo(target)) {
+        if (!model::moveRetrying(part, target)) {
             part.deleteFile();
             return juce::Result::fail("Couldn't move " + part.getFullPathName() + " into place.");
         }

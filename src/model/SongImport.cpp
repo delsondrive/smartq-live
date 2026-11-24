@@ -6,6 +6,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "model/AtomicFile.h"
 #include "model/DocumentsJson.h"
 #include "model/FileNames.h"
 #include "model/Resampler.h"
@@ -186,7 +187,7 @@ juce::Result convertToBandWav(const juce::File& source, const juce::File& target
     part.deleteFile();
 
     auto result = writeConverted(*reader, part, targetRate, keepGoing, sourceName);
-    if (result.wasOk() && ! part.moveFileTo(target))
+    if (result.wasOk() && ! moveRetrying(part, target))
         result = juce::Result::fail("Couldn't put " + target.getFileName() + " in place.");
     if (result.failed()) part.deleteFile();
     return result;

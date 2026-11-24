@@ -448,11 +448,12 @@ juce::Result OutsideChanges::resolve(const model::ConflictCopy& conflict, bool k
     const auto loser = keepTheCopy ? conflict.original : conflict.copy;
     const auto trashed = trashTargetFor(folder_.root(), loser);
     trashed.getParentDirectory().createDirectory();
-    if (!loser.moveFileTo(trashed)) return finish(juce::Result::fail("Couldn't move " + loser.getFullPathName() + " to the trash."));
+    if (!model::moveRetrying(loser, trashed))
+        return finish(juce::Result::fail("Couldn't move " + loser.getFullPathName() + " to the trash."));
     if (!keepTheCopy) return finish(juce::Result::ok());
 
-    if (!conflict.copy.moveFileTo(conflict.original)) {
-        trashed.moveFileTo(conflict.original);                   // put the original back
+    if (!model::moveRetrying(conflict.copy, conflict.original)) {
+        model::moveRetrying(trashed, conflict.original);         // put the original back
         return finish(juce::Result::fail("Couldn't put " + conflict.copy.getFileName() + " in place of "
                                          + conflict.original.getFileName() + "."));
     }

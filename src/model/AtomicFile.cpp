@@ -2,6 +2,34 @@
 
 namespace sqlive::model {
 
+namespace {
+
+// A move or a swap refused while another program holds a file for a moment: tried again after these waits, about half a
+// second in all, while what is to be moved is still there.
+template <typename Attempt>
+bool retrying(const juce::File& from, Attempt&& attempt) {
+    static constexpr int kWaitsMs[] = {5, 10, 20, 40, 80, 150, 200};
+    for (const int waitMs : kWaitsMs) {
+        if (attempt()) return true;
+        if (!from.exists()) return false;                          // nothing left to move
+        juce::Thread::sleep(waitMs);
+    }
+    return attempt();
+}
+
+// Puts the written temp file in the target's place. A swap refused for a moment (ReplaceFile: "unable to remove the file to
+// be replaced"; MoveFile: a sharing violation) leaves both files as they were, so it can be tried again. Each try looks
+// again at whether the target is there.
+bool swapIn(const juce::File& tmp, const juce::File& target) {
+    return retrying(tmp, [&] { return target.exists() ? tmp.replaceFileIn(target) : tmp.moveFileTo(target); });
+}
+
+}  // namespace
+
+bool moveRetrying(const juce::File& from, const juce::File& to) {
+    return retrying(from, [&] { return from.moveFileTo(to); });
+}
+
 juce::Result writeFileAtomically(const juce::File& target, const juce::String& text) {
     return writeFileAtomically(target, juce::MemoryBlock(text.toRawUTF8(), text.getNumBytesAsUTF8()));
 }
@@ -38,8 +66,7 @@ juce::Result writeFileAtomically(const juce::File& target, const juce::MemoryBlo
         tmp.deleteFile();
         return fail(writeProblem);
     }
-    const bool swapped = target.exists() ? tmp.replaceFileIn(target) : tmp.moveFileTo(target);
-    if (!swapped) {
+    if (!swapIn(tmp, target)) {
         tmp.deleteFile();
         return fail("the new version couldn't replace the old one. Is the file open in another program?");
     }

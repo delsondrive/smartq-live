@@ -7,6 +7,7 @@
 #include <juce_cryptography/juce_cryptography.h>
 
 #include "app/Settings.h"
+#include "model/AtomicFile.h"
 #include "model/Effects.h"
 
 namespace sqlive::app {
@@ -84,7 +85,7 @@ bool PreparedStore::write(const juce::String& key, const engine::PartAudio& audi
             writer.reset();                                             // writes the header and closes the file
         }
     }
-    if (! written || ! temp.moveFileTo(target)) {
+    if (! written || ! model::moveRetrying(temp, target)) {
         temp.deleteFile();
         return false;
     }

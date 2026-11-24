@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "model/AtomicFile.h"
 #include "model/BandFolder.h"
 #include "model/DocumentsJson.h"
 #include "tests/support/TempDir.h"
@@ -163,7 +164,7 @@ TEST_CASE("a new song never gets a folder still remembered for another song", "[
     const auto dirA = folder.assignSongFolder(a.id, a.title);  dirA.getChildFile("audio/A.wav").create();
     model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dirA.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
+    REQUIRE(moveRetrying(dirA, root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
     model.removeSong(a.id);                                         // its removal was loaded; A's place is still remembered
     SongDoc b; b.id = newId(); b.title = "Same";
     const auto dirB = folder.assignSongFolder(b.id, b.title);
@@ -184,7 +185,7 @@ TEST_CASE("a song coming back never lands in its remembered folder while another
     const auto dirA = folder.assignSongFolder(a.id, a.title);  dirA.getChildFile("audio/A.wav").create();
     model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dirA.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
+    REQUIRE(moveRetrying(dirA, root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
     REQUIRE(dirA.getChildFile("audio/C.wav").create());             // and made its own song there: its audio syncs in first
     REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());     // A is saved meanwhile (brought back, say)
     CHECK_FALSE(dirA.getChildFile("song.json").exists());           // the other song's folder is left alone
@@ -203,7 +204,8 @@ TEST_CASE("a song this folder trashed comes back beside a folder now taken, neve
     const auto dirB = folder.assignSongFolder(b.id, b.title);       // "Same 2"
     model.putSong(b);  REQUIRE(folder.save({DocKind::Song, b.id}, model).wasOk());
     model.removeSong(a.id);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());   // trashed here
-    REQUIRE(dirB.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 Same 2")));   // B trashed elsewhere; still remembered
+    // B trashed elsewhere; still remembered
+    REQUIRE(moveRetrying(dirB, root.getChildFile("trash").getChildFile("20261116-120000 Same 2")));
     REQUIRE(dirA.getChildFile("song.json").create());               // and something else in A's old folder
     model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());   // A comes back (undo)
     const auto back = folder.songFolder(a.id);
@@ -217,7 +219,7 @@ TEST_CASE("a song coming back never writes over another song now in its remember
     const auto dirA = folder.assignSongFolder(a.id, a.title);  dirA.getChildFile("audio/A.wav").create();
     model.putSong(a);  REQUIRE(folder.save({DocKind::Song, a.id}, model).wasOk());
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dirA.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
+    REQUIRE(moveRetrying(dirA, root.getChildFile("trash").getChildFile("20261116-120000 Same")));   // another computer trashed it
     SongDoc c; c.id = newId(); c.title = "Same";                    // and made its own song there, synced in
     REQUIRE(dirA.createDirectory());
     REQUIRE(dirA.getChildFile("song.json").replaceWithText(toJson(c)));

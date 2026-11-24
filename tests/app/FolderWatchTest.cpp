@@ -4,6 +4,7 @@
 
 #include "app/FolderWatch.h"
 #include "app/Session.h"
+#include "model/AtomicFile.h"
 #include "model/DocumentsJson.h"
 #include "model/FileNames.h"
 #include "tests/support/DemoSession.h"
@@ -215,11 +216,11 @@ TEST_CASE("a song cached while its audio was missing is loaded again once the au
     const auto* song = s.model().song(id);
     auto audio = s.folder().audioFile(*song, song->parts[0]);
     auto aside = d.dir.dir().getChildFile("aside.wav");
-    REQUIRE(audio.moveFileTo(aside));
+    REQUIRE(model::moveRetrying(audio, aside));
     s.cache().forget(id);  d.settle();
     REQUIRE_FALSE(s.cache().problems(id).isEmpty());
     s.advanceWithoutDevice(0);                                                     // looked at while it is missing
-    REQUIRE(aside.moveFileTo(audio));
+    REQUIRE(model::moveRetrying(aside, audio));
     s.advanceWithoutDevice(0);  d.settle();
     CHECK(s.cache().problems(id).isEmpty());
 }
@@ -377,13 +378,13 @@ TEST_CASE("undoing the loads of a song that went and came back keeps it in its o
     auto dir = s.folder().songFolder(id);
     const int folders = root.getChildFile("songs").getNumberOfChildFiles(juce::File::findDirectories);
     auto aside = d.dir.dir().getChildFile("aside");
-    REQUIRE(dir.moveFileTo(aside));                                                // another computer removed it
+    REQUIRE(model::moveRetrying(dir, aside));                                      // another computer removed it
     s.advanceWithoutDevice(0);
     REQUIRE(s.outsideChanges().size() == 1);
     REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Removed);
     s.takeOutsideChanges();
     REQUIRE(s.model().song(id) == nullptr);
-    REQUIRE(aside.moveFileTo(dir));                                                // and it came back
+    REQUIRE(model::moveRetrying(aside, dir));                                      // and it came back
     s.advanceWithoutDevice(0);
     REQUIRE(s.outsideChanges().size() == 1);
     REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Added);
@@ -442,10 +443,10 @@ TEST_CASE("audio that arrives before the next look at the folder is loaded too",
     const auto* song = s.model().song(id);
     auto audio = s.folder().audioFile(*song, song->parts[0]);
     auto aside = d.dir.dir().getChildFile("aside.wav");
-    REQUIRE(audio.moveFileTo(aside));
+    REQUIRE(model::moveRetrying(audio, aside));
     s.cache().forget(id);  d.settle();
     REQUIRE_FALSE(s.cache().problems(id).isEmpty());
-    REQUIRE(aside.moveFileTo(audio));                                              // back before any poll saw it missing
+    REQUIRE(model::moveRetrying(aside, audio));                                    // back before any poll saw it missing
     s.advanceWithoutDevice(0);  d.settle();
     CHECK(s.cache().problems(id).isEmpty());
 }
@@ -557,7 +558,7 @@ TEST_CASE("a song a bandmate removed and then imported again into the same folde
     const auto dir = s.folder().songFolder(oldId);
     const auto trashed = root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName());
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dir.moveFileTo(trashed));                                              // their app trashed it
+    REQUIRE(model::moveRetrying(dir, trashed));                                    // their app trashed it
     s.advanceWithoutDevice(0);
     REQUIRE(s.outsideChanges().size() == 1);
     REQUIRE(s.takeOutsideChanges().wasOk());                                       // its removal is taken; its folder still remembered
@@ -579,7 +580,8 @@ TEST_CASE("undoing the load of a song another computer trashed brings its folder
     const auto part = s.model().song(id)->parts[0];
     const auto dir = s.folder().songFolder(id);
     REQUIRE(root.getChildFile("trash").createDirectory());
-    REQUIRE(dir.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));   // their app trashed it
+    // their app trashed it
+    REQUIRE(model::moveRetrying(dir, root.getChildFile("trash").getChildFile("20261116-120000 " + dir.getFileName())));
     s.advanceWithoutDevice(0);
     REQUIRE(s.outsideChanges().size() == 1);
     REQUIRE(s.outsideChanges()[0].kind == OutsideChange::Kind::Removed);
@@ -604,7 +606,8 @@ TEST_CASE("a setlist or rig a bandmate removed and made again under the same fil
         const auto newId = model::newId();
         theirs.getDynamicObject()->setProperty("id", newId);
         REQUIRE(root.getChildFile("trash").createDirectory());
-        REQUIRE(file.moveFileTo(root.getChildFile("trash").getChildFile("20261116-120000 " + file.getFileName())));   // their app trashed it
+        // their app trashed it
+        REQUIRE(model::moveRetrying(file, root.getChildFile("trash").getChildFile("20261116-120000 " + file.getFileName())));
         s.advanceWithoutDevice(0);
         REQUIRE(s.outsideChanges().size() == 1);
         REQUIRE(s.takeOutsideChanges().wasOk());                   // its removal is taken; its file still remembered

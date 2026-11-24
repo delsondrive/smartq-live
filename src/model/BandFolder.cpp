@@ -216,7 +216,7 @@ juce::Result BandFolder::moveToTrash(const DocKey& key) {
     if (p == juce::File() || ! p.exists()) return juce::Result::ok();
     auto target = trashTargetOf(root_folder_, p);
     target.getParentDirectory().createDirectory();
-    if (! p.moveFileTo(target)) return juce::Result::fail("Couldn't move " + p.getFullPathName() + " to the trash.");
+    if (! moveRetrying(p, target)) return juce::Result::fail("Couldn't move " + p.getFullPathName() + " to the trash.");
     trashed_[key] = target;
     return juce::Result::ok();
 }
@@ -245,7 +245,7 @@ juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String&
                             ? remembered                         // back where it was
                             : freeSongFolder(songTitle);
         to.getParentDirectory().createDirectory();
-        if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
+        if (! moveRetrying(from, to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
         places_[key] = to;
         return juce::Result::ok();
     }
@@ -262,7 +262,7 @@ juce::Result BandFolder::restoreFromTrash(const DocKey& key, const juce::String&
                                        : uniqueChild(parent, to.getFileNameWithoutExtension(), to.getFileExtension());
     }
     to.getParentDirectory().createDirectory();
-    if (! from.moveFileTo(to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
+    if (! moveRetrying(from, to)) return juce::Result::fail("Couldn't bring " + from.getFullPathName() + " back from the trash.");
     places_[key] = to;
     trashed_.erase(it);
     return juce::Result::ok();
