@@ -11,6 +11,11 @@
 // the cache's prepared audio (WantedSong::showAudio) and gives the engine no part chain. The rig's output chains play in
 // both modes, sent again when their kinds change, when the mix's buses change and after a device starts (Engine::prepare
 // drops them); AudioHost sends MIDI as late as they hold the audio back.
+//
+// Entering Show mode while a song plays leaves that song's live part chains playing until it ends, on purpose: the sound must
+// not change mid-song, and the prepared audio isn't loaded for it yet. The same goes for a song cued when the show starts
+// whose effects are all switched off: it sounds the same either way, so it isn't loaded again, and its bypassed chain (bit for
+// bit the plain part) stays with it. Every song loaded in the show has no part chain.
 
 #include <algorithm>
 

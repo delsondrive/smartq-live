@@ -350,3 +350,36 @@ TEST_CASE("held without effects is heard only on that part", "[session-fx]") {
     const auto reference = capture(s, n + 48000);
     CHECK(correlation(after.left, std::vector<float>(reference.left.begin() + n + 24000, reference.left.end()), 0, 24000) > 0.99);
 }
+
+TEST_CASE("preparing for the show, ahead or as a song loads, puts no audio in the band folder", "[session-fx]") {
+    KeysAlone k; auto& s = k.s;
+    const auto band = k.d.dir.dir().getChildFile("Demo band");
+    const auto audioFiles = [&] {
+        juce::StringArray names;
+        for (const auto& f : band.findChildFiles(juce::File::findFiles, true, "*.wav;*.tmp"))
+            names.add(f.getRelativePathFrom(band) + " " + juce::String(f.getSize()));
+        names.sort(false);
+        return names;
+    };
+    const auto before = audioFiles();
+    REQUIRE(before.size() > 0);                                                // the parts' own files
+    REQUIRE(s.addEffect(k.keysFx, "eq"));
+    s.setEffect(k.keysFx, 0, with(s.effects(k.keysFx)[0], "output_gain", 6.0), "gain");
+    const auto& other = *s.model().song(k.d.setlist().entries[1].songId);
+    const EffectsTarget otherFx{other.id, other.parts[0].id, {}, {}};
+    REQUIRE(s.addEffect(otherFx, "dynamic"));
+
+    s.prepareForShow();                                                        // ahead, by the preparer
+    for (int i = 0; i < 600 && s.preparingForShow(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    REQUIRE_FALSE(s.preparingForShow());
+    REQUIRE(s.preparer().waitUntilIdle(30000));
+    const auto store = k.d.dir.dir().getChildFile("Prepared audio");
+    CHECK(store.getNumberOfChildFiles(juce::File::findFiles, "*.wav") >= 2);
+    CHECK(audioFiles() == before);
+
+    s.preparedStore().clear();                                                 // and as the show loads them, by the cache
+    s.enterShow();
+    k.d.settle();
+    CHECK(s.cache().partsPrepared() >= 1);
+    CHECK(audioFiles() == before);
+}

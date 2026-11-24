@@ -291,3 +291,40 @@ TEST_CASE("setting part or output effects says when the command queue was full",
     fresh.prepare(kRate, kBlock);
     CHECK(fresh.setPartEffects(1, nullptr));
 }
+
+TEST_CASE("a Limit's lookahead changed as it plays moves every output's delay, and never allocates", "[fx]") {
+    // FOH's Limit, held by the control thread to send it new settings, as Session's LiveEffects does; Headphones without one.
+    auto limitChain = chainOf({limit(-3.0)});
+    auto fx = OutputEffects::make({limitChain, nullptr}, *twoBusMix(), kBlock);
+    const int before = fx->latencySamples();
+    REQUIRE(before > 0);
+    auto audio = sines(kBlock, 1.5f, 4);
+    run(*fx, audio);
+    auto longer = limit(-3.0);
+    longer.lookaheadMs = 5.0;
+    longer.truePeak = true;
+    longer.softClipPercent = 40.0;
+    auto shorter = limit(-3.0);
+    shorter.lookaheadMs = 0.5;
+    int during = 0;
+    float* channels[4] = {audio[0].data(), audio[1].data(), audio[2].data(), audio[3].data()};
+    {
+        AllocGuard guard;
+        for (int b = 0; b < 300; ++b) {
+            if (b == 40) limitChain->setSettings(0, longer);               // a new way, crossfaded to on the audio thread
+            if (b == 120) limitChain->setSettings(0, shorter);
+            if (b == 200) limitChain->setSettings(0, longer);
+            if (b == 100) during = fx->latencySamples();
+            for (int c = 0; c < 4; ++c)
+                for (std::size_t i = 0; i < audio[(std::size_t) c].size(); ++i)
+                    audio[(std::size_t) c][i] = sineAt((std::size_t) (b * kBlock) + i, 1.5f);
+            fx->process(channels, 4, kBlock);
+        }
+    }
+    CHECK(allocationCount() == 0);
+    CHECK(deallocationCount() == 0);
+    CHECK(during > before);                                                  // FOH's lookahead, and with it every output's delay
+    CHECK(fx->latencySamples() == during);
+    CHECK(peakOf(audio[0]) <= std::pow(10.0f, -3.0f / 20.0f) + 1e-4f);      // still held to its ceiling
+    CHECK(peakOf(audio[2]) > 1.0f);                                         // Headphones: delayed, not limited
+}

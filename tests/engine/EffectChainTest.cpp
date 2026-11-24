@@ -62,19 +62,23 @@ std::vector<ModuleSettings> splitChain() {
 
 // Plays the noise through a new chain in blocks cycling through `blocks`, with `change` given before sample `changeAt`. The chain
 // is made for blocks of maxBlock frames, or of the whole noise with 0.
-Stereo play(const Stereo& in, const std::vector<int>& blocks, int changeAt = -1, const ModuleSettings* change = nullptr, int maxBlock = 0) {
-    const auto settings = splitChain();
+Stereo playThrough(const std::vector<ModuleSettings>& settings, const Stereo& in, const std::vector<int>& blocks, int changeAt = -1,
+                   const ModuleSettings* change = nullptr, int maxBlock = 0, int changeSlot = 0) {
     auto chain = EffectChain::make(settings, kRate, maxBlock > 0 ? maxBlock : (int) in.left.size(), true);
     Stereo out = in;
     const int frames = (int) in.left.size();
     for (int at = 0, b = 0; at < frames; ++b) {
-        if (at == changeAt && change != nullptr) chain->setSettings(0, *change);
+        if (at == changeAt && change != nullptr) chain->setSettings(changeSlot, *change);
         int n = std::min(blocks[(size_t) b % blocks.size()], frames - at);
         if (changeAt > at && changeAt < at + n) n = changeAt - at;
         chain->process(out.left.data() + at, out.right.data() + at, n);
         at += n;
     }
     return out;
+}
+
+Stereo play(const Stereo& in, const std::vector<int>& blocks, int changeAt = -1, const ModuleSettings* change = nullptr, int maxBlock = 0) {
+    return playThrough(splitChain(), in, blocks, changeAt, change, maxBlock);
 }
 
 bool sameBits(const Stereo& a, const Stereo& b) {
@@ -110,6 +114,29 @@ TEST_CASE("an effect chain gives the same bits whatever the block split", "[fx]"
     // made for blocks of 64: in calls of 64, and in one call it plays in pieces of 64
     CHECK(sameBits(play(in, {64}, -1, nullptr, 64), whole));
     CHECK(sameBits(play(in, {48000}, -1, nullptr, 64), whole));
+}
+
+TEST_CASE("Width, De-Ess and a Limit give the same bits whatever the block split, a lookahead change too", "[fx]") {
+    const auto in = noise(48000, 0.9);
+    const std::vector<int> split{1, 31, 32, 33, 500, 512};
+    dsp::WidthSettings width; width.widthPercent = 160.0;
+    dsp::DeEssSettings deEss; deEss.thresholdDb = -30.0;
+    const std::vector<ModuleSettings> stereo{width, deEss};
+    const auto wide = playThrough(stereo, in, {48000});
+    CHECK_FALSE(sameBits(wide, in));
+    CHECK(sameBits(playThrough(stereo, in, split), wide));
+
+    dsp::LimitSettings limit; limit.inputGainDb = 9.0; limit.ceilingDb = -3.0; limit.truePeak = true; limit.softClipPercent = 30.0;
+    const std::vector<ModuleSettings> limited{limit};
+    const auto held = playThrough(limited, in, {48000});
+    CHECK_FALSE(sameBits(held, in));
+    CHECK(sameBits(playThrough(limited, in, split), held));
+    auto longer = limit; longer.lookaheadMs = 5.0; longer.truePeak = false;    // a new way: crossfaded to, mid-play
+    const ModuleSettings change = longer;
+    const auto changed = playThrough(limited, in, {48000}, 24000, &change);
+    CHECK_FALSE(sameBits(changed, held));
+    CHECK(sameBits(playThrough(limited, in, split, 24000, &change), changed));
+    CHECK(sameBits(playThrough(limited, in, {64}, 24000, &change, 64), changed));
 }
 
 TEST_CASE("part effects add no delay; a Limit on an output does", "[fx]") {

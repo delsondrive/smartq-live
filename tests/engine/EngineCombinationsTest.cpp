@@ -474,3 +474,43 @@ TEST_CASE("output effects through a jump, a loop and a crossfade", "[combination
     for (const auto& channel : out)
         for (float sample : channel) REQUIRE(std::abs(sample) <= ceiling + 1e-6f);
 }
+
+TEST_CASE("part and output effects through a count-off, a gap, a seamless follow-on and a stop", "[combinations][fx]") {
+    // a started at its second step (a bar of count-off first), with its parts' effects; then a gap of 0.25 s into b, b
+    // followed seamlessly by c, and a stop with its fade partway into c; the output's effects throughout.
+    auto run = [](int block, bool effects) {
+        Engine e; e.prepare(48000.0, 512); e.setMix(stereoMix());
+        e.setOutputEffects(limited(e.maxBlockFrames(), effects));
+        const auto aSong = toneSong("a", 3, {}, 220.0), bSong = toneSong("b", 1, {}, 330.0), cSong = toneSong("c", 2, {}, 440.0);
+        const auto a = e.cue(share(aSong));
+        e.setPartEffects(a, squashed(aSong, e.maxBlockFrames(), effects));
+        e.startAtStep(1);                                               // count-off [0, 96000), then bars 2 and 3 of a
+        e.setFollowOn({FollowKind::Gap, 0.25});
+        std::uint64_t b = 0, c = 0;
+        return renderOffline(e, 2, 96000 + 2 * 96000 + 12000 + 96000 + 60000, block, {
+            {10, [&](Engine& en) { b = en.cue(share(bSong)); }},
+            {20, [&](Engine& en) { en.setPartEffects(b, squashed(bSong, en.maxBlockFrames(), effects)); }},
+            {320000, [&](Engine& en) {                                  // b plays from 300000
+                c = en.cue(share(cSong));
+                en.setFollowOn({FollowKind::Seamless, 0.0});
+            }},
+            {320010, [&](Engine& en) { en.setPartEffects(c, squashed(cSong, en.maxBlockFrames(), effects)); }},
+            {420000, [&](Engine& en) { en.stop(); }}});                 // c plays from 396000
+    };
+    const auto out = run(512, true);
+    for (int block : {1, 64}) CHECK(run(block, true) == out);
+    const bool heard = out != run(512, false);
+    CHECK(heard);
+    const auto loud = [&](std::size_t from, std::size_t to) {
+        float peak = 0.0f;
+        for (auto i = from; i < to; ++i) peak = std::max(peak, std::abs(out[0][i]));
+        return peak > 0.05f;
+    };
+    CHECK(loud(100000, 280000));                                        // a, after its count-off
+    CHECK(loud(310000, 390000));                                        // b, after the gap
+    CHECK(loud(400000, 418000));                                        // c, seamlessly
+    CHECK_FALSE(loud(430000, out[0].size()));                           // the stop's fade is over
+    const float ceiling = std::pow(10.0f, -6.0f / 20.0f);
+    for (const auto& channel : out)
+        for (float sample : channel) REQUIRE(std::abs(sample) <= ceiling + 1e-6f);
+}
