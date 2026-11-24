@@ -254,6 +254,12 @@ public:
     // leaving Show mode, the setlist's songs are. Never while a show's song plays or between two; in Show mode, nothing.
     // effectsState: the song as the model has it now (Changed: a part with an effect on isn't prepared, nor waiting to be).
     EffectsPreparer::State effectsState(const juce::String& songId) const;
+    // Whether that song isn't prepared only because the store couldn't be written (a full disk): Show mode prepares it as it
+    // loads, so the pre-show check warns rather than blocks (EffectsPreparer::couldntStore).
+    bool effectsCouldntBeStored(const juce::String& songId) const;
+    // The setlist's prepared audio in the store now, and the store's limit: the store keeps the setlist's whole even over it.
+    std::int64_t setlistPreparedBytes() const;
+    std::int64_t preparedLimitBytes() const;
     double effectsProgress(const juce::String& songId) const;   // 0..1 while it is being prepared
     // The pre-show check's "Prepare now": every song of the setlist, first. Edit mode only.
     void prepareForShow();

@@ -6,7 +6,8 @@
 // ahead in the background: the setlist's songs as the band opens, as a setlist is chosen and as Show mode is left; and a
 // song whose effects (or part files) change, 2 s after the last such change, as editing on it pauses (the level check's
 // wait). The pre-show check's "Prepare now" (prepareForShow) does every song of the setlist at once, and the check doesn't
-// let the show start until it is done. In Show mode nothing is prepared here, and nothing while a show's song plays or the
+// let the show start until it is done (a store that can't be written only warns: Show mode prepares those songs as they load).
+// The store spares every wanted song's keys, so trimming it never drops the setlist's prepared audio. In Show mode nothing is prepared here, and nothing while a show's song plays or the
 // gap between two runs.
 
 #include <algorithm>
@@ -110,6 +111,18 @@ EffectsPreparer::State Session::effectsState(const juce::String& songId) const {
     if (model_.song(songId) == nullptr) return EffectsPreparer::State::Prepared;
     return preparer_->state(songToPrepare(songId));
 }
+
+bool Session::effectsCouldntBeStored(const juce::String& songId) const {
+    return model_.song(songId) != nullptr && preparer_->couldntStore(songToPrepare(songId));
+}
+
+std::int64_t Session::setlistPreparedBytes() const {
+    std::int64_t bytes = 0;
+    for (const auto& id : setlistSongIds()) bytes += preparer_->preparedBytes(songToPrepare(id));
+    return bytes;
+}
+
+std::int64_t Session::preparedLimitBytes() const { return prepared_store_.limit(); }
 
 double Session::effectsProgress(const juce::String& songId) const { return preparer_->progress(songId); }
 

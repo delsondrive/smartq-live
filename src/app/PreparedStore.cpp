@@ -1,6 +1,7 @@
 #include "app/PreparedStore.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -22,6 +23,22 @@ PreparedStore::PreparedStore(juce::File folder, std::int64_t limitBytes) : folde
 juce::File PreparedStore::defaultFolder() { return Settings::defaultFile().getParentDirectory().getChildFile("Prepared audio"); }
 
 void PreparedStore::setLimit(std::int64_t bytes) { limit_.store(bytes); }
+
+void PreparedStore::spare(std::set<juce::String> keys) {
+    const juce::ScopedLock sl(spare_lock_);
+    spared_ = std::move(keys);
+}
+
+juce::String PreparedStore::sizeText(std::int64_t bytes) {
+    constexpr double kMB = 1024.0 * 1024.0, kGB = kMB * 1024.0;
+    if (bytes <= 0) return "nothing";
+    if (static_cast<double>(bytes) < kMB) return "less than 1 MB";
+    const auto megabytes = std::lround(static_cast<double>(bytes) / kMB);
+    if (megabytes < 1024) return juce::String(static_cast<int>(megabytes)) + " MB";
+    auto text = juce::String(static_cast<double>(bytes) / kGB, 1);
+    if (text.endsWith(".0")) text = text.dropLastCharacters(2);
+    return text + " GB";
+}
 
 juce::String PreparedStore::keyFor(const juce::File& partFile, const std::vector<model::EffectDoc>& effects, double sampleRate) {
     juce::String text;
@@ -62,8 +79,7 @@ bool PreparedStore::write(const juce::String& key, const engine::PartAudio& audi
     if (frames == 0 || ! folder_.createDirectory().wasOk()) return false;
     const bool stereo = audio.right.size() == frames;
     const auto target = fileFor(key);
-    const auto temp = folder_.getChildFile(key + ".tmp");
-    temp.deleteFile();
+    const auto temp = folder_.getChildFile(key + "." + juce::Uuid().toString() + ".tmp");   // this write's own
     bool written = false;
     {
         std::unique_ptr<juce::OutputStream> stream = temp.createOutputStream();
@@ -92,6 +108,11 @@ bool PreparedStore::write(const juce::String& key, const engine::PartAudio& audi
     return true;
 }
 
+std::int64_t PreparedStore::sizeOf(const juce::String& key) const {
+    const auto file = fileFor(key);
+    return file.existsAsFile() ? file.getSize() : 0;
+}
+
 std::int64_t PreparedStore::sizeBytes() const {
     std::int64_t total = 0;
     for (const auto& entry : juce::RangedDirectoryIterator(folder_, false, juce::String("*") + kExtension, juce::File::findFiles))
@@ -108,13 +129,24 @@ void PreparedStore::clear() {
 
 void PreparedStore::trim() {
     struct Item { juce::File file; juce::int64 size; juce::int64 used; };
+    std::set<juce::String> spared;
+    {
+        const juce::ScopedLock sl(spare_lock_);
+        spared = spared_;
+    }
     std::vector<Item> items;
     std::int64_t total = 0;
     for (const auto& entry : juce::RangedDirectoryIterator(folder_, false, juce::String("*") + kExtension, juce::File::findFiles)) {
         const auto file = entry.getFile();
-        items.push_back({file, file.getSize(), file.getLastModificationTime().toMilliseconds()});
-        total += items.back().size;
+        total += file.getSize();
+        if (spared.count(file.getFileNameWithoutExtension()) == 0)
+            items.push_back({file, file.getSize(), file.getLastModificationTime().toMilliseconds()});
     }
+    // A temp file left by a write that never finished (the app closed mid-write): each write has its own name, so nothing
+    // else would ever remove it. A day old is long past any write still going on.
+    const auto stale = juce::Time::getCurrentTime() - juce::RelativeTime::days(1);
+    for (const auto& entry : juce::RangedDirectoryIterator(folder_, false, "*.tmp", juce::File::findFiles))
+        if (entry.getFile().getLastModificationTime() < stale) entry.getFile().deleteFile();
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.used < b.used; });
     for (const auto& item : items) {
         if (total <= limit_.load()) break;

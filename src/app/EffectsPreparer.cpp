@@ -64,6 +64,24 @@ std::deque<EffectsPreparer::Job> EffectsPreparer::backgroundJobs() const {
     return jobs;
 }
 
+std::set<juce::String> EffectsPreparer::keysOf(const WantedSong& song) const {
+    std::set<juce::String> keys;
+    for (const auto& part : song.doc.parts) {
+        if (!hasEffectOn(part)) continue;
+        const auto file = song.files.find(part.id);
+        if (file == song.files.end() || file->second == juce::File() || !file->second.existsAsFile()) continue;
+        keys.insert(PreparedStore::keyFor(file->second, part.effects, rate_));
+    }
+    return keys;
+}
+
+void EffectsPreparer::spareWanted() {
+    std::set<juce::String> keys;
+    for (const auto* list : {&wanted_, &now_wanted_})
+        for (const auto& song : *list) keys.merge(keysOf(song));
+    store_.spare(std::move(keys));
+}
+
 void EffectsPreparer::setSampleRate(double rate) {
     if (rate == rate_) return;
     rate_ = rate;
@@ -73,10 +91,12 @@ void EffectsPreparer::setSampleRate(double rate) {
 void EffectsPreparer::want(std::vector<WantedSong> songs) {
     for (const auto& song : songs) known_[song.doc.id] = song;
     wanted_ = std::move(songs);
+    spareWanted();
     if (show_) return;
     auto jobs = backgroundJobs();
     {
         const juce::ScopedLock sl(lock_);
+        unreadable_.clear();                                       // read again: it may have been held only for a moment
         std::deque<Job> next;
         for (auto& job : queue_)                                   // prepareNow's songs stay first
             if (job.now) next.push_back(std::move(job));
@@ -100,9 +120,13 @@ void EffectsPreparer::want(std::vector<WantedSong> songs) {
 void EffectsPreparer::prepareNow(const std::vector<WantedSong>& songs, std::function<void(double)> onProgress,
                                  std::function<void(bool)> onDone) {
     std::function<void(bool)> replaced;
+    now_wanted_ = songs;
+    spareWanted();
     {
         const juce::ScopedLock sl(lock_);
         if (batch_active_) replaced = std::move(on_done_);
+        unreadable_.clear();                                       // tried again, each one
+        unstored_.clear();
         ++batch_serial_;
         std::deque<Job> next;
         for (const auto& song : songs) {
@@ -216,6 +240,28 @@ EffectsPreparer::State EffectsPreparer::state(const WantedSong& song) const {
 EffectsPreparer::State EffectsPreparer::state(const juce::String& songId) const {
     const auto found = known_.find(songId);
     return found != known_.end() ? state(found->second) : State::Prepared;
+}
+
+bool EffectsPreparer::couldntStore(const WantedSong& song) const {
+    bool refused = false;
+    for (const auto& part : song.doc.parts) {
+        if (!hasEffectOn(part)) continue;
+        const auto file = song.files.find(part.id);
+        if (file == song.files.end() || file->second == juce::File() || !file->second.existsAsFile()) continue;
+        const auto key = PreparedStore::keyFor(file->second, part.effects, rate_);
+        if (store_.has(key)) continue;
+        const juce::ScopedLock sl(lock_);
+        if (unreadable_.count(key) > 0) continue;
+        if (unstored_.count(key) == 0) return false;               // not tried yet, or waiting: not the store's doing
+        refused = true;
+    }
+    return refused;
+}
+
+std::int64_t EffectsPreparer::preparedBytes(const WantedSong& song) const {
+    std::int64_t bytes = 0;
+    for (const auto& key : keysOf(song)) bytes += store_.sizeOf(key);
+    return bytes;
 }
 
 double EffectsPreparer::progress(const juce::String& songId) const {
@@ -342,6 +388,10 @@ EffectsPreparer::Outcome EffectsPreparer::prepare(const Job& job) {
         {
             const juce::ScopedLock sl(lock_);
             if (unreadable_.count(key) > 0) continue;
+            if (!job.now && unstored_.count(key) > 0) {            // the store refused it: only Prepare now tries again
+                outcome = Outcome::Partly;
+                continue;
+            }
         }
         // The share of this part's slice of the progress, from `from` to `to`.
         const auto within = [&, i](double from, double to) {
@@ -373,8 +423,12 @@ EffectsPreparer::Outcome EffectsPreparer::prepare(const Job& job) {
         if (store_.write(key, *prepared)) {
             store_.trim();
             ++parts_prepared_;
+            const juce::ScopedLock sl(lock_);
+            unstored_.erase(key);
         } else if (!store_.has(key)) {                             // the cache or the level check may have put it there meanwhile
             outcome = Outcome::Partly;
+            const juce::ScopedLock sl(lock_);
+            unstored_.insert(key);
         }
     }
     setProgress(1.0);

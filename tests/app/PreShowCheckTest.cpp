@@ -206,3 +206,64 @@ TEST_CASE("the pre-show check names a Limit working hard", "[preshow]") {
     CHECK(found[0].title.contains(" dB in " + first + " at bar "));
     CHECK(mayEnterShow(runPreShowCheck(s, good())));              // a warning: the band's call
 }
+
+namespace {
+// Each of the setlist's first three songs with an EQ on its first part, and Prepare now run to its end.
+void prepareThree(DemoSession& d) {
+    auto& s = *d.session;
+    for (int i = 0; i < 3; ++i) {
+        const auto& song = *s.model().song(d.setlist().entries[(std::size_t) i].songId);
+        const EffectsTarget keys{song.id, song.parts[0].id, {}, {}};
+        REQUIRE(s.addEffect(keys, "eq"));
+        s.setEffect(keys, 0, gainEq(3.0 + i), "gain");
+    }
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(2500);   // past the 2 s wait: the background has its turn first
+    s.prepareForShow();
+    for (int i = 0; i < 600 && s.preparingForShow(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    REQUIRE_FALSE(s.preparingForShow());
+    REQUIRE(s.preparer().waitUntilIdle(30000));
+    REQUIRE(s.levelChecker().waitUntilIdle(30000));
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+}
+}  // namespace
+
+TEST_CASE("a prepared-audio store that can't be written warns, and the show can still start", "[preshow]") {
+    DemoSession d; auto& s = *d.session;
+    const auto store = d.dir.dir().getChildFile("Prepared audio");   // next to the settings file
+    REQUIRE(store.deleteRecursively());
+    REQUIRE(store.replaceWithText("a file where the folder should be"));   // as a full disk or a folder that can't be written
+    prepareThree(d);
+    auto items = runPreShowCheck(s, good());
+    const auto* item = find(items, "effects");
+    REQUIRE(item != nullptr);
+    CHECK(item->level == CheckItem::Level::Warning);
+    CHECK(item->title == "Prepared audio couldn't be saved on this computer");
+    CHECK(item->detail == "3 songs will be prepared as they load, on stage. Is the disk full?");
+    CHECK(item->fixLabel == "Try again");
+    CHECK(mayEnterShow(items));
+
+    REQUIRE(store.deleteFile());                                     // room again: Try again prepares them
+    s.prepareForShow();
+    for (int i = 0; i < 600 && s.preparingForShow(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    REQUIRE_FALSE(s.preparingForShow());
+    items = runPreShowCheck(s, good());
+    CHECK(find(items, "effects") == nullptr);
+    CHECK(mayEnterShow(items));
+}
+
+TEST_CASE("a setlist whose prepared audio is over the limit keeps it all, and says so", "[preshow]") {
+    DemoSession d; auto& s = *d.session;
+    s.preparedStore().setLimit(1);                                   // smaller than any one song's
+    prepareThree(d);
+    for (int i = 0; i < 3; ++i)                                      // none trimmed away by another's
+        CHECK(s.effectsState(d.setlist().entries[(std::size_t) i].songId) == EffectsPreparer::State::Prepared);
+    auto items = runPreShowCheck(s, good());
+    const auto* item = find(items, "effects");
+    REQUIRE(item != nullptr);
+    CHECK(item->level == CheckItem::Level::Warning);
+    CHECK(item->title.startsWith("The setlist's prepared audio takes "));
+    CHECK(item->title.endsWith(", more than the limit of less than 1 MB"));
+    CHECK(item->detail == "It is all kept on this computer all the same; other songs' prepared audio goes first.");
+    CHECK(item->fixLabel.isEmpty());
+    CHECK(mayEnterShow(items));
+}

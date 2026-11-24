@@ -192,7 +192,9 @@ void addLimits(std::vector<CheckItem>& items, const Session& session) {
 }
 
 // The setlist's songs with a part not prepared for the show (Session::effectsState): a blocker with "Prepare now" until each
-// is; while Prepare now works, a blocker that says how far it has got.
+// is; while Prepare now works, a blocker that says how far it has got. Songs left unprepared only because the store couldn't
+// be written are a warning with "Try again" instead: Show mode prepares them as they load. Once every song is prepared, a
+// warning if the setlist's prepared audio is over the store's limit (the store keeps it whole all the same).
 void addEffects(std::vector<CheckItem>& items, const Session& session, const model::SetlistDoc* setlist) {
     if (session.preparingForShow()) {
         const auto percent = juce::String(juce::roundToInt(100.0 * session.prepareForShowProgress())) + "%";
@@ -202,17 +204,31 @@ void addEffects(std::vector<CheckItem>& items, const Session& session, const mod
     }
     if (setlist == nullptr) return;
     juce::StringArray seen;
-    int changed = 0;
+    int changed = 0, unstored = 0;
     for (const auto& entry : setlist->entries) {
         if (seen.contains(entry.songId)) continue;
         seen.add(entry.songId);
-        if (session.effectsState(entry.songId) != EffectsPreparer::State::Prepared) ++changed;
+        const auto state = session.effectsState(entry.songId);
+        if (state == EffectsPreparer::State::Prepared) continue;
+        if (state == EffectsPreparer::State::Changed && session.effectsCouldntBeStored(entry.songId)) ++unstored;
+        else ++changed;
     }
     if (changed > 0)
         items.push_back(item(Level::Blocker, "effects",
                              changed == 1 ? juce::String("1 song needs its effects prepared.")
                                           : juce::String(changed) + " songs need their effects prepared.",
                              {}, "Prepare now"));
+    if (unstored > 0)
+        items.push_back(item(Level::Warning, "effects", "Prepared audio couldn't be saved on this computer",
+                             plural(unstored, "song", "songs") + (unstored == 1 ? " will be prepared as it loads" : " will be prepared as they load")
+                                 + ", on stage. Is the disk full?",
+                             "Try again"));
+    if (changed > 0 || unstored > 0) return;
+    if (const auto bytes = session.setlistPreparedBytes(), limit = session.preparedLimitBytes(); bytes > limit)
+        items.push_back(item(Level::Warning, "effects",
+                             "The setlist's prepared audio takes " + PreparedStore::sizeText(bytes) + ", more than the limit of "
+                                 + PreparedStore::sizeText(limit),
+                             "It is all kept on this computer all the same; other songs' prepared audio goes first."));
 }
 
 }  // namespace

@@ -27,6 +27,12 @@ namespace sqlive::app {
 // when this is destroyed. A part whose file is missing, still in the cloud (model::isOnThisComputer: reading it would start
 // a download), or can't be read is passed over.
 //
+// Every song wanted (the background list and the last prepareNow's) has its parts' keys spared in the store (PreparedStore::spare),
+// so that trimming the store never drops what the setlist needs. A part whose store write failed (a full disk, a folder that
+// can't be written) is remembered: the background doesn't try it again (each edit would), prepareNow does, and couldntStore
+// tells the pre-show check, which then warns rather than blocks (Show mode prepares it as it loads). A part whose file couldn't
+// be read is remembered too, until the next want or prepareNow, which read it again.
+//
 // A part has an effect on when model::chainOf (as the part's document says it is stereo or mono) holds an effect not
 // bypassed. Its prepared audio is the store's under PreparedStore::keyFor(file, effects, rate): a song is Prepared when
 // every such part of it is in the store (one whose file is missing or can't be read has nothing to prepare); Preparing
@@ -60,6 +66,10 @@ public:
 
     State state(const WantedSong&) const;                          // the song as it is now (keyFor looks at its part files)
     State state(const juce::String& songId) const;                 // as last handed over; Prepared for a song never handed over
+    // Whether the song isn't prepared only because the store couldn't be written: each of its parts with an effect on that
+    // isn't in the store failed to be written there (or its file couldn't be read), and one did.
+    bool couldntStore(const WantedSong&) const;
+    std::int64_t preparedBytes(const WantedSong&) const;          // its parts' prepared audio in the store now, in bytes
     double progress(const juce::String& songId) const;             // 0..1 through its parts while it is being prepared; else 0
 
     std::function<void(const juce::String& songId)> onChanged;     // message thread: a song began, moved on, or finished
@@ -94,10 +104,13 @@ private:
     bool waitsLocked(const juce::String& songId, const Part&) const;   // queued or being prepared, as it is
     Outcome prepare(const Job&);                                   // thread
     void noteChangedLocked(const juce::String& songId);
+    std::set<juce::String> keysOf(const WantedSong&) const;       // its parts with an effect on whose file is here
+    void spareWanted();                                            // the store spares wanted_'s and now_wanted_'s keys
 
     PreparedStore& store_;
     double rate_;                                                  // message thread
     std::vector<WantedSong> wanted_;                               // the background list as last handed over
+    std::vector<WantedSong> now_wanted_;                           // the last prepareNow's songs
     std::map<juce::String, WantedSong> known_;                     // each song as last handed over, by id: state(songId)
     bool show_ = false;
 
@@ -107,6 +120,7 @@ private:
     double current_progress_ = 0.0;
     bool busy_ = false, paused_ = false, requeue_ = false;
     std::set<juce::String> unreadable_;                            // keys whose part file couldn't be read: nothing to prepare
+    std::set<juce::String> unstored_;                              // keys whose prepared audio couldn't be written to the store
     // prepareNow: which one, how many songs it has, how many are done, whether all went well, and its callbacks; active
     // until its onDone has been called.
     std::uint64_t batch_serial_ = 0;

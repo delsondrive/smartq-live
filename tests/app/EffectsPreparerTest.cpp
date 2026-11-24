@@ -163,3 +163,18 @@ TEST_CASE("an effects change prepares the song again in the background", "[prepa
     CHECK(s.cache().partsPrepared() == 0);
     CHECK(s.cache().state(song.id) == SongCache::State::Ready);
 }
+
+TEST_CASE_METHOD(PreparerFixture, "a part whose file couldn't be read for a moment is read again when next wanted", "[prepare]") {
+    EffectsPreparer preparer(store, 48000.0);
+    {
+        sqlive::test::ExclusiveFileHold held(folder.audioFile(a, a.parts[0]));   // another program has it, for a moment
+        if (! held.held()) SKIP("files can't be held here");
+        preparer.want({wanted(a)});
+        REQUIRE(preparer.waitUntilIdle(20000));
+        CHECK_FALSE(store.has(keyOf(a, 0)));
+    }
+    preparer.want({wanted(a)});                                   // the band opened, a setlist chosen, an edit: tried again
+    REQUIRE(preparer.waitUntilIdle(20000));
+    CHECK(store.has(keyOf(a, 0)));
+    CHECK(preparer.state(wanted(a)) == EffectsPreparer::State::Prepared);
+}

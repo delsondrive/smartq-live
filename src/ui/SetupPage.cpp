@@ -338,16 +338,7 @@ bool SetupPage::playTone(const juce::String& outputId) {
 
 // ---- Prepared audio ----------------------------------------------------------------------------------------------------
 
-juce::String SetupPage::sizeText(std::int64_t bytes) {
-    constexpr double kMB = 1024.0 * 1024.0, kGB = kMB * 1024.0;
-    if (bytes <= 0) return "nothing";
-    if (static_cast<double>(bytes) >= kGB) {
-        auto text = juce::String(static_cast<double>(bytes) / kGB, 1);
-        if (text.endsWith(".0")) text = text.dropLastCharacters(2);
-        return text + " GB";
-    }
-    return juce::String(static_cast<int>(std::lround(static_cast<double>(bytes) / kMB))) + " MB";
-}
+juce::String SetupPage::sizeText(std::int64_t bytes) { return app::PreparedStore::sizeText(bytes); }
 
 // The store's size is read from its folder, so it is read again only when the effects' revision moves (a song prepared, a
 // clear), when the page is shown, or when the mode changes; not on every tick of a playing song.

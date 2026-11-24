@@ -4,6 +4,7 @@
 #include "app/PreparedStore.h"
 #include "app/Settings.h"
 #include "model/Effects.h"
+#include "tests/support/FileHold.h"
 #include "tests/support/TempDir.h"
 
 namespace model = sqlive::model;
@@ -128,4 +129,66 @@ TEST_CASE("a store that can't be written says so and leaves nothing", "[store]")
     CHECK_FALSE(store.write("k", tone(false)));
     CHECK_FALSE(store.has("k"));
     CHECK(blocker.existsAsFile());
+}
+
+TEST_CASE("the store spares the keys it is told to keep, over its limit too", "[store]") {
+    sqlive::test::TempDir t;
+    const auto folder = t.dir().getChildFile("Prepared");
+    PreparedStore probe(folder, 1LL << 30);
+    REQUIRE(probe.write("probe", tone(false)));
+    const auto one = probe.sizeBytes();
+    probe.clear();
+    PreparedStore store(folder, 2 * one + one / 2);                            // room for two
+    store.spare({"a", "b"});                                                   // the setlist's
+    REQUIRE(store.write("a", tone(false)));  REQUIRE(store.write("b", tone(false)));
+    REQUIRE(store.write("c", tone(false)));                                    // another band's, used most lately
+    const auto now = juce::Time::getCurrentTime();
+    folder.getChildFile("a.wav").setLastModificationTime(now - juce::RelativeTime::days(20));
+    folder.getChildFile("b.wav").setLastModificationTime(now - juce::RelativeTime::days(10));
+    store.trim();
+    CHECK(store.has("a"));  CHECK(store.has("b"));  CHECK_FALSE(store.has("c"));
+    CHECK(store.sizeOf("a") == one);  CHECK(store.sizeOf("c") == 0);
+
+    store.setLimit(one / 2);                                                   // the setlist alone is over the limit: kept
+    store.trim();
+    CHECK(store.has("a"));  CHECK(store.has("b"));
+    CHECK(store.limit() == one / 2);
+    store.spare({"b"});                                                        // the setlist changed: a may go now
+    store.trim();
+    CHECK_FALSE(store.has("a"));  CHECK(store.has("b"));
+}
+
+TEST_CASE("two writers of one key each write a temp file of their own", "[store]") {
+    sqlive::test::TempDir t;
+    const auto folder = t.dir().getChildFile("Prepared");
+    REQUIRE(folder.createDirectory().wasOk());
+    // Another writer's temp file under the one name a key used to have, held open as it is written.
+    REQUIRE(folder.getChildFile("k.tmp").replaceWithText("half written"));
+    sqlive::test::ExclusiveFileHold other(folder.getChildFile("k.tmp"));
+    if (! other.held()) SKIP("files can't be held here");
+    PreparedStore store(folder, 1LL << 30);
+    REQUIRE(store.write("k", tone(true)));
+    CHECK(store.read("k", keepAll) != nullptr);
+    CHECK(folder.findChildFiles(juce::File::findFiles, false, "*.tmp").size() == 1);   // only the other writer's
+
+    // One a write left a day ago (the app closed mid-write) goes with the next trim; the one being written stays.
+    const auto left = folder.getChildFile("old.1234.tmp");
+    REQUIRE(left.replaceWithText("half written"));
+    REQUIRE(left.setLastModificationTime(juce::Time::getCurrentTime() - juce::RelativeTime::days(2)));
+    store.trim();
+    CHECK_FALSE(left.exists());
+    CHECK(folder.getChildFile("k.tmp").exists());
+}
+
+TEST_CASE("a size is said in MB or GB, never 0 MB or 1024 MB", "[store]") {
+    constexpr std::int64_t kMB = 1024 * 1024, kGB = kMB * 1024;
+    CHECK(PreparedStore::sizeText(0) == "nothing");
+    CHECK(PreparedStore::sizeText(1) == "less than 1 MB");
+    CHECK(PreparedStore::sizeText(kMB / 2) == "less than 1 MB");
+    CHECK(PreparedStore::sizeText(kMB) == "1 MB");
+    CHECK(PreparedStore::sizeText(350 * kMB) == "350 MB");
+    CHECK(PreparedStore::sizeText(kGB - 1) == "1 GB");
+    CHECK(PreparedStore::sizeText(kGB) == "1 GB");
+    CHECK(PreparedStore::sizeText(4509715661LL) == "4.2 GB");
+    CHECK(PreparedStore::sizeText(20 * kGB) == "20 GB");
 }

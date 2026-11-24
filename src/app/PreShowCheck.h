@@ -20,7 +20,9 @@ struct CheckInputs { bool deviceOpen = false; juce::String deviceName; double de
 // clipsNeeded, is missing; it names them), files (at most one: the audio files still in the cloud, cue and click sounds
 // among them, a blocker with "Download now"; else parts with no audio file), effects (a blocker while a setlist song has a
 // part not prepared for the show, Session::effectsState: "3 songs need their effects prepared." with "Prepare now", then how
-// far Session::prepareForShow has got), setlist, conflicts, saving, power.
+// far Session::prepareForShow has got; a warning with "Try again" for songs left unprepared only because the prepared-audio
+// store couldn't be written, Show mode then preparing them as they load; and a warning when the setlist's prepared audio is
+// over the store's limit, which keeps it whole all the same), setlist, conflicts, saving, power.
 // Reads the session's setlist, rigAsHeard(), levelChecker() (what it has measured so far; never waits for it), midi() (the
 // ports' last look; never a scan), conflictCopies() (the list it keeps; never a scan), saveState(), the part files, and
 // the cue and click sounds each entry needs (clipFileProblems), and each song's effectsState (its part files' keys).

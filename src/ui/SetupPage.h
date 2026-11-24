@@ -62,7 +62,7 @@ public:
     // The "Prepared audio on this computer: 4.2 GB of 20 GB" line under the grid and its Clear button (Edit mode, and only while
     // something is kept). Clear asks first; clearNow is what the question's "Clear" does.
     juce::String preparedLine() const { return prepared_text_; }
-    static juce::String sizeText(std::int64_t bytes);              // "4.2 GB", "350 MB", "nothing"
+    static juce::String sizeText(std::int64_t bytes);              // app::PreparedStore::sizeText: "4.2 GB", "350 MB", "nothing"
     PillButton& clearButton() { return clear_prepared_; }
     bool askingToClear() const { return clear_asked_; }
     void clearNow();
