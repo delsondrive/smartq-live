@@ -7,6 +7,7 @@
 #include "engine/EffectChain.h"
 #include "model/Effects.h"
 #include "tests/support/DemoSession.h"
+#include "tests/support/Params.h"
 #include "tests/support/Pixels.h"
 #include "ui/AppShell.h"
 #include "ui/EffectsChainColumn.h"
@@ -378,7 +379,8 @@ TEST_CASE("the effects window's footer says whether the song is prepared for the
     REQUIRE(f.s.outputEffectsDelaySamples() > 0);
     const double ms = 1000.0 * f.s.outputEffectsDelaySamples() / f.s.sampleRate();
     CHECK(f.window.footer().state.isEmpty());
-    CHECK(f.window.footer().delay == "Delay " + juce::String(ms, 1) + " ms, all outputs kept together");
+    CHECK(f.window.footer().delay
+          == "Delay " + juce::String(ms, 1) + juce::String::fromUTF8(" ms, all outputs kept together \xc2\xb7 a Limit switched off still delays them"));
 }
 
 TEST_CASE("entering Show mode closes the effects window, and it can't open there", "[fx-window]") {
@@ -435,4 +437,58 @@ TEST_CASE("the shell opens the effects window over its content", "[fx-window]") 
     CHECK_FALSE(window.isOpen());
     shell.openEffects(keys, 0);                                       // never in Show mode
     CHECK_FALSE(window.isOpen());
+}
+
+TEST_CASE("an edit made as the chain changes under the page lands on no other effect", "[fx-window]") {
+    Fixture f;
+    REQUIRE(f.s.addEffect(f.keys, "eq"));
+    REQUIRE(f.s.addEffect(f.keys, "eq"));
+    auto first = f.s.effects(f.keys)[0];
+    first.values.set("output_gain", 3.0);
+    f.s.setEffect(f.keys, 0, first, "first");
+    auto second = f.s.effects(f.keys)[1];
+    second.values.set("output_gain", -3.0);
+    f.s.setEffect(f.keys, 1, second, "second");
+    pump();
+    f.window.show(f.keys, 0);
+    REQUIRE(f.window.params() != nullptr);
+    const auto gainOfFirst = [&] {
+        auto* params = f.window.params();
+        return params->apvts().getParameter(smartq::moduleParamId(params->slotOf(0), "output_gain"));
+    };
+
+    // Another view swaps the two EQs; the window hears of it only once the change message arrives. An edit on its page
+    // meanwhile was made for the EQ at +3 dB, which is now second: it is dropped, not written onto the other.
+    REQUIRE(f.s.moveEffect(f.keys, 0, 1));
+    const auto moved = model::effectsKey(f.s.effects(f.keys));
+    auto* gain = gainOfFirst();
+    gain->setValueNotifyingHost(gain->convertTo0to1(6.0f));
+    CHECK(model::effectsKey(f.s.effects(f.keys)) == moved);
+
+    pump();                                                            // the window reads the chain again
+    gain = gainOfFirst();
+    gain->setValueNotifyingHost(gain->convertTo0to1(6.0f));            // now on the EQ shown first, the one at -3 dB
+    const auto after = f.s.effects(f.keys);
+    CHECK((double) after[0].values["output_gain"] == Catch::Approx(6.0));
+    CHECK((double) after[1].values["output_gain"] == Catch::Approx(3.0));
+    gain->setValueNotifyingHost(gain->convertTo0to1(5.0f));            // and the next edit lands there too
+    CHECK((double) f.s.effects(f.keys)[0].values["output_gain"] == Catch::Approx(5.0));
+}
+
+TEST_CASE("an output's effects window closes when another rig is chosen", "[fx-window]") {
+    Fixture f;
+    REQUIRE(f.s.addEffect(f.out, "eq"));
+    pump();
+    f.window.show(f.out, 0);
+    REQUIRE(f.window.isOpen());
+    const auto other = f.s.commands().run("rig.duplicate", sqlive::test::params({{"rigId", f.s.rigId()}, {"name", "Rehearsal"}}))
+                           .value.toString();
+    REQUIRE(f.s.model().rig(other) != nullptr);
+    pump();
+    REQUIRE(f.window.isOpen());                                        // a rig added: the one heard is still this one
+    f.s.chooseRig(other);
+    pump();
+    CHECK_FALSE(f.window.isOpen());                                    // its edits would go to a rig nobody hears
+    f.window.show(f.out, 0);
+    CHECK_FALSE(f.window.isOpen());
 }

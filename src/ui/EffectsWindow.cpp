@@ -107,7 +107,7 @@ EffectsWindow::EffectsWindow(app::Session& session)
 EffectsWindow::~EffectsWindow() {
     session_.changes().removeChangeListener(this);
     removeMouseListener(this);
-    close();
+    shut(false);                                                  // the shell may be going too: no focus moves now
     pageHolder_.setLookAndFeel(nullptr);
 }
 
@@ -147,9 +147,11 @@ void EffectsWindow::show(const app::EffectsTarget& target, int index) {
     if (isShowing()) grabKeyboardFocus();
 }
 
-void EffectsWindow::close() {
+void EffectsWindow::close() { shut(true); }
+
+void EffectsWindow::shut(bool moveFocus) {
     stopTimer();
-    const bool hadKeyboard = hasKeyboardFocus(true);
+    const bool hadKeyboard = moveFocus && hasKeyboardFocus(true);
     hold_->setVisible(false);                                     // lets go while the place is still the one held
     setVisible(false);
     if (auto* parent = getParentComponent(); hadKeyboard && parent != nullptr && parent->isShowing() && parent->getWantsKeyboardFocus())
@@ -178,6 +180,7 @@ bool EffectsWindow::readPlace(Place& place) const {
         if (at > 0) place.previousName = song->parts[static_cast<size_t>(at - 1)].name;
         if (at + 1 < static_cast<int>(song->parts.size())) place.nextName = song->parts[static_cast<size_t>(at + 1)].name;
     } else {
+        if (target_.rigId.isNotEmpty() && target_.rigId != session_.rigId()) return false;   // another rig chosen: nobody hears it
         const auto* rig = model.rig(target_.rigId.isEmpty() ? session_.rigId() : target_.rigId);
         int at = -1;
         const auto* output = outputOf(rig, target_.outputId, at);
@@ -202,6 +205,7 @@ void EffectsWindow::refresh() {
     // While a song plays the session says it has changed thirty times a second: nothing to do here unless the place has.
     if (params_ != nullptr && wanted_ < 0 && place == seen_) return;
     seen_ = place;
+    known_ = place.effects;
     place_ = target_.isPart() ? model::EffectPlace::Part : model::EffectPlace::Output;
     refreshHeader(place);
 
@@ -228,7 +232,15 @@ void EffectsWindow::rebuildChain(const std::vector<model::EffectDoc>& effects, b
     stereo_ = stereo;
     params_ = std::make_unique<fx::ChainParams>(effects);
     params_->onEdited = [this](int index, const model::EffectDoc& effect, const juce::String& gestureId) {
+        // Only onto the effect the page was made for: if the chain changed since it was last read (its change message still
+        // on its way), the edit is dropped, and the window reads the chain again as the message arrives.
+        const auto now = session_.effects(target_);
+        const auto at = static_cast<std::size_t>(index);
+        if (index < 0 || at >= now.size() || now.size() != known_.size() || params_ == nullptr || !params_->fits(now)
+            || model::effectsKey({now[at]}) != model::effectsKey({known_[at]}))
+            return;
         session_.setEffect(target_, index, effect, gestureId);
+        if (const auto after = session_.effects(target_); at < after.size() && after.size() == known_.size()) known_[at] = after[at];
     };
     host_ = std::make_unique<smartq::ChainHost>(*params_, stereo, smartq::ChainHost::sessionSource(session_, target_));
 
@@ -336,7 +348,8 @@ void EffectsWindow::refreshFooter() {
                 break;
         }
     } else if (const int samples = session_.outputEffectsDelaySamples(); samples > 0 && session_.sampleRate() > 0.0) {
-        footer.delay = "Delay " + juce::String(1000.0 * samples / session_.sampleRate(), 1) + " ms, all outputs kept together";
+        footer.delay = "Delay " + juce::String(1000.0 * samples / session_.sampleRate(), 1) + " ms, all outputs kept together"
+                       + kDot + "a Limit switched off still delays them";
     }
     if (footer.state == footer_.state && footer.delay == footer_.delay && footer.stateColour == footer_.stateColour) return;
     footer_ = footer;

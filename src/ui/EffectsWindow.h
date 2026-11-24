@@ -29,13 +29,18 @@ namespace sqlive::ui {
 // (EffectsChainColumn); the shown effect's page from Smart Q on the right, in Smart Q's look; and a footer with whether the
 // song is prepared for the show (Session::effectsState: "Changed · <song> will be prepared again for the show" in caution,
 // "Preparing effects 40%" in caution, "Prepared" in mint), on an output with a delay "Delay 2.4 ms, all outputs kept
-// together", and on the right "Every change is one undo step".
+// together · a Limit switched off still delays them" (a Limit's delay stays while it is in a chain, so that nothing jumps in
+// time as it is switched), and on the right "Every change is one undo step".
 //
 // Each change is the Session's command (addEffect, removeEffect, moveEffect, switchEffect, and setEffect from a page, one
 // per gesture), named by the Session for the undo tip. The window shows what the documents say: after any change (its own,
 // an undo, another computer's) it reads the chain again; a change of settings goes into the pages as they are, and a change
 // of kinds or order makes the chain's parameters (ui::fx::ChainParams), its host (ui::fx::ChainHost, the one for the chain:
 // the old one goes first), the histories and the cards again before anything else can reach them.
+//
+// A page's edit is sent only while the effect at its index is still the one the page was made for: the chain can change under
+// it (an undo, a move on a strip, another computer) before the change message arrives, and the edit would land on another
+// effect. An output's window shows the chosen rig's output only: choosing another rig closes it.
 //
 // It never opens in Show mode (show does nothing there), and entering Show mode closes it, which lets go of everything held
 // (its host: Width's Mono, a De-Ess's Listen; and the hold button). Message thread.
@@ -98,6 +103,8 @@ private:
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void timerCallback() override;
+    // close(), and from the destructor without moving the keyboard focus (the shell holding this may be going too).
+    void shut(bool moveFocus);
 
     // Reads the documents again: closes in Show mode or when the place has gone; else the header, the chain (made again when
     // its kinds or order changed, else loaded), the add menu and the footer.
@@ -125,6 +132,8 @@ private:
     int shown_ = -1;
     int wanted_ = -1;                        // the effect to show once the chain has it (after an add, a move, a remove)
     Place seen_;                             // as last read
+    // The chain as last read, with each edit sent from here since: a page's edit goes only onto the effect it was made for.
+    std::vector<model::EffectDoc> known_;
     juce::String title_, subtitle_;
     juce::Colour dot_;
     Footer footer_;

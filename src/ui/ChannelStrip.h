@@ -165,6 +165,7 @@ private:
     void releasedInBox();
     int slotTargetFor(int y) const;                               // where the slot carried would land
     void cancelSlotDrag();
+    bool sameKinds(const MixerState::Strip&) const;                // its chain has the kinds this one has, in the same order
     void paintBox(juce::Graphics&);
     bool hasPanBar() const { return strip_.pan.has_value(); }
     bool showsLink() const { return hasPanBar() && strip_.linkable; }

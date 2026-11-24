@@ -1,5 +1,8 @@
 #include "ui/fx/ModuleHistory.h"
 
+// Copied from Smart Q (smarteq_vst src/ui/ModuleHistory.cpp) and changed: it reads ChainHost in place of SmartQProcessor, and
+// has no Gate (Smart Q Live has none), so a Gate's Listen isn't looked at.
+
 #include <algorithm>
 #include <cmath>
 #include <utility>

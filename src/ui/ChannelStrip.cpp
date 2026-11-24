@@ -75,7 +75,7 @@ void ChannelStrip::set(const MixerState::Strip& strip, Size size) {
     if (strip == strip_ && size == size_) return;
     const bool reshaped = size != size_ || strip.canSolo != strip_.canSolo || strip.linkable != strip_.linkable
                           || strip.effects.has_value() != strip_.effects.has_value();
-    if (drag_ == Drag::Slot && (!strip.effects || static_cast<int>(strip.effects->size()) != effectCount()))
+    if (drag_ == Drag::Slot && !sameKinds(strip))
         cancelSlotDrag();                                         // the chain changed under the slot carried: let it go
     strip_ = strip;
     size_ = size;
@@ -172,6 +172,7 @@ juce::String ChannelStrip::panText() const {
 // ---- Where things are ------------------------------------------------------------------------------------------------
 
 void ChannelStrip::resized() {
+    const int rowsBefore = rows_;
     const bool full = size_ == Size::Full;
     const int x = kBorder + kPadX, width = std::max(0, getWidth() - 2 * (kBorder + kPadX));
     int y = kBorder + (full ? kPadTop : kCompactPadTop);
@@ -200,6 +201,7 @@ void ChannelStrip::resized() {
     }
     name_ = {x, std::max(y, bottom - kNameHeight), width, std::min(kNameHeight, std::max(0, bottom - y))};
     zone_ = {x, y, width, std::max(0, name_.getY() - kGap - y)};
+    if (drag_ == Drag::Slot && rows_ != rowsBefore) cancelSlotDrag();   // laid out again: the rows carried from are others now
 }
 
 juce::Rectangle<int> ChannelStrip::panArea() const {
@@ -326,6 +328,12 @@ void ChannelStrip::cancelSlotDrag() {
     repaint(box_);
 }
 
+bool ChannelStrip::sameKinds(const MixerState::Strip& strip) const {
+    if (!strip.effects || !strip_.effects || strip.effects->size() != strip_.effects->size()) return false;
+    return std::equal(strip.effects->begin(), strip.effects->end(), strip_.effects->begin(),
+                      [](const MixerState::EffectSlot& a, const MixerState::EffectSlot& b) { return a.kind == b.kind; });
+}
+
 int ChannelStrip::slotTargetFor(int y) const {
     const auto rows = slotRows();
     if (!juce::isPositiveAndBelow(slotPressed_, static_cast<int>(rows.size()))) return -1;
@@ -371,6 +379,7 @@ void ChannelStrip::releasedInBox() {
     const auto& r = rows[static_cast<std::size_t>(row)];
     if (lifted) {
         repaint(box_);
+        if (r.kind != Kind::Effect) return;                       // the row is no longer an effect's: nothing to move
         if (juce::isPositiveAndBelow(target, effectCount()) && target != r.index && onEffectMove) onEffectMove(r.index, target);
         return;
     }
