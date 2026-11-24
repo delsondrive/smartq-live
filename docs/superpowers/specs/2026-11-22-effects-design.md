@@ -109,7 +109,8 @@ show (tonight-only levels).
     every setting, the sample rate, and a version number of the effects code. Any change to one of these means the part
     is prepared again.
   - *(My call.)* The store has a size limit (a default the builder picks, shown in Setup with a "Clear" button); when
-    full, the songs used longest ago are dropped first. Nothing breaks when it is cleared: songs are prepared again.
+    full, the songs used longest ago are dropped first, but never the current setlist's (a setlist bigger than the
+    limit gets a pre-show Warning saying how big it is). Nothing breaks when it is cleared: songs are prepared again.
   - Each of the band's computers prepares its own copy.
 - **When it happens:**
   - When a song is loaded into memory for the show (the memory budget's order: current, next, previous, neighbours) and
@@ -119,7 +120,9 @@ show (tonight-only levels).
     pauses, so it is usually ready before Show mode. The effects window's footer says "Changed · will be prepared again
     for the show", then "Prepared".
   - **The pre-show check** makes sure every song of the setlist is prepared, prepares any that aren't (with progress),
-    and doesn't let Show mode start until they are, as it does for files that aren't on the local disk.
+    and doesn't let Show mode start until they are, as it does for files that aren't on the local disk. If the
+    store can't be written (a full disk), those songs are a Warning with "Try again" instead: the show prepares them in
+    memory as they load.
 - **Memory:** a prepared part replaces the plain one in memory, so a song takes the same memory as today.
 - **Live and prepared agree:** played from the song's start, up to its first jump, Edit mode's live chain and Show mode's
   prepared audio give the same samples. Tests check this (a song with no jumps all the way through; a song with jumps up
