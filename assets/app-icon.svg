@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Smart Q Live's app icon: Smart Q's mint Q (from smart-q-logo.svg) on the app's dark background (Theme.h bg2, bg1,
+       glow). assets/icon/app-icon-1024.png and -256.png are this file rendered by headless Edge
+       (an img of it at that size, --screenshot with --default-background-color=00000000); render them again after a change. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#241B2C"/>
+      <stop offset="1" stop-color="#0E0C11"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.47" r="0.5">
+      <stop offset="0" stop-color="#66D9B6" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#66D9B6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="210" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="210" fill="url(#glow)"/>
+  <rect x="41.5" y="41.5" width="941" height="941" rx="208.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.07" stroke-width="3"/>
+  <g transform="translate(512 512) scale(5.2) translate(-911 -128)">
+    <path fill="#66D9B6" fill-rule="evenodd" d="M 910 68 C 946 68 972 93 972 128 C 972 163 946 188 910 188 C 874 188 848 163 848 128 C 848 93 874 68 910 68 Z M 910 90 C 888 90 872 106 872 128 C 872 150 888 166 910 166 C 932 166 948 150 948 128 C 948 106 932 90 910 90 Z"/>
+    <polygon fill="#66D9B6" points="924,152 939,137 974,172 959,187"/>
+  </g>
+</svg>

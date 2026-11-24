@@ -102,7 +102,9 @@ set(SQLIVE_DEFINITIONS
 juce_add_gui_app(SmartQLive
     PRODUCT_NAME "Smart Q Live"
     COMPANY_NAME "Smart Q"
-    BUNDLE_ID com.smartq.SmartQLive)
+    BUNDLE_ID com.smartq.SmartQLive
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/app-icon-1024.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/app-icon-256.png")
 target_sources(SmartQLive PRIVATE "${CMAKE_SOURCE_DIR}/src/Main.cpp" ${SQLIVE_CORE_SOURCES})
 target_include_directories(SmartQLive PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_compile_definitions(SmartQLive PRIVATE ${SQLIVE_DEFINITIONS})
