@@ -241,6 +241,9 @@ void EffectsWindow::rebuildChain(const std::vector<model::EffectDoc>& effects, b
             return;
         session_.setEffect(target_, index, effect, gestureId);
         if (const auto after = session_.effects(target_); at < after.size() && after.size() == known_.size()) known_[at] = after[at];
+        // The chain now differs from the one last read, so the next refresh must read it again, even if an undo or a reload
+        // takes it straight back before the change message arrives (else refresh would skip, and known_ keep this edit).
+        seen_ = {};
     };
     host_ = std::make_unique<smartq::ChainHost>(*params_, stereo, smartq::ChainHost::sessionSource(session_, target_));
 

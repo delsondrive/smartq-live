@@ -475,6 +475,31 @@ TEST_CASE("an edit made as the chain changes under the page lands on no other ef
     CHECK((double) f.s.effects(f.keys)[0].values["output_gain"] == Catch::Approx(5.0));
 }
 
+TEST_CASE("an edit undone before the window hears of it leaves the page's next edits landing", "[fx-window]") {
+    Fixture f;
+    REQUIRE(f.s.addEffect(f.keys, "eq"));
+    pump();
+    f.window.show(f.keys, 0);
+    REQUIRE(f.window.params() != nullptr);
+    const auto gainOf = [&] {
+        auto* params = f.window.params();
+        return params->apvts().getParameter(smartq::moduleParamId(params->slotOf(0), "output_gain"));
+    };
+
+    // A turn of the knob, then an undo straight back, both before the change message arrives: the chain is again just as
+    // the window last read it.
+    auto* gain = gainOf();
+    gain->setValueNotifyingHost(gain->convertTo0to1(6.0f));
+    REQUIRE((double) f.s.effects(f.keys)[0].values["output_gain"] == Catch::Approx(6.0));
+    f.s.commands().undo();
+    REQUIRE((double) f.s.effects(f.keys)[0].values.getWithDefault("output_gain", 0.0) == Catch::Approx(0.0));
+
+    pump();                                                            // the window reads the chain again
+    gain = gainOf();
+    gain->setValueNotifyingHost(gain->convertTo0to1(4.0f));            // and the next turn of the knob lands
+    CHECK((double) f.s.effects(f.keys)[0].values["output_gain"] == Catch::Approx(4.0));
+}
+
 TEST_CASE("an output's effects window closes when another rig is chosen", "[fx-window]") {
     Fixture f;
     REQUIRE(f.s.addEffect(f.out, "eq"));
